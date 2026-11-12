@@ -75,6 +75,7 @@ function normalizeMentions(input) {
 function normalizeOutput(input) {
   const source = input && typeof input === 'object' ? input : {};
   const fitted = source.fittedSize;
+  const natural = source.fittedNatural;
   return {
     status: OUTPUT_STATUS.has(source.status) ? source.status : 'idle',
     text: str(source.text, MAX_PROMPT * 2),
@@ -105,6 +106,13 @@ function normalizeOutput(input) {
     fittedSize:
       fitted && Number.isFinite(fitted.width) && Number.isFinite(fitted.height)
         ? { width: Math.round(fitted.width), height: Math.round(fitted.height) }
+        : null,
+    // The size the media was measured at: the box is worked out from it and
+    // from the width of the card, so a card the user widened shows a wider
+    // picture after a reload too.
+    fittedNatural:
+      natural && Number.isFinite(natural.width) && Number.isFinite(natural.height)
+        ? { width: Math.round(natural.width), height: Math.round(natural.height) }
         : null,
     missing: source.missing === true,
     updatedAt: str(source.updatedAt, 40),

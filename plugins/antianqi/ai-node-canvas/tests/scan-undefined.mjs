@@ -19,6 +19,9 @@ const DEFAULT_FILES = [
   'miniapp/client/app.js',
   'miniapp/client/tools.mjs',
   'miniapp/client/mention.mjs',
+  'miniapp/client/forms.mjs',
+  'miniapp/client/actions.mjs',
+  'miniapp/client/node-ui.mjs',
 ];
 
 const GLOBALS = new Set([
@@ -36,6 +39,7 @@ const GLOBALS = new Set([
   'prompt', 'request', 'globalThis', 'self', 'top', 'parent', 'frames',
   'Event', 'CustomEvent', 'MouseEvent', 'PointerEvent', 'KeyboardEvent',
   'WheelEvent', 'InputEvent', 'DragEvent', 'ClipboardEvent', 'CompositionEvent',
+  'ClipboardItem', 'Clipboard',
   'Element', 'HTMLElement', 'SVGElement', 'Node', 'NodeList', 'DocumentFragment',
   'Image', 'CanvasRenderingContext2D', 'OffscreenCanvas', 'ImageData',
   'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'fetch',

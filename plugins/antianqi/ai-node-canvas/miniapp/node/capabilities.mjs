@@ -30,11 +30,16 @@ export const INPUT_KINDS = new Set(DATA_KINDS);
 const IMAGE_MODELS = [
   {
     id: 'matrix-image',
-    label: 'Matrix 文生图',
-    note: '1K/2K/4K，6 种画幅；支持图生图（最多 9 张参考图）',
-    ratios: ['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'],
-    resolutions: ['1K', '2K', '4K'],
-    maxImages: 9,
+    label: 'MiniMax-H3-Image',
+    note: 'Image 3.0：1K/2K/4K，默认 4K；画幅可自适应；图生图最多 16 张参考图',
+    // `auto` is first because it is the model's own default: the shape of
+    // the picture follows the prompt. The 4K tier is first for the same
+    // reason — the provider draws 4K when it is not told otherwise, so
+    // that is what a node that says nothing has to mean.
+    ratios: ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '21:9'],
+    resolutions: ['4K', '2K', '1K'],
+    // The provider takes up to sixteen reference pictures on one request.
+    maxImages: 16,
     maxVideos: 0,
     maxAudios: 0,
   },
@@ -236,7 +241,7 @@ const TEXT_LIMITS = {
   durations: [],
   // A text node may look at an upstream image (the mention menu offers it),
   // so the limit must allow the same references the image mode takes.
-  maxImages: 9,
+  maxImages: IMAGE_MODELS[0].maxImages,
   // One video: the 视频生文 mode reads the video with the provider's video
   // understanding before the Agent writes the prompt from it. A video can only
   // land on a text node in that mode, so one is the most it ever carries.
@@ -254,14 +259,15 @@ const TEXT_LIMITS = {
 /**
  * The most references one request may carry.
  *
- * It is the provider's own ceiling for a reference collection: nine pictures,
- * three clips and three sounds are twelve items in all, and one request
- * carries twelve. It is not a stricter number of our own — a number below the
- * provider's would refuse a request the provider would have taken, and the
- * per-kind limits (how many pictures, how many clips) are checked against the
- * model that is asked.
+ * It is the provider's own ceiling for the widest request there is: sixteen
+ * pictures on one image request. It is not a stricter number of our own — a
+ * number below the provider's would refuse a request the provider would have
+ * taken, and the per-kind limits (how many pictures, how many clips) are
+ * checked against the model that is asked. The video collection has its own,
+ * smaller rule (twelve items in all), and that one is checked where the
+ * collection is built.
  */
-export const MAX_REFERENCES = 12;
+export const MAX_REFERENCES = 16;
 
 export const CAPABILITIES = {
   image: IMAGE_LIMITS,
@@ -468,6 +474,8 @@ export function renderTemplate(template, values) {
 // of letting the list imply they all work here.
 export const CONNECTOR_TOOLS = [
   { tool: 'connector__matrix__generate_image', mode: 'image', label: '文生图 / 图生图', status: 'ready', drives: true },
+  { tool: 'connector__matrix__enhance_image', mode: 'image', label: '图片超分', status: 'ready', drives: true },
+  { tool: 'connector__matrix__remove_image_background', mode: 'image', label: '智能抠图', status: 'ready', drives: true },
   { tool: 'connector__matrix__submit_video_generation', mode: 'video', label: '提交视频生成', status: 'ready', drives: true },
   { tool: 'connector__matrix__query_video_generation', mode: 'video', label: '查询视频任务', status: 'ready', drives: true },
   { tool: 'connector__matrix__synthesize_speech', mode: 'audio', label: '语音合成', status: 'ready', drives: true },
@@ -698,7 +706,7 @@ export const TOOLS = [
   },
   {
     key: 'trim',
-    label: '片段剪辑',
+    label: '剪辑',
     desc: '裁出一段时间',
     kind: 'video',
     status: 'ready',
@@ -707,6 +715,9 @@ export const TOOLS = [
     produces: { node: 'video', artifact: '剪辑后的视频片段' },
     requires: ['视频素材', '本机 ffmpeg'],
     note: '本机 ffmpeg 截取时间段，产出一个视频节点。',
+    // The clip is cut on a timeline, not on two number boxes: the range is
+    // the same two seconds either way, but the page shows it as a strip.
+    ui: 'clip',
     params: [
       { key: 'start', label: '起点（秒）', type: 'number', default: 0, min: 0 },
       { key: 'end', label: '终点（秒）', type: 'number', default: 5, min: 0.2 },
@@ -759,6 +770,19 @@ export const TOOLS = [
     produces: { node: 'video', artifact: '分离出的无声视频与音轨' },
     requires: ['视频素材', '本机 ffmpeg'],
     note: '本机 ffmpeg 拆出无声视频与独立音轨，两个节点。',
+    params: [],
+  },
+  {
+    key: 'extractAudio',
+    label: '分离音频',
+    desc: '把视频里的声音单独取出来',
+    kind: 'video',
+    status: 'ready',
+    run: 'ffmpeg',
+    needs: 'video',
+    produces: { node: 'audio', artifact: '分离出的音轨' },
+    requires: ['视频素材', '本机 ffmpeg'],
+    note: '本机 ffmpeg 丢掉画面只留声音，产出一个音频节点。',
     params: [],
   },
   {
@@ -868,42 +892,64 @@ export const TOOLS = [
       { key: 'sharp', label: '锐化强度', type: 'number', default: 1.4, min: 0, max: 5 },
     ],
   },
+  // The two tools the provider does itself, because it does them better than
+  // this machine can: a model sharpens a blurry picture, and it takes a
+  // subject away from a background that is not a flat colour.
+  //
+  // `limits` is what the provider will take. The page checks the picture
+  // against it before the request is sent, so a picture that cannot be
+  // processed is refused before it costs anything.
   {
-    key: 'resize',
-    label: '无损改尺寸',
-    desc: '改尺寸不裁内容',
+    key: 'aiCutout',
+    label: 'AI 抠图',
+    desc: '把主体从背景里抠出来，输出透明 PNG',
     kind: 'image',
     status: 'ready',
-    run: 'ffmpeg',
+    run: 'connector',
+    // The provider's own tool for this. It is named here so the runtime and
+    // the page never have to know the name twice.
+    providerTool: 'remove_image_background',
     needs: 'image',
-    produces: { node: 'image', artifact: '新尺寸的图片' },
-    requires: ['图片素材', '本机 ffmpeg'],
-    note: '本机 ffmpeg 缩放并补边，内容不会被裁掉。',
-    params: [
-      { key: 'width', label: '宽', type: 'number', default: 1080, min: 16, max: 8192 },
-      { key: 'height', label: '高', type: 'number', default: 1080, min: 16, max: 8192 },
-      { key: 'mode', label: '方式', type: 'select', options: ['fit', 'fill', 'stretch'], default: 'fit' },
-    ],
+    produces: { node: 'image', artifact: '透明底的图片' },
+    requires: ['图片素材', '抠图能力（connector__matrix__remove_image_background）'],
+    note: '走连接器的智能抠图：复杂背景也能抠，输出透明 PNG。纯色底棚拍图用「智能抠图」更快，也不另外花钱。',
+    limits: { maxLongSide: 10240, maxShortSide: 6000, maxMegapixels: 40 },
+    params: [],
   },
   {
-    key: 'idPhoto',
-    label: '证件照',
-    desc: '按证件规格裁切铺底',
+    key: 'aiUpscale',
+    label: 'AI 放大',
+    desc: '2 倍超分，把糊图变清晰',
     kind: 'image',
     status: 'ready',
-    run: 'ffmpeg',
+    run: 'connector',
+    // The provider's own tool for this. It is named here so the runtime and
+    // the page never have to know the name twice.
+    providerTool: 'enhance_image',
     needs: 'image',
-    produces: { node: 'image', artifact: '证件照' },
-    requires: ['图片素材', '本机 ffmpeg'],
-    note: '本机 ffmpeg 按证件尺寸裁切并铺白底。',
+    produces: { node: 'image', artifact: '放大两倍后的图片' },
+    requires: ['图片素材', '超分能力（connector__matrix__enhance_image）'],
+    note: '走连接器的 2× 超分：长边 ≤2048、短边 ≥256、≤10MB 的图才行。自己出的 4K 图超限，先用「剪裁」或「宫格切分」把尺寸弄到 2048 以内。',
+    limits: { maxLongSide: 2048, minShortSide: 256, maxBytes: 10 * 1024 * 1024 },
+    params: [],
+  },
+  {
+    key: 'trimAudio',
+    label: '剪辑',
+    desc: '裁出一段时间',
+    kind: 'audio',
+    status: 'ready',
+    run: 'ffmpeg',
+    needs: 'audio',
+    produces: { node: 'audio', artifact: '剪辑后的音频' },
+    requires: ['音频素材', '本机 ffmpeg'],
+    note: '本机 ffmpeg 截取时间段，产出一个音频节点。',
+    // The clip is cut on a timeline, not on two number boxes: the range is
+    // the same two seconds either way, but the page shows it as a strip.
+    ui: 'clip',
     params: [
-      {
-        key: 'preset',
-        label: '规格',
-        type: 'select',
-        options: ['一寸', '小一寸', '大一寸', '二寸', '小二寸', '大二寸', '签证', '护照'],
-        default: '一寸',
-      },
+      { key: 'start', label: '起点（秒）', type: 'number', default: 0, min: 0 },
+      { key: 'end', label: '终点（秒）', type: 'number', default: 5, min: 0.2 },
     ],
   },
 ];

@@ -10,11 +10,16 @@
 // editor is an inline contentEditable so `@` references can be embedded as
 // chips in the text.
 import { detectMention, parseSegments, plainText, textIndexBefore } from './mention.mjs';
-import { bandSelection, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitMediaBox, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, placeOverlay, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, slotsOf as slotsOfForm, TILE_CARD, toolPrompt, upstreamNodes } from './tools.mjs';
-import { cardChrome, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, modesFor, NODE_FORMS, NODE_KINDS, modeOf, modeRecordOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf, stripInputs } from './forms.mjs';
+import { bandSelection, BAR_PANEL_SIDE, BATCH_COUNTS, BATCH_MODES, cropRectAfterDrag, dragPositions, effectiveOption, fanOutParams, fitParamsToCaps, inputKindsFor, isControlTarget, kindOf, mediaBoxFor, mentionCandidates as mentionCandidatesOf, modelSummary, NODE_GAP, overlaysDismissedBy, placeOverlay, placePanel, planBatchPlacement, planGridSplit, planPaste, portOfConnection, portState, pushAside, resolveEventTarget, roleOf, TILE_CARD, toolPrompt, toolSizeReason, upstreamNodes } from './tools.mjs';
+import { cardTools, DATA_KINDS, hasTextBox, isTypingTarget, modeLabelOf, NODE_FORMS, NODE_KINDS, modeOf, modesOf, portKinds, portKindsFor, portList, ratioLabel, ratioOptionsFor, redrawBlocker, runModeOf } from './forms.mjs';
+import { cardLayers, chipPress, CLIP_HANDLE_INSET, clipClock, clipRange, clipSecond, clipSeconds, durationLabel, isPlaying, playheadMs, stripAt, stripPercent, stripWidth, errorActions, groupMembers, modeChoice, modelRange, nodeKindLabel, nodeMenuEntries, nodeModeLabel, openChip, opsOffset, opsSide, opsSurfaceClass, panelFields, paramFields, paramSummary, railParts, ratioGlyph, textAnchor, timecode } from './node-ui.mjs';
+import { wirePreviewLoop } from './preview-loop.mjs';
+import { clipPlacement, panelAnchor } from './clip-place.mjs';
+import { wirePlayhead } from './clip-playhead.mjs';
+import { frameStops, paintFilmstrip, paintWaveform, redrawStrips } from './strip.mjs';
 import { isBusyRefusal, panelClosed, panelIsShown, panelTasks, runIsGone, taskIsExpired, theRunThatIsGoing, theRunToWaitFor, waitForTheRun, withDeadline } from './run-watch.mjs';
 import { panelTitleRow } from './task-panel.mjs';
-import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
+import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, legacyProductNodes, lineKind, linesDroppedByMode, materializeResults, outputForRun, pendingAncestors as pendingAncestorsIn, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
   'use strict';
@@ -224,6 +229,25 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     state.theme = THEME_ORDER[(index + 1) % THEME_ORDER.length];
     applyTheme();
     renderToolbar();
+    // A canvas keeps the pixels it was given, so the strips drawn in the
+    // old colours are drawn again in the new ones.
+    redrawStrips();
+  }
+
+  /**
+   * Watch the system palette.
+   *
+   * When the page follows the system, the system decides the colours — and
+   * the strips have to be drawn again when it does, the same way they are
+   * when the user picks a colour here.
+   */
+  function watchSystemTheme() {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!query?.addEventListener) return;
+    query.addEventListener('change', () => {
+      if (state.theme !== 'system') return;
+      redrawStrips();
+    });
   }
 
   // ---------------------------------------------------------------- build check
@@ -366,27 +390,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     return inputKindsFor(effectiveCaps(node));
   }
 
-  // The name of the mode the node is in. The mode is a choice on the card,
-  // so it names itself.
-  function nodeModeLabel(node) {
-    if (roleOf(node) !== 'generate') return '';
-    return modeRecordOf(node)?.label ?? '';
-  }
-
   // The generating nodes on their own.
   function isGeneratingNode(node) {
     return Boolean(node) && roleOf(node) === 'generate';
-  }
-
-  // The result node a generating node produced.
-  function resultNodeOf(node) {
-    if (!node) return null;
-    for (const conn of state.canvas.connections) {
-      if (conn.fromNodeId !== node.id) continue;
-      const target = getNode(conn.toNodeId);
-      if (target && target.type === 'result') return target;
-    }
-    return null;
   }
 
   // Every result node a generating node produced. A batch of results is more
@@ -400,17 +406,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       if (target && target.type === 'result') ids.add(target.id);
     }
     return state.canvas.nodes.filter((item) => ids.has(item.id));
-  }
-
-  // Whether the node already produced something.
-  //
-  // A result whose asset is gone does not count: the chain would reuse a dead
-  // reference instead of running that step again, and the step is cheap
-  // compared to a broken picture further down.
-  function hasResult(node) {
-    const result = resultNodeOf(node);
-    if (!result) return false;
-    return !result.metadata?.output?.missing;
   }
 
   // The text an upstream line hands over is read in `actions.mjs`, where the
@@ -636,6 +631,13 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   function applyViewport() {
     const { x, y, k } = state.canvas.viewport;
     dom.world.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+    // The zoom is a number the page can read in CSS: the selection ring is
+    // divided by it, so the ring keeps the same weight on screen at any zoom.
+    dom.world.style.setProperty('--nxc-zoom', String(k));
+    // The operation surface undoes the zoom, so it keeps the same size on
+    // the screen at every zoom level: a place to type text cannot shrink to
+    // a thumbnail.
+    dom.world.style.setProperty('--nxc-inv-zoom', String(1 / k));
     const size = GRID_SIZE * k;
     dom.grid.style.backgroundSize = `${size}px ${size}px`;
     dom.grid.style.backgroundPosition = `${x % size}px ${y % size}px`;
@@ -646,6 +648,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         ? `radial-gradient(circle, rgba(148,163,184,${line + 0.14}) ${dot}px, transparent ${dot + 0.4}px)`
         : `linear-gradient(rgba(148,163,184,${line}) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,${line}) 1px, transparent 1px)`;
     dom.zoom.textContent = `${Math.round(k * 100)}%`;
+    // The surface hangs below the card, so every move of the board has to
+    // tell it again where there is room for it.
+    fitOpsSurfaces();
     renderMinimap();
   }
 
@@ -891,6 +896,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       node.metadata.output.status = 'success';
       node.metadata.output.updatedAt = new Date().toISOString();
     }
+    // The card shows the text it holds and the editor that writes it floats
+    // below the card, so the card follows the text: the preview is never out
+    // of step with what the node holds.
+    refreshTextPreview(node);
   }
 
   /**
@@ -981,8 +990,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   function renderInheritedPrompt(node, inherited) {
     const box = el('div', 'nxc-inherited');
     box.dataset.canvasNoZoom = 'true';
-    // The text box is where a text line lands, so the line ends here.
-    box.dataset.textBox = '1';
     box.appendChild(el('div', 'nxc-inherited__label', `来自上游：${inherited.title}`));
     box.appendChild(el('div', 'nxc-inherited__text', inherited.text));
     if (String(node.metadata?.prompt ?? '').trim()) {
@@ -1006,10 +1013,11 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     const wrap = el('div', 'nxc-upload');
     wrap.dataset.canvasNoZoom = 'true';
 
-    const picker = el('input', 'nxc-upload__file');
-    picker.type = 'file';
     const kind = node.metadata.kind ?? 'image';
     const label = { image: '图片', video: '视频', audio: '音频' }[kind] ?? '素材';
+
+    const picker = el('input', 'nxc-upload__file');
+    picker.type = 'file';
     // The input card only takes what its kind is for.
     picker.accept = kind === 'image' ? 'image/*' : kind === 'video' ? 'video/*' : 'audio/*';
     picker.multiple = kind === 'image';
@@ -1020,30 +1028,81 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       picker.value = '';
       if (files.length) void uploadFiles(node, files);
     });
-    wrap.appendChild(picker);
 
-    const media = node.metadata.output?.media ?? [];
-    if (media.length) {
-      const list = el('div', 'nxc-upload__list');
-      for (const item of media) {
-        const row = el('div', 'nxc-upload__item');
-        row.appendChild(el('span', 'nxc-upload__name', item.name || item.url));
-        const remove = el('button', 'nxc-upload__remove', '×');
-        remove.type = 'button';
-        remove.title = '移除这个素材';
-        remove.addEventListener('click', (event) => {
-          event.stopPropagation();
-          node.metadata.output.media = media.filter((entry) => entry !== item);
-          node.metadata.output.updatedAt = new Date().toISOString();
-          markDirty();
-          render();
-        });
-        row.appendChild(remove);
-        list.appendChild(row);
-      }
-      wrap.appendChild(list);
-    }
+    // The button is what the reader sees; the picker behind it is invisible.
+    // The button floats above the card, the way the reference canvas holds
+    // it: the card is the material, the button is the way in.
+    const button = el('button', 'nxc-upload__btn');
+    button.type = 'button';
+    button.dataset.canvasNoZoom = 'true';
+    button.title = `把本机的${label}放进这个输入节点`;
+    button.appendChild(uploadIcon());
+    button.appendChild(el('span', null, `上传${label}`));
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      picker.click();
+    });
+    wrap.appendChild(button);
+    wrap.appendChild(picker);
     return wrap;
+  }
+
+  /**
+   * A small drawn icon.
+   *
+   * The icons are drawn here instead of taken from a font, so they look the
+   * same wherever the canvas runs and they never carry a glyph the system
+   * does not have.
+   */
+  function svgIcon(className, viewBox, shapes) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const icon = document.createElementNS(ns, 'svg');
+    icon.setAttribute('class', className);
+    icon.setAttribute('viewBox', viewBox);
+    icon.setAttribute('width', '14');
+    icon.setAttribute('height', '14');
+    icon.setAttribute('aria-hidden', 'true');
+    for (const shape of shapes) {
+      const node = document.createElementNS(ns, 'path');
+      node.setAttribute('d', shape.d);
+      node.setAttribute('fill', shape.fill ?? 'none');
+      node.setAttribute('stroke', shape.stroke ?? 'currentColor');
+      node.setAttribute('stroke-width', shape.width ?? '1.4');
+      node.setAttribute('stroke-linecap', 'round');
+      node.setAttribute('stroke-linejoin', 'round');
+      icon.appendChild(node);
+    }
+    return icon;
+  }
+
+  /** The icon of the upload button: a tray with an arrow going into it. */
+  function uploadIcon() {
+    return svgIcon('nxc-icon', '0 0 16 16', [
+      { d: 'M8 10.6V2.9M8 2.9 5.3 5.6M8 2.9l2.7 2.7' },
+      { d: 'M2.6 10.4v3h10.8v-3' },
+    ]);
+  }
+
+  /** The icon of a model: the bars of a sound wave. */
+  function modelIcon() {
+    return svgIcon('nxc-icon', '0 0 16 16', [
+      { d: 'M3 5.5v5M6.4 3.2v9.6M9.8 6.2v3.6M13.2 4.6v6.8' },
+    ]);
+  }
+
+  /** The icon of the way out of the app: an arrow going down to the disk. */
+  function saveIcon() {
+    return svgIcon('nxc-icon', '0 0 16 16', [
+      { d: 'M8 2.4v6.9M8 9.3 5.2 6.5M8 9.3l2.8-2.8' },
+      { d: 'M3 13h10' },
+    ]);
+  }
+
+  /** The icon of the menu: three dots in a row. */
+  function menuIcon() {
+    return svgIcon('nxc-icon', '0 0 16 16', [
+      { d: 'M4 8h.01M8 8h.01M12 8h.01', width: '2' },
+    ]);
   }
 
   async function uploadFiles(node, files) {
@@ -1067,7 +1126,18 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         const output = node.metadata.output;
         output.media = [
           ...(output.media ?? []),
-          { url: payload.url, kind: payload.kind, name: payload.originalName, local: true },
+          {
+            url: payload.url,
+            kind: payload.kind,
+            name: payload.originalName,
+            local: true,
+            // The picture knows its own size, and the provider's picture tools
+            // have limits of their own: the card has to be able to say "too
+            // big" before the click.
+            width: Number(payload.width ?? 0) || 0,
+            height: Number(payload.height ?? 0) || 0,
+            bytes: Number(payload.bytes ?? 0) || 0,
+          },
         ];
         output.status = 'success';
         output.updatedAt = new Date().toISOString();
@@ -1124,9 +1194,8 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
 
   function createComposer(node) {
     const wrap = el('div', 'nxc-composer');
-    // The text box is where a text line lands: the line ends here, not on a
-    // port on the edge of the card.
-    wrap.dataset.textBox = '1';
+    // The editor floats below the card, so the box a text line lands on is
+    // the card's own text box, not this one.
     const mentionWrap = el('div', 'nxc-composer__mention-wrap');
     const placeholder = el('div', 'nxc-composer__placeholder', placeholderFor(node));
     const editor = el('div', 'nxc-composer__editor');
@@ -1225,16 +1294,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
 
   // ---------------------------------------------------------------- node render
 
-  /** The kind of a node and the mode it is in, as the header shows it. */
-  function nodeKindLabel(node) {
-    const mode = nodeModeLabel(node);
-    const kind = KIND_LABEL[node.type] ?? node.type;
-    if (node.type === 'input') {
-      return `输入 · ${state.palette?.inputKindLabels?.[node.metadata.kind] ?? node.metadata.kind}`;
-    }
-    return mode ? `${kind} · ${mode}` : kind;
-  }
-
   /**
    * The accessible name of a node.
    *
@@ -1256,89 +1315,201 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     ));
   }
 
-  /**
-   * The slots of a node: what may be plugged into it, and what it hands on.
-   *
-   * The rule itself lives in `forms.mjs`, where the node table is, so the page
-   * and the runtime declare the same slots.
-   */
-  function slotsOf(node) {
-    const slots = slotsOfForm(node);
-    // The strip reads the same rule the ports are drawn from: the text goes
-    // into the card's text box, and a kind the model cannot take is not an
-    // input either.
-    return { inputs: stripInputs(node, effectiveCaps(node)), outputs: slots.outputs };
-  }
-
-  /**
-   * The slot strip under the header: what may come in, and what goes out.
-   *
-   * An open slot stays hollow and says it is waiting, so what is still
-   * missing can be read off the card without touching anything.
-   */
-  function renderSlotStrip(node, slots) {
-    const strip = el('div', 'nxc-slots');
-    if (slots.inputs.length > 0) {
-      const inRow = el('div', 'nxc-slots__row');
-      inRow.appendChild(el('span', 'nxc-slots__label', '入'));
-      for (const slot of slots.inputs) {
-        inRow.appendChild(renderSlot(slot, portState(state.canvas, node, slot)));
-      }
-      strip.appendChild(inRow);
-    }
-    if (slots.outputs.length > 0) {
-      const outRow = el('div', 'nxc-slots__row nxc-slots__row--out');
-      for (const slot of slots.outputs) {
-        // An output is what the node hands on, so it is never waiting.
-        outRow.appendChild(renderSlot(slot, 'out'));
-      }
-      outRow.appendChild(el('span', 'nxc-slots__label', '出'));
-      strip.appendChild(outRow);
-    }
-    return strip;
-  }
-
-  /**
-   * One slot: a dot in the colour of the data, and the name of that data.
-   *
-   * The state is carried by the shape of the dot, by the word next to it and
-   * by the tooltip, so it does not depend on colour alone.
-   *
-   * A port that has a role says which one it is: 首帧 and 尾帧 are both
-   * pictures, and the user has to be able to tell them apart.
-   */
-  function renderSlot(slot, slotState = 'filled') {
-    const kind = slot?.kind ?? slot;
-    const open = slotState === 'open';
-    const item = el('span', `nxc-slot${open ? ' is-open' : ''}${slotState === 'out' ? ' is-out' : ''}`);
-    item.dataset.kind = kind;
-    item.dataset.state = slotState;
-    const label = KIND_LABEL[kind] ?? kind;
-    const name = slot?.label ? `${slot.label} ${label}` : label;
-    item.title = {
-      filled: `${name} · 已接入`,
-      ready: `${name} · 已就绪`,
-      open: `${name} · 待接入`,
-      out: `${name} · 产出`,
-    }[slotState] ?? name;
-    item.appendChild(el('i', 'nxc-slot__dot'));
-    item.appendChild(el('span', 'nxc-slot__name', name));
-    if (open) item.appendChild(el('span', 'nxc-slot__wait', '待接入'));
-    return item;
-  }
-
   function nodeAccessibleName(node) {
-    const kind = nodeKindLabel(node);
+    const kind = nodeKindLabel(node, { inputKindLabels: state.palette?.inputKindLabels });
     // A node that still carries its default title would say its kind twice.
     const title = node.title && node.title !== kind ? node.title : '';
     const name = [kind, title].filter(Boolean).join(' ');
     return state.selection.includes(node.id) ? `${name}（已选）` : name;
   }
 
+  /**
+   * One piece of the material a card keeps.
+   *
+   * The card shows what it holds and nothing else: the picture it made, the
+   * material the user brought in, the text that came from upstream, or its
+   * own text. Everything the user can *do* with the card belongs to the
+   * surface below it.
+   */
+  function renderMaterialPart(node, part) {
+    if (part === 'note') {
+      // The members are the cards inside the frame, so a card dragged into
+      // the frame is in it, with nothing to keep in step.
+      const members = groupMembers(node, state.canvas.nodes).length;
+      return el('div', 'nxc-note', members ? `${members} 个节点` : '把相关的节点框进来');
+    }
+    if (part === 'output') return renderOutput(node);
+    if (part === 'text') return renderTextPreview(node);
+    if (part === 'frame') return renderEmptyFrame(node);
+    return null;
+  }
+
+  /**
+   * One piece of the operation surface that floats below the card.
+   */
+  function renderOpsPart(node, part, inherited) {
+    // A text line that landed on the card hands its text over: the card
+    // shows that text read-only instead of an editor.
+    if (part === 'composer') return inherited ? renderInheritedPrompt(node, inherited) : createComposer(node);
+    if (part === 'style') return renderTemplatePicker(node);
+    if (part === 'prompt-template') return renderPromptTemplate(node);
+    if (part === 'params') return renderParams(node);
+    return null;
+  }
+
+  /**
+   * One piece of the rail that floats above the card.
+   *
+   * The rail holds what the card is given and what may be done to it: the
+   * button that brings a picture in, and the dock of tools. Both float
+   * above the card, the way the reference canvas holds them.
+   */
+  function renderAbovePart(node, part) {
+    if (part === 'upload') return renderUpload(node);
+    if (part === 'tools') return renderToolBar(node);
+    if (part === 'save') return renderSaveButton(node);
+    if (part === 'menu') return renderMaterialMenu(node);
+    return null;
+  }
+
+  /**
+   * The empty frame of a card that has not made anything yet.
+   *
+   * The card is where the product lands, so before the first run there is
+   * nothing on it but the frame that says so.
+   */
+  function renderEmptyFrame(node) {
+    const box = el('div', 'nxc-node__frame');
+    const ns = 'http://www.w3.org/2000/svg';
+    const icon = document.createElementNS(ns, 'svg');
+    icon.setAttribute('class', 'nxc-node__frame-icon');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('width', '34');
+    icon.setAttribute('height', '34');
+    icon.setAttribute('aria-hidden', 'true');
+    const border = document.createElementNS(ns, 'rect');
+    border.setAttribute('x', '2.5');
+    border.setAttribute('y', '3.5');
+    border.setAttribute('width', '19');
+    border.setAttribute('height', '17');
+    border.setAttribute('rx', '2.5');
+    border.setAttribute('fill', 'none');
+    border.setAttribute('stroke', 'currentColor');
+    border.setAttribute('stroke-width', '1.5');
+    icon.appendChild(border);
+    const sun = document.createElementNS(ns, 'circle');
+    sun.setAttribute('cx', '8');
+    sun.setAttribute('cy', '8.5');
+    sun.setAttribute('r', '1.6');
+    sun.setAttribute('fill', 'currentColor');
+    icon.appendChild(sun);
+    const hill = document.createElementNS(ns, 'path');
+    hill.setAttribute('d', 'M4 18.5l4.8-5.4 3.3 3.5 2.7-2.5 5.2 4.4');
+    hill.setAttribute('fill', 'none');
+    hill.setAttribute('stroke', 'currentColor');
+    hill.setAttribute('stroke-width', '1.5');
+    hill.setAttribute('stroke-linecap', 'round');
+    hill.setAttribute('stroke-linejoin', 'round');
+    icon.appendChild(hill);
+    box.appendChild(icon);
+    const output = node.metadata?.output ?? {};
+    const hint = output.status === 'loading'
+      ? `正在生成…${runningFor(node.id)}`
+      : output.resultCount
+        ? `生成了 ${output.resultCount} 张结果`
+        : roleOf(node) === 'input'
+          ? '还没有素材 · 在上面的按钮里放一个'
+          : '还没有产物 · 写好提示词点「生成」';
+    box.appendChild(el('div', 'nxc-node__frame-hint', hint));
+    return box;
+  }
+
+  /**
+   * The card's own text, read-only.
+   *
+   * The editor that writes it floats below the card while the card is
+   * selected, so the card shows the text the node holds and the panel shows
+   * the editor. The two are never on the screen at the same time.
+   */
+  function renderTextPreview(node) {
+    const box = el('div', 'nxc-node__text-preview');
+    box.appendChild(el('div', 'nxc-node__text-preview-text', textPreviewOf(node)));
+    return box;
+  }
+
+  /**
+   * The text a card shows: what the node holds, or the word that it holds
+   * nothing yet.
+   */
+  function textPreviewOf(node) {
+    const text = String(node.metadata?.prompt || node.metadata?.output?.text || '').trim();
+    if (text) return text;
+    return roleOf(node) === 'input' ? '还没有文本' : '还没有提示词';
+  }
+
+  /**
+   * The card's text, after the user typed it.
+   *
+   * The preview on the card is read-only, so it does not follow the editor
+   * by itself: the editor says what changed, and the card is told.
+   */
+  function refreshTextPreview(node) {
+    const text = dom.nodes.querySelector(
+      `[data-node-id="${node.id}"] .nxc-node__text-preview-text`,
+    );
+    if (text) text.textContent = textPreviewOf(node);
+  }
+
+  /**
+   * Put the operation surface where it can be seen.
+   *
+   * The surface hangs below the card. When there is no board left below it,
+   * it goes above the card instead — and the choice is made from the space
+   * that is really there, not from a guess.
+   *
+   * The rail floats above the card, so a surface that opens above the card
+   * has to clear the rail as well. The height of the rail is measured and
+   * given to the card, which is what puts the surface above the rail.
+   */
+  function fitOpsSurfaces() {
+    const view = dom.viewport.getBoundingClientRect();
+    for (const wrap of dom.nodes.querySelectorAll('.nxc-node--selected')) {
+      const surface = wrap.querySelector('.nxc-node__ops');
+      const rail = wrap.querySelector('.nxc-node__rail');
+      const railHeight = rail ? rail.getBoundingClientRect().height : 0;
+      wrap.style.setProperty('--nxc-rail-h', `${railHeight}px`);
+      if (!surface) continue;
+      const nodeRect = wrap.getBoundingClientRect();
+      const side = opsSide({
+        nodeTop: nodeRect.top - railHeight,
+        nodeBottom: nodeRect.bottom,
+        panelHeight: surface.getBoundingClientRect().height,
+        viewTop: view.top,
+        viewBottom: view.bottom,
+        prefer: 'below',
+      });
+      surface.classList.toggle('is-above', side === 'above');
+      // The surface that holds the prompt is wider than the card, so it is
+      // kept inside the window: a prompt that runs off the screen cannot be
+      // read.
+      const offset = opsOffset({ rect: surface.getBoundingClientRect(), view });
+      surface.style.setProperty('--nxc-ops-dx', `${offset}px`);
+    }
+  }
+
   function renderNode(node) {
     // What the model this node selected can take. The ports and the modes
     // follow it, so the card never offers something the run would refuse.
     const caps = effectiveCaps(node);
+    // The card keeps the material; the operation surface floats below it.
+    // One rule decides what belongs where, so the card and the surface can
+    // never disagree about it.
+    const inherited = inheritedTextFor(state.canvas, node);
+    const output = node.metadata.output ?? {};
+    const layers = cardLayers(node, {
+      tools: state.palette?.tools ?? [],
+    });
+    const anchor = textAnchor(layers);
     const wrap = el('div', 'nxc-node');
     wrap.dataset.nodeId = node.id;
     wrap.classList.add(`nxc-node--${node.type}`);
@@ -1366,16 +1537,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     wrap.style.width = `${node.width}px`;
     wrap.style.height = `${node.height}px`;
 
+    // The card carries nothing but what it holds. Its own head is empty
+    // unless the user is renaming it: what it is and how it is doing are
+    // said by what is on the card — a picture, an error, an empty frame.
     const head = el('div', 'nxc-node__head');
-    // A dot that says how the node is doing, beside the words that say it.
-    head.appendChild(el('i', 'nxc-node__state'));
-    // The kind, and the mode the node is in: 文生图 becomes 图生图 when a
-    // picture is connected to it. An input card names what it takes.
-    const kindLabel = nodeKindLabel(node);
-    const kind = el('span', 'nxc-node__kind', kindLabel);
-    kind.dataset.kind = node.type;
-    head.appendChild(kind);
-
     if (state.editingTitleId === node.id) {
       const input = el('input', 'nxc-node__title-input');
       input.value = node.title;
@@ -1400,112 +1565,61 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         input.focus({ preventScroll: true });
         input.select();
       }, 0);
-    } else {
-      const title = el('span', 'nxc-node__title', node.title);
-      title.addEventListener('dblclick', (event) => {
-        event.stopPropagation();
-        state.editingTitleId = node.id;
-        render();
-      });
-      head.appendChild(title);
     }
 
-    // The selection is not only a border colour: the node says so in words,
-    // and its name carries the same state for a reader that cannot see it.
-    const chip = el('span', 'nxc-node__sel', '已选');
-    chip.hidden = !selected;
-    head.appendChild(chip);
+    // The selection is not only a border colour: the name of the card says
+    // it in words, for a reader that cannot see it.
     wrap.setAttribute('aria-label', nodeAccessibleName(node));
-
-    const task = state.tasks.get(state.nodeTasks.get(node.id));
-    if (task && (task.status === 'running' || task.status === 'waiting-question')) {
-      const badge = el('span', 'nxc-node__status');
-      badge.dataset.tone = 'running';
-      badge.appendChild(el('i', 'nxc-spin'));
-      badge.appendChild(document.createTextNode(`${Math.round((task.elapsedMs ?? 0) / 1000)}s`));
-      head.appendChild(badge);
-    } else if (status && status !== 'idle') {
-      const badge = el('span', 'nxc-node__status');
-      badge.dataset.tone = status === 'success' ? 'success' : status === 'error' ? 'error' : 'running';
-      badge.textContent = { success: '已完成', error: '失败', interrupted: '已中断' }[status] ?? status;
-      // A batch that lost an asset says so on the card: the user asked for
-      // four and three came out, and the card has to say it.
-      const asked = Number(node.metadata.count ?? 1);
-      const made = Array.isArray(task?.media) ? task.media.length : 0;
-      if (status === 'success' && asked > 1 && made > 0 && made < asked) {
-        badge.textContent = `已完成 ${made}/${asked}`;
-        badge.dataset.tone = 'error';
-        badge.title = `这一批里少了 ${asked - made} 张`;
-      }
-      head.appendChild(badge);
-    }
     wrap.appendChild(head);
 
-    // The slots: what may come in and what goes out, read off the card.
-    const slots = slotsOf(node);
-    if (slots.inputs.length > 0 || slots.outputs.length > 0) {
-      wrap.appendChild(renderSlotStrip(node, slots));
-    }
-
     const body = el('div', 'nxc-node__body');
-    const role = roleOf(node);
-    if (role === 'group') {
-      body.appendChild(el('div', 'nxc-note', '把相关的节点框进来'));
-    } else if (role === 'input') {
-      // The input card holds what goes in: one kind of material. What kind it
-      // is, the header says — there is no switch for it, because the kind is
-      // fixed when the node is created.
-      const kind = node.metadata.kind ?? 'text';
-      if (kind === 'text') {
-        // A text node holds text: the template fills it and the composer
-        // holds it, so there is nothing else on the card.
-        body.appendChild(renderTemplatePicker(node));
-        body.appendChild(createComposer(node));
-      } else {
-        // A node that holds material shows what it holds and lets the user
-        // pick more. It has no text box: the text that goes with the material
-        // is another node's job — a text input above it, or the prompt of the
-        // node it feeds.
-        body.appendChild(renderOutput(node));
-        body.appendChild(renderUpload(node));
-      }
-    } else if (role === 'result') {
-      // The result card only shows what was produced.
-      body.appendChild(renderOutput(node));
-    } else {
-      // The generating card has the prompt, the model and the button, and
-      // no result of its own: the result arrives as its own node.
-      // A text line that landed on this node hands its text over, so the box
-      // shows that text instead of the user's own prompt.
-      const inherited = inheritedTextFor(state.canvas, node);
-      if (inherited) {
-        body.appendChild(renderInheritedPrompt(node, inherited));
-      } else {
-        body.appendChild(createComposer(node));
-      }
-      // The prompt mode of a text node brings the template picker with it.
-      if (modeOf(node) === 'prompt') body.appendChild(renderPromptTemplate(node));
-      body.appendChild(renderParams(node));
+    const surface = el('div', 'nxc-node__ops');
+    // The surface that holds a prompt is a page, not a column.
+    const promptSurface = opsSurfaceClass(layers);
+    if (promptSurface) surface.classList.add(promptSurface);
+    surface.dataset.canvasNoZoom = 'true';
+    const rail = el('div', 'nxc-node__rail');
+    rail.dataset.canvasNoZoom = 'true';
+    // The small buttons — the way out of the app and the menu of the
+    // material — sit together at the end of the rail.
+    const railActs = el('div', 'nxc-rail__acts');
+    railActs.dataset.canvasNoZoom = 'true';
+    for (const part of layers.material) {
+      const piece = renderMaterialPart(node, part);
+      if (!piece) continue;
+      // The box a text line lands on stays on the card, so the line does not
+      // follow the operation surface out of it.
+      if (part === anchor) piece.dataset.textBox = '1';
+      body.appendChild(piece);
     }
+    for (const part of layers.ops) {
+      const piece = renderOpsPart(node, part, inherited);
+      if (piece) surface.appendChild(piece);
+    }
+    // The rail above the card: the way in, the dock of tools and the
+    // small buttons at the end of it. The hint takes its place when the user
+    // asks what the card is — one thing at a time above the card.
+    for (const entry of railParts(layers)) {
+      const piece = renderAbovePart(node, entry.part);
+      if (!piece) continue;
+      if (entry.where === 'acts') railActs.appendChild(piece);
+      else rail.appendChild(piece);
+    }
+    if (railActs.childElementCount) rail.appendChild(railActs);
     if (node.metadata.output?.notice) {
       body.appendChild(el('div', 'nxc-node__notice', node.metadata.output.notice));
     }
     if (node.metadata.output?.error) {
-      body.appendChild(el('div', 'nxc-node__error', node.metadata.output.error));
+      body.appendChild(renderErrorCard(node, node.metadata.output.error));
     }
     wrap.appendChild(body);
+    // The surface is only there when it has something to say: a card with no
+    // operation gets no empty panel under it.
+    if (surface.childElementCount) wrap.appendChild(surface);
+    // The rail is drawn last, so it sits over the surface when the two
+    // share a side of the card.
+    if (rail.childElementCount) wrap.appendChild(rail);
     bindNodeGestures(node, wrap);
-
-    if (role === 'result') {
-      // The footer is the toolbar. A card with no tools has no footer, so no
-      // empty strip with a border is left under the material.
-      const bar = renderToolBar(node);
-      if (bar) {
-        const footer = el('div', 'nxc-node__footer');
-        footer.appendChild(bar);
-        wrap.appendChild(footer);
-      }
-    }
 
     if (node.type !== 'group') {
       // One port per input kind the node can take, so the picture of what
@@ -1571,7 +1685,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   }
 
   // The preview keeps the media's own ratio and the card is sized around it.
-  // The box itself is worked out by `fitMediaBox`, which is a pure function
+  // The box itself is worked out by `mediaBoxFor`, which is a pure function
   // and is covered by the test suite.
   const MEDIA_CHROME = 20; // the body padding and the preview border
 
@@ -1586,6 +1700,55 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   }
 
   /**
+   * What the box was worked out from.
+   *
+   * The box depends on the width of the card as well as on the media's own
+   * size: a card the user widened asks for a wider preview.
+   */
+  function mediaSignature(naturalWidth, naturalHeight, cardWidth) {
+    return `${naturalWidth}x${naturalHeight}@${Math.round(cardWidth)}`;
+  }
+
+  /**
+   * The box the media takes in this card.
+   *
+   * The rule itself lives in `mediaBoxFor`: a card the user sized by hand
+   * is a frame the media fills, a card nobody touched is sized around the
+   * media.
+   */
+  function mediaBoxForNode(node, naturalWidth, naturalHeight) {
+    return mediaBoxFor(
+      naturalWidth / naturalHeight,
+      Math.max(160, node.width - MEDIA_CHROME),
+      node.metadata.userSized === true,
+    );
+  }
+
+  /**
+   * The card hugs the media.
+   *
+   * Its height is measured with the preview in place, so there is no grey
+   * left over under the picture. The card is measured now, so the cards that
+   * were placed with it are placed again by their real size.
+   */
+  function fitCardHeight(node, card, { dirty = false, min = 200 } = {}) {
+    const previous = card.style.height;
+    card.style.height = 'auto';
+    const natural = card.offsetHeight;
+    card.style.height = previous;
+    // The floor is the caller's to set: a card with a picture needs room,
+    // a card with a sound does not.
+    const height = Math.max(min, Math.min(2000, Math.round(natural)));
+    if (Math.abs(height - node.height) <= 1) return;
+    node.height = height;
+    card.style.height = `${height}px`;
+    if (dirty) markDirty();
+    renderConnections();
+    const groupId = layoutGroupOf.get(node.id);
+    if (groupId) relayoutGroup(groupId);
+  }
+
+  /**
    * Size the node around the media it just produced.
    *
    * The preview box takes the media's own ratio, the card grows to fit it,
@@ -1594,13 +1757,16 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   function fitNodeToMedia(node, card, mediaWrap, media, naturalWidth, naturalHeight) {
     if (!naturalWidth || !naturalHeight) return;
     const output = node.metadata.output ?? (node.metadata.output = {});
-    const signature = `${naturalWidth}x${naturalHeight}`;
+    const signature = mediaSignature(naturalWidth, naturalHeight, node.width);
     if (output.fittedSignature === signature && output.fittedSize) return;
 
-    const box = fitMediaBox(naturalWidth / naturalHeight, Math.max(160, node.width - MEDIA_CHROME));
+    const box = mediaBoxForNode(node, naturalWidth, naturalHeight);
     applyMediaBox(mediaWrap, media, box);
     output.fittedSize = box;
     output.fittedSignature = signature;
+    // The size the media was measured at, so the box can be worked out again
+    // after a reload and the preview follows the card.
+    output.fittedNatural = { width: naturalWidth, height: naturalHeight };
 
     // A card that was never resized by hand follows the media; one that was
     // keeps the width the user chose.
@@ -1612,23 +1778,31 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       }
     }
 
-    // The card grows with the preview: its natural height is measured with
-    // the media box already in place.
-    const previous = card.style.height;
-    card.style.height = 'auto';
-    const natural = card.offsetHeight;
-    card.style.height = previous;
-    const height = Math.max(200, Math.min(2000, Math.round(natural)));
-    if (Math.abs(height - node.height) > 1) {
-      node.height = height;
-      card.style.height = `${height}px`;
-      markDirty();
-      renderConnections();
-    }
-    // The card is measured now, so the cards that were placed with it are
-    // placed again by their real size.
-    const groupId = layoutGroupOf.get(node.id);
-    if (groupId) relayoutGroup(groupId);
+    // The card grows with the preview.
+    fitCardHeight(node, card, { dirty: true });
+  }
+
+  /**
+   * The media follows the card the user is resizing.
+   *
+   * The card is a frame: it grows, and the picture inside it grows with it,
+   * keeping its own ratio, and the card's height follows the picture — so
+   * there is never a grey border around the work.
+   */
+  function refitMedia(node, card) {
+    const media = card?.querySelector('.nxc-node__media');
+    const naturalWidth = media?.naturalWidth || media?.videoWidth || 0;
+    const naturalHeight = media?.naturalHeight || media?.videoHeight || 0;
+    if (!naturalWidth || !naturalHeight) return;
+    const mediaWrap = media.parentElement;
+    if (!mediaWrap) return;
+    const output = node.metadata.output ?? (node.metadata.output = {});
+    const box = mediaBoxForNode(node, naturalWidth, naturalHeight);
+    applyMediaBox(mediaWrap, media, box);
+    output.fittedSize = box;
+    output.fittedSignature = mediaSignature(naturalWidth, naturalHeight, node.width);
+    output.fittedNatural = { width: naturalWidth, height: naturalHeight };
+    fitCardHeight(node, card);
   }
 
   /**
@@ -1670,19 +1844,92 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     }
   }
 
-  /** The row under a material: the way to get the file out of the app. */
-  function renderMediaActions(node, item) {
-    const row = el('div', 'nxc-node__media-actions');
-    const save = el('button', 'nxc-btn nxc-btn--small', '保存');
-    save.type = 'button';
-    save.dataset.canvasNoZoom = 'true';
-    save.title = '把这个文件存到电脑';
-    save.addEventListener('click', (event) => {
+  /**
+   * The way out of the app, as a button in the rail above the card.
+   *
+   * The file is on this machine, and the user may want it on theirs. The
+   * button floats with the rest of the rail, so the card stays a picture.
+   */
+  function renderSaveButton(node) {
+    const item = node.metadata.output?.media?.[0];
+    if (!item?.url) return null;
+    const button = el('button', 'nxc-rail__btn');
+    button.type = 'button';
+    button.dataset.canvasNoZoom = 'true';
+    button.title = '把这个文件存到电脑';
+    button.appendChild(saveIcon());
+    button.addEventListener('click', (event) => {
       event.stopPropagation();
-      saveMedia(node, item);
+      void saveMedia(node, item);
     });
-    row.appendChild(save);
-    return row;
+    return button;
+  }
+
+  /**
+   * What may be done with the material a card holds.
+   *
+   * The card shows the material; the menu above it says what may be done
+   * with it: put another one in, copy it, take it away.
+   */
+  function renderMaterialMenu(node) {
+    const media = node.metadata.output?.media ?? [];
+    if (!media.length) return null;
+    const button = el('button', 'nxc-rail__btn');
+    button.type = 'button';
+    button.dataset.canvasNoZoom = 'true';
+    button.title = '这个素材能做什么';
+    button.appendChild(menuIcon());
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const kind = node.metadata.kind ?? media[0].kind ?? 'image';
+      const items = [
+        { label: '换个素材', action: () => pickFiles(node, kind) },
+        { label: '复制素材', action: () => void copyMediaToClipboard(node) },
+      ];
+      for (const item of media) {
+        items.push({
+          label: `移除 ${item.name || '这个素材'}`,
+          danger: true,
+          action: () => removeMedia(node, item),
+        });
+      }
+      showMenu(dom.contextMenu, event.clientX, event.clientY, items);
+    });
+    return button;
+  }
+
+  /**
+   * Take a piece of material off a card.
+   */
+  function removeMedia(node, item) {
+    const media = node.metadata.output?.media ?? [];
+    node.metadata.output.media = media.filter((entry) => entry !== item);
+    node.metadata.output.updatedAt = new Date().toISOString();
+    markDirty();
+    render();
+  }
+
+  /**
+   * Ask the user for a file, without a button on the page.
+   *
+   * The file box is invisible, and it goes away as soon as the user has
+   * picked something — or has given up.
+   */
+  function pickFiles(node, kind) {
+    const picker = el('input');
+    picker.type = 'file';
+    picker.accept = kind === 'image' ? 'image/*' : kind === 'video' ? 'video/*' : 'audio/*';
+    picker.multiple = kind === 'image';
+    picker.style.position = 'fixed';
+    picker.style.left = '-9999px';
+    picker.addEventListener('change', () => {
+      const files = [...(picker.files ?? [])];
+      picker.remove();
+      if (files.length) void uploadFiles(node, files);
+    });
+    picker.addEventListener('cancel', () => picker.remove());
+    document.body.appendChild(picker);
+    picker.click();
   }
 
   function renderOutput(node) {
@@ -1693,6 +1940,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       const item = output.media[0];
       const mediaWrap = el('div', 'nxc-node__media-wrap');
       mediaWrap.dataset.canvasNoZoom = 'true';
+      // What goes under the media: the audio card has a row of its own under
+      // the wave, the way the reference product puts the player there.
+      let below = null;
       if (item.kind === 'video') {
         const video = el('video', 'nxc-node__media');
         video.src = item.url;
@@ -1755,9 +2005,102 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       } else if (item.kind === 'audio') {
         const audio = el('audio', 'nxc-node__media nxc-node__media--audio');
         audio.src = item.url;
-        audio.controls = true;
         audio.preload = 'metadata';
+        // The sound is the picture of an audio card: the wave is a band of
+        // its own, the way the reference product draws it. The browser's own
+        // player is a grey bar out of another product, so it is not used.
+        mediaWrap.classList.add('nxc-node__media-wrap--audio');
+        const wave = el('canvas', 'nxc-node__audio-wave');
+        // What has not been heard yet is dimmed: the bright part of the
+        // wave is the part that has been played.
+        const ahead = el('div', 'nxc-node__audio-ahead');
+        // The mark that says where the sound is.
+        const head = el('div', 'nxc-node__audio-head');
         mediaWrap.appendChild(audio);
+        mediaWrap.appendChild(wave);
+        mediaWrap.appendChild(ahead);
+        mediaWrap.appendChild(head);
+        void paintWaveform(wave, item.url, 120, { oversample: 2 });
+        // How long the sound is, and how far into it the sound is.
+        const totalMs = () => {
+          const fromFile = Number(audio.duration);
+          if (Number.isFinite(fromFile) && fromFile > 0) return Math.round(fromFile * 1000);
+          return Math.round(Number(output.durationMs) || 0);
+        };
+        const readout = el('span', 'nxc-node__audio-time');
+        const showTime = () => {
+          const total = totalMs();
+          const current = Math.max(0, Math.round(audio.currentTime * 1000));
+          readout.textContent = `${formatDuration(current)} / ${formatDuration(total)}`;
+          readout.hidden = !total;
+        };
+        // The mark follows the sound, and what is left of the wave dims.
+        const paintHead = () => {
+          const total = totalMs();
+          const ratio = total > 0
+            ? Math.min(1, Math.max(0, (audio.currentTime * 1000) / total))
+            : 0;
+          const at = `${(ratio * 100).toFixed(3)}%`;
+          head.style.left = at;
+          ahead.style.left = at;
+        };
+        // The row under the wave: where the sound is, how to play it, and how
+        // it leaves the app.
+        const bar = el('div', 'nxc-node__audio-bar');
+        const play = el('button', 'nxc-node__audio-play');
+        play.type = 'button';
+        play.dataset.canvasNoZoom = 'true';
+        play.textContent = '▶';
+        play.title = '播放这段声音';
+        const download = el('button', 'nxc-node__audio-download');
+        download.type = 'button';
+        download.dataset.canvasNoZoom = 'true';
+        download.title = '把这个文件存到电脑';
+        download.appendChild(saveIcon());
+        download.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void saveMedia(node, item);
+        });
+        const showState = () => {
+          const playing = isPlaying(audio);
+          play.textContent = playing ? '⏸' : '▶';
+          play.title = playing ? '暂停' : '播放这段声音';
+          showTime();
+          paintHead();
+        };
+        play.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (isPlaying(audio)) {
+            audio.pause();
+          } else {
+            // A file that ran out starts over.
+            if (audio.ended) audio.currentTime = 0;
+            audio.play().catch(() => {});
+          }
+          showState();
+        });
+        audio.addEventListener('play', showState);
+        audio.addEventListener('pause', showState);
+        // A file that ran out is not playing: the browser leaves `paused`
+        // false after the last moment, so the button has to hear this too.
+        audio.addEventListener('ended', showState);
+        audio.addEventListener('timeupdate', showState);
+        // The clip is cut on the length of the material, so the card
+        // measures it while it plays the file.
+        audio.addEventListener('loadedmetadata', () => {
+          if (!Number.isFinite(audio.duration)) return;
+          output.durationMs = Math.round(audio.duration * 1000);
+          // The length is on the card as soon as the file knows it.
+          showState();
+          // The card is as tall as the sound needs it: the wave and the row
+          // under it, and nothing else.
+          const card = mediaWrap.closest('.nxc-node');
+          if (card) fitCardHeight(node, card, { dirty: true, min: 100 });
+        });
+        bar.appendChild(readout);
+        bar.appendChild(play);
+        bar.appendChild(download);
+        below = bar;
       } else {
         const img = el('img', 'nxc-node__media');
         img.src = item.url;
@@ -1790,10 +2133,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         mediaWrap.appendChild(img);
         if (state.crop?.nodeId === node.id) mediaWrap.appendChild(renderCropOverlay(node, mediaWrap));
       }
-      // A media that was already measured keeps the box it was given, so the
-      // card does not jump back to a fixed size on every render.
+      // A media that was already measured keeps its own ratio, and the box
+      // follows the card: a card the user widened shows a wider picture
+      // instead of a grey border around a small one.
       if (output.fittedSize && item.kind !== 'audio') {
-        applyMediaBox(mediaWrap, mediaWrap.querySelector('.nxc-node__media'), output.fittedSize);
+        const natural = output.fittedNatural;
+        const box = natural
+          ? mediaBoxForNode(node, natural.width, natural.height)
+          : output.fittedSize;
+        applyMediaBox(mediaWrap, mediaWrap.querySelector('.nxc-node__media'), box);
       }
       // The file this card points at is gone. The card says so in words
       // instead of showing a broken picture, and the picture stays in the
@@ -1803,9 +2151,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         mediaWrap.appendChild(el('div', 'nxc-media-lost', '素材已不在了。重新生成上游那一步，或者从资产库把它插回来。'));
       }
       box.appendChild(mediaWrap);
-      // The way out of the app: the file is on this machine, and the user
-      // may want it on theirs.
-      box.appendChild(renderMediaActions(node, item));
+      if (below) box.appendChild(below);
     } else if (output.missing) {
       box.appendChild(el('div', 'nxc-media-lost', '素材已不在了'));
     } else if (output.text) {
@@ -1854,139 +2200,419 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
    * nowhere to land: it goes, and the user is told. The rule lives in
    * `actions.mjs`, so the runtime drops the same lines.
    */
+  /**
+   * The three things only the page knows: the models this node can run, the
+   * voice catalogue the runtime fetched, and the batch sizes. The rules that
+   * turn them into fields live in `node-ui.mjs`.
+   */
+  function paramContext(node) {
+    const models = modeModelOptions(node).length ? modeModelOptions(node) : agentModelOptions();
+    return {
+      models,
+      voices: state.voices.length ? state.voices : [],
+      counts: BATCH_MODES.includes(runModeOf(node))
+        ? BATCH_COUNTS.map((count) => ({ value: String(count), label: `× ${count}` }))
+        : [],
+    };
+  }
+
+  /**
+   * The one chip that sums the parameters up.
+   *
+   * The card does not carry a row of controls: it carries this. The panel
+   * behind it holds the controls, and both read the same list, so the chip
+   * can never say something the panel would not.
+   */
+  function paramChip(node, fields) {
+    const chip = el('button', 'nxc-chip');
+    chip.type = 'button';
+    chip.dataset.canvasNoZoom = 'true';
+    chip.dataset.field = 'params';
+    // The little square in front is the shape of the thing, the way the
+    // reference canvas draws the chip.
+    chip.appendChild(el('span', 'nxc-chip__glyph'));
+    chip.appendChild(el('span', 'nxc-chip__text', paramSummary(fields)));
+    chip.title = '点开改参数';
+    // The chip that opened the panel says so by its own border.
+    chip.classList.toggle('is-active', openChip(state.panel, node.id) === 'params');
+    bindPanelControl(chip, () => {
+      // The chip that opened the panel closes it again: the same press that
+      // opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'params') === 'close') {
+        closePanel();
+        return;
+      }
+      openParamPanel(node, chip.getBoundingClientRect());
+    });
+    return chip;
+  }
+
+  /**
+   * The panel behind the parameter chip.
+   *
+   * It opens above the chip: the chip sits in the bar under the card, so a
+   * panel over it covers the card rather than the board below — and the
+   * board below is where the next card is.
+   *
+   * The parameters are drawn as buttons, the way the reference canvas draws
+   * them: the ratios are a grid of shapes, the size is a row of segments,
+   * and whatever is not a button stays a drop-down.
+   */
+  function openParamPanel(node, anchorRect) {
+    const caps = effectiveCaps(node);
+    // The shape and the size are one panel; the count has a panel of its
+    // own, so no option is offered twice.
+    const fields = panelFields(paramFields(node, caps, paramContext(node)), 'params');
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'params', nodeId: node.id };
+    // The row is drawn again, so the chip that opened this panel can say
+    // that it is the one that is open.
+    scheduleRender();
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    // The panel says what kind it is, so it can be as wide as its content
+    // needs: a grid of shapes is wider than a list of values.
+    panel.dataset.kind = 'params';
+
+    const body = el('div', 'nxc-panel__body');
+    for (const field of fields) {
+      // The model is not a plain value: changing it can retire the mode and
+      // the lines that mode carried, so it has a panel of its own.
+      if (field.key === 'model') continue;
+      if (field.key === 'ratio') {
+        body.appendChild(ratioButtons(node, field));
+        continue;
+      }
+      if (field.key === 'resolution') {
+        body.appendChild(segmentButtons(node, field));
+        continue;
+      }
+      body.appendChild(
+        paramSelect(field.label, field.value, field.options, (value) => {
+          if (field.key === 'emotion') {
+            node.metadata.emotion = value || null;
+          } else if (field.key === 'duration') {
+            node.metadata.duration = Number(value);
+            // The resolution depends on the duration, so it is snapped too.
+            fitNodeParams(node, effectiveCaps(node));
+          } else {
+            node.metadata[field.key] = value;
+          }
+        }, () => render()),
+      );
+    }
+    if (!fields.length) {
+      body.appendChild(el('div', 'nxc-panel__desc', '这个节点没有可调参数。'));
+    }
+    panel.appendChild(body);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placePanel(anchorRect, rect, { width: window.innerWidth, height: window.innerHeight }, BAR_PANEL_SIDE);
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+  }
+
+  /**
+   * The panel behind the count chip.
+   *
+   * It holds the count and nothing else: the frame and the size have a chip
+   * and a panel of their own, so no option is offered twice. It opens above
+   * the chip, the way the other panels do, and the count that is chosen
+   * says so by its own row.
+   */
+  function openCountPanel(node, anchorRect, field) {
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'count', nodeId: node.id };
+    // The row is drawn again, so the chip that opened this panel can say
+    // that it is the one that is open.
+    scheduleRender();
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    panel.dataset.kind = 'count';
+    panel.appendChild(el('div', 'nxc-panel__title', field.label));
+    const list = el('div', 'nxc-panel__list');
+    for (const option of field.options) {
+      const value = String(option.value);
+      const button = el('button', `nxc-panel__option${value === String(field.value) ? ' is-active' : ''}`, option.label);
+      button.type = 'button';
+      button.dataset.canvasNoZoom = 'true';
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        node.metadata.count = Number(value);
+        markDirty();
+        closePanel();
+        render();
+      });
+      list.appendChild(button);
+    }
+    panel.appendChild(list);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placePanel(anchorRect, rect, { width: window.innerWidth, height: window.innerHeight }, BAR_PANEL_SIDE);
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+  }
+
+  /**
+   * A titled group of controls inside a panel.
+   */
+  function panelGroup(label, control) {
+    const group = el('div', 'nxc-panel__group');
+    group.appendChild(el('div', 'nxc-panel__group-label', label));
+    group.appendChild(control);
+    return group;
+  }
+
+  /**
+   * The ratios, as a grid of shapes.
+   *
+   * Every ratio is drawn as the shape it stands for, so the reader picks a
+   * picture instead of a fraction. The one that is chosen says so by its
+   * border, and the name under the shape says which one it is.
+   */
+  function ratioButtons(node, field) {
+    const grid = el('div', 'nxc-ratio-grid');
+    for (const option of field.options) {
+      const button = el('button', 'nxc-ratio');
+      button.type = 'button';
+      button.dataset.canvasNoZoom = 'true';
+      button.dataset.value = option.value;
+      if (option.value === field.value) button.classList.add('is-active');
+      const shape = ratioGlyph(option.value);
+      const glyph = el('span', 'nxc-ratio__glyph');
+      glyph.style.width = `${shape.width}px`;
+      glyph.style.height = `${shape.height}px`;
+      if (shape.adaptive) glyph.classList.add('is-adaptive');
+      button.appendChild(glyph);
+      button.appendChild(el('span', 'nxc-ratio__label', option.label));
+      button.title = option.hint ?? ratioLabel(option.value);
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        node.metadata.ratio = option.value;
+        markDirty();
+        // The panel keeps its own state: only the button that was pressed
+        // changes, and the card is drawn again so the chip sums up.
+        for (const cell of grid.querySelectorAll('.nxc-ratio')) {
+          cell.classList.toggle('is-active', cell.dataset.value === option.value);
+        }
+        render();
+      });
+      grid.appendChild(button);
+    }
+    return panelGroup('比例', grid);
+  }
+
+  /**
+   * A value with a few choices, as a row of segments.
+   *
+   * The row says which one is chosen by its own border, so the reader does
+   * not have to open anything to know what is set.
+   */
+  function segmentButtons(node, field) {
+    const row = el('div', 'nxc-seg');
+    for (const option of field.options) {
+      const value = String(option.value);
+      const button = el('button', 'nxc-seg__btn', option.label);
+      button.type = 'button';
+      button.dataset.canvasNoZoom = 'true';
+      button.dataset.value = value;
+      if (value === String(field.value)) button.classList.add('is-active');
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        node.metadata[field.key] = field.key === 'count' ? Number(option.value) : option.value;
+        markDirty();
+        for (const cell of row.querySelectorAll('.nxc-seg__btn')) {
+          cell.classList.toggle('is-active', cell.dataset.value === value);
+        }
+        render();
+      });
+      row.appendChild(button);
+    }
+    return panelGroup(field.label, row);
+  }
+
+  /**
+   * How many the run makes.
+   *
+   * The count is a chip of its own, next to the shape and the size, and it
+   * opens a panel of its own that holds the number and nothing else.
+   */
+  function countChip(node, field) {
+    const chip = el('button', 'nxc-chip nxc-chip--count', field.chip);
+    chip.type = 'button';
+    chip.dataset.canvasNoZoom = 'true';
+    chip.title = '改这一次出几张';
+    // The chip that opened the panel says so by its own border.
+    chip.classList.toggle('is-active', openChip(state.panel, node.id) === 'count');
+    bindPanelControl(chip, () => {
+      // The chip that opened the panel closes it again: the same press that
+      // opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'count') === 'close') {
+        closePanel();
+        return;
+      }
+      openCountPanel(node, chip.getBoundingClientRect(), field);
+    });
+    return chip;
+  }
+
+  /**
+   * The card a failed node becomes.
+   *
+   * A failure that only says what went wrong leaves the user with nothing to
+   * do about it, so the card grows four buttons: try again, take the failure
+   * back, delete the node, and report it. The last one copies the node's
+   * name and the reason to the clipboard, so a report carries everything that
+   * is needed to look into it.
+   */
+  function renderErrorCard(node, message) {
+    const card = el('div', 'nxc-node__error');
+    card.appendChild(el('div', 'nxc-node__error-text', message));
+    const acts = el('div', 'nxc-node__error-acts');
+    for (const action of errorActions(node)) {
+      const button = el('button', 'nxc-btn nxc-btn--small', action.label);
+      button.type = 'button';
+      button.dataset.canvasNoZoom = 'true';
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void runErrorAction(node, action.key);
+      });
+      acts.appendChild(button);
+    }
+    card.appendChild(acts);
+    return card;
+  }
+
+  async function runErrorAction(node, key) {
+    if (key === 'retry') {
+      void startRun(node);
+      return;
+    }
+    if (key === 'cancel') {
+      node.metadata.output.error = '';
+      node.metadata.output.status = 'idle';
+      markDirty();
+      render();
+      return;
+    }
+    if (key === 'delete') {
+      removeNode(node.id);
+      markDirty();
+      render();
+      return;
+    }
+    if (key === 'report') {
+      const text = [
+        `节点：${node.title}`,
+        `ID：${node.id}`,
+        `错误：${node.metadata.output?.error ?? ''}`,
+      ].join('\n');
+      if (!navigator.clipboard?.writeText) {
+        showBanner(text, 'error');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        showBanner('已复制节点信息，可以贴出来上报');
+      } catch {
+        showBanner(text, 'error');
+      }
+    }
+  }
+
+  /**
+   * Put the node in another mode.
+   *
+   * The ports are the mode's inputs, so a line the new mode does not take
+   * has nowhere to land: it goes, and the user is told. The rule lives in
+   * `actions.mjs`, so the runtime drops the same lines.
+   */
+  function applyModeChoice(node, modeId) {
+    // The same action the Agent sends, so the page and the runtime drop
+    // the same lines.
+    const applied = applyAction(
+      state.canvas,
+      { type: 'update_node', args: { id: node.id, mode: modeId } },
+      actionContext(),
+    );
+    if (applied.error) {
+      showBanner(`切不了这个模式：${applied.error}`, 'error');
+      return false;
+    }
+    state.canvas.nodes = applied.canvas.nodes;
+    state.canvas.connections = applied.canvas.connections;
+    // The prompt mode starts with the first preset, so it is useful before
+    // anything is typed.
+    if (modeId === 'prompt') {
+      const at = state.canvas.nodes.findIndex((item) => item.id === node.id);
+      if (at >= 0) {
+        const template = promptTemplateFor({
+          mode: 'prompt',
+          templates: state.palette?.promptTemplates ?? [],
+        });
+        state.canvas.nodes[at].metadata.templateId = template.templateId;
+        state.canvas.nodes[at].metadata.templateText = template.templateText;
+      }
+    }
+    if (applied.info?.dropped?.length) {
+      showBanner(`切到「${nodeModeLabel(node)}」后，去掉了 ${applied.info.dropped.length} 条连线（这个模式不接）。`, 'error');
+    }
+    // The new mode may take a material the prompt names, and the node may
+    // not have it yet.
+    applyMentions(node.id);
+    markDirty();
+    render();
+    // The card was rebuilt, so the control that was used is gone and the
+    // focus fell back to the page — where the next Tab would land on
+    // another node. Put the focus back on this node's mode.
+    focusModeControl(node);
+    return true;
+  }
+
   function renderParams(node) {
     const caps = effectiveCaps(node);
+    // Whether this node is running is asked once: the run button and the
+    // session buttons both need to know.
+    const running = isRunning(node.id);
+    // The bar under the card has two lines: the top one says what the node
+    // is going to do, the bottom one says how it does it.
+    const wrap = el('div', 'nxc-node__params');
     const row = el('div', 'nxc-row');
 
-    // The mode is a choice on the card: it says what the node takes, so the
-    // ports on the left follow it. And a mode the model cannot run is not
-    // offered at all: only MiniMax-H3 can continue a video.
-    const modes = modesFor(node, caps);
-    if (modes.length) {
-      const field = paramSelect('模式', modeOf(node), modes.map((mode) => ({ value: mode.id, label: mode.label })), (value) => {
-        // The same action the Agent sends, so the page and the runtime drop
-        // the same lines.
-        const applied = applyAction(
-          state.canvas,
-          { type: 'update_node', args: { id: node.id, mode: value } },
-          actionContext(),
-        );
-        if (applied.error) {
-          showBanner(`切不了这个模式：${applied.error}`, 'error');
-          return;
-        }
-        state.canvas.nodes = applied.canvas.nodes;
-        state.canvas.connections = applied.canvas.connections;
-        // The prompt mode starts with the first preset, so it is useful
-        // before anything is typed.
-        if (value === 'prompt') {
-          const at = state.canvas.nodes.findIndex((item) => item.id === node.id);
-          if (at >= 0) {
-            const template = promptTemplateFor({
-              mode: 'prompt',
-              templates: state.palette?.promptTemplates ?? [],
-            });
-            state.canvas.nodes[at].metadata.templateId = template.templateId;
-            state.canvas.nodes[at].metadata.templateText = template.templateText;
-          }
-        }
-        if (applied.info?.dropped?.length) {
-          showBanner(`切到「${nodeModeLabel(node)}」后，去掉了 ${applied.info.dropped.length} 条连线（这个模式不接）。`, 'error');
-        }
-        // The new mode may take a material the prompt names, and the node may
-        // not have it yet.
-        applyMentions(node.id);
-        markDirty();
-        render();
-        // The card was rebuilt, so the control that was used is gone and the
-        // focus fell back to the page — where the next Tab would land on
-        // another node. Put the focus back on this node's mode.
-        focusModeControl(node);
+    // The mode says what the node is going to do, so it gets a line of its
+    // own. It lives here and nowhere else, so a node that has no chip of
+    // its own — a text node — can still be told to do something else.
+    const mode = modeChoice(node, caps);
+    if (mode) {
+      const control = createDropdown({
+        options: mode.options,
+        value: mode.value,
+        className: 'nxc-chip nxc-chip--mode',
+        onChange: (value) => applyModeChoice(node, value),
       });
-      // The control is found again by this name after the card is rebuilt.
-      field.dataset.field = 'mode';
-      row.appendChild(field);
+      // The control is found again by this name after the card was rebuilt.
+      control.dataset.field = 'mode';
+      const modeRow = el('div', 'nxc-row');
+      modeRow.appendChild(control);
+      wrap.appendChild(modeRow);
     }
 
-    // The ratio follows the request the mode makes. The two keyframe requests
-    // follow the frame, so there is nothing to choose there.
-    const ratioOptions = ratioOptionsFor(node, caps);
-    if (ratioOptions.length) {
-      row.appendChild(
-        // The ratio says which way the frame lies, so the menu names it: the
-        // value stays the ratio the provider takes.
-        paramSelect('比例', node.metadata.ratio, ratioOptions.map((ratio) => ({
-          value: ratio,
-          label: ratioLabel(ratio),
-        })), (value) => {
-          node.metadata.ratio = value;
-        }),
-      );
+    // The parameters do not sit on the card as a row of controls. The bar
+    // under the card holds three things: the model that will do the work,
+    // the shape and the size of what it makes, and how many of them.
+    const fields = paramFields(node, caps, paramContext(node));
+    if (fields.some((field) => field.key === 'model')) {
+      row.appendChild(modelButton(node));
     }
-    if (caps.resolutions?.length) {
-      row.appendChild(
-        paramSelect('清晰度', node.metadata.resolution, caps.resolutions, (value) => {
-          node.metadata.resolution = value;
-        }),
-      );
+    // The chips stay in the row: they are the summary of what the panels
+    // hold, and each one opens the panel of its own.
+    if (paramSummary(fields)) {
+      row.appendChild(paramChip(node, fields));
     }
-    if (caps.supportsDuration && caps.durations?.length) {
-      row.appendChild(
-        paramSelect('时长', node.metadata.duration == null ? null : String(node.metadata.duration), caps.durations.map(String), (value) => {
-          node.metadata.duration = Number(value);
-          // The resolution depends on the duration, so it is snapped too.
-          fitNodeParams(node, effectiveCaps(node));
-          // The row shows what will be generated right away, not on the next
-          // render tick.
-          render();
-        }),
-      );
+    const countField = fields.find((field) => field.key === 'count');
+    if (countField) {
+      row.appendChild(countChip(node, countField));
     }
-    if (caps.supportsVoice) {
-      // The voice catalogue is live data the Node service reads from the
-      // connector; until it arrives the row says so instead of offering a
-      // made-up list.
-      const voiceOptions = state.voices.length
-        ? state.voices
-        : [{ value: '', label: state.voiceError ?? '音色清单读取中…' }];
-      row.appendChild(
-        paramSelect('音色', node.metadata.voice ?? 'male-qn-qingse', voiceOptions, (value) => {
-          node.metadata.voice = value;
-        }),
-      );
-      row.appendChild(
-        paramSelect(
-          '情绪',
-          node.metadata.emotion ?? '',
-          [{ value: '', label: '默认' }, ...(caps.emotions ?? [])],
-          (value) => {
-            node.metadata.emotion = value || null;
-          },
-        ),
-      );
-    }
-    row.appendChild(modelSelect(node));
-
-    // How many assets one run produces. It sits right next to the button that
-    // starts the run, because that is where the choice matters.
-    if (BATCH_MODES.includes(runModeOf(node))) {
-      row.appendChild(
-        paramSelect('数量', String(node.metadata.count ?? 1), BATCH_COUNTS, (value) => {
-          node.metadata.count = Number(value);
-        }),
-      );
-    }
-
-    const running = isRunning(node.id);
-    const generate = el('button', 'nxc-btn nxc-btn--primary', running ? '生成中…' : '生成');
-    generate.type = 'button';
-    generate.dataset.canvasNoZoom = 'true';
-    generate.disabled = running || !state.agentAvailable;
-    generate.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void startRun(node);
-    });
-    row.appendChild(generate);
 
     // A node that ran through an Agent turn keeps its session, so the
     // conversation is still reachable after the run is over.
@@ -2024,9 +2650,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       row.appendChild(fresh);
     }
 
-    const wrap = el('div', 'nxc-node__params');
-    wrap.appendChild(row);
-
     // The video node has no sound switches: the mode says what the request
     // carries (a reference with an audio or without one), and the model's own
     // note says whether the picture comes with a track. A switch the request
@@ -2046,17 +2669,32 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       ]
         .filter(Boolean)
         .join(' · ');
-      wrap.appendChild(el('span', 'nxc-node__refs', `引用 ${text}`));
+      row.appendChild(el('span', 'nxc-node__refs', `引用 ${text}`));
     }
+
+    // The run button is the last thing in the line: it sits at the right end
+    // of it, so the eye reads the values first and the action after them.
+    const generate = el('button', 'nxc-btn nxc-btn--primary nxc-row__run', running ? '生成中…' : '生成');
+    generate.type = 'button';
+    generate.dataset.canvasNoZoom = 'true';
+    generate.disabled = running || !state.agentAvailable;
+    generate.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void startRun(node);
+    });
+    row.appendChild(generate);
+
+    wrap.appendChild(row);
     return wrap;
   }
 
   /** The node's mode control, found again after the card was rebuilt. */
   function focusModeControl(node) {
-    const el = dom.nodes.querySelector(
+    // The mode lives in the bar under the card, so it is looked for there.
+    const control = dom.nodes.querySelector(
       `[data-node-id="${node.id}"] [data-field="mode"] .nxc-dropdown__button`,
     );
-    el?.focus({ preventScroll: true });
+    control?.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------- dropdowns
@@ -2197,7 +2835,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     state.dropdown = null;
   }
 
-  function paramSelect(label, value, options, onChange) {
+  function paramSelect(label, value, options, onChange, onChanged) {
     const field = el('span', 'nxc-field');
     if (label) field.appendChild(el('span', 'nxc-field__label', label));
     field.appendChild(createDropdown({
@@ -2206,45 +2844,139 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       onChange: (next) => {
         onChange(next);
         markDirty();
+        onChanged?.();
       },
     }));
     return field;
   }
 
-  function modelSelect(node) {
-    const field = el('span', 'nxc-field nxc-field--grow');
-    field.appendChild(el('span', 'nxc-field__label', '模型'));
-    const options = modeModelOptions(node).length ? modeModelOptions(node) : agentModelOptions();
-    if (options.length === 0) {
-      options.push({ value: '', label: state.agentAvailable ? '暂无可用模型' : 'Agent 不可用' });
+  /**
+   * The models a node may run, as the list draws them.
+   *
+   * The list comes from the capability table, so the models on the card are
+   * the models the runtime really has.
+   */
+  function modelListItems(node) {
+    const models = state.capabilities[runModeOf(node)]?.models ?? [];
+    if (models.length) {
+      return models.map((model) => ({
+        value: model.id,
+        label: model.label,
+        badge: model.badge ?? '',
+        subtitle: modelRange(model),
+        note: model.note ?? '',
+      }));
     }
-    field.appendChild(createDropdown({
-      options,
-      value: node.metadata.model,
-      onChange: (next) => {
-        // The options follow the model, and the rule lives in the shared action
-        // layer: the Agent and the runtime do the same thing.
-        const result = applyModel(state.canvas, node, next, actionContext());
-        const at = state.canvas.nodes.findIndex((item) => item.id === node.id);
-        if (at >= 0) state.canvas.nodes[at] = result.node;
-        if (result.dropped.length) {
-          state.canvas.connections = state.canvas.connections.filter((conn) => !result.dropped.includes(conn));
-        }
-        if (result.mode.from !== result.mode.to) {
-          const label = modeModelOptions(node).find((item) => item.value === next)?.label ?? next;
-          showBanner(
-            `「${label}」跑不了「${modeLabelOf(node, result.mode.from)}」，已切到「${modeLabelOf(node, result.mode.to)}」${
-              result.dropped.length ? `，去掉了 ${result.dropped.length} 条连线` : ''
-            }。`,
-            'error',
-          );
-        }
-        markDirty();
-        // The parameter row follows the model: H3-Max does not offer 2K.
-        render();
-      },
+    return agentModelOptions().map((model) => ({
+      value: model.value,
+      label: model.label,
+      badge: '',
+      subtitle: '',
+      note: '',
     }));
-    return field;
+  }
+
+  /**
+   * The model that will do the work, as the button in the bar.
+   *
+   * The name of the model is the first thing the bar says, the way the
+   * reference canvas says it. The list behind it opens upward.
+   */
+  function modelButton(node) {
+    const items = modelListItems(node);
+    const current = items.find((item) => item.value === node.metadata.model) ?? items[0];
+    const button = el('button', 'nxc-model-btn');
+    button.type = 'button';
+    button.dataset.canvasNoZoom = 'true';
+    button.appendChild(modelIcon());
+    button.appendChild(el('span', 'nxc-model-btn__name', current?.label ?? '选模型'));
+    button.title = '换模型';
+    bindPanelControl(button, () => {
+      // The button that opened the panel closes it again: the same press
+      // that opened it is the one that takes it away.
+      if (chipPress(state.panel, node.id, 'model') === 'close') {
+        closePanel();
+        return;
+      }
+      openModelPanel(node, button.getBoundingClientRect());
+    });
+    return button;
+  }
+
+  /**
+   * The list of models, as the reference canvas draws it.
+   *
+   * Every model is a row: an icon, the name, what it can do, and a tick on
+   * the one that is chosen. The panel opens above the button that opened
+   * it, so it covers the card rather than the board.
+   */
+  function openModelPanel(node, anchorRect) {
+    const panel = dom.floatingPanel;
+    state.panel = { type: 'model', nodeId: node.id };
+    panel.textContent = '';
+    panel.dataset.canvasNoZoom = 'true';
+    panel.dataset.kind = 'model';
+    panel.appendChild(el('div', 'nxc-panel__title', '在线模型'));
+    const list = el('div', 'nxc-model-list');
+    const items = modelListItems(node);
+    if (!items.length) {
+      list.appendChild(el('div', 'nxc-panel__desc', state.agentAvailable ? '暂无可用模型' : 'Agent 不可用'));
+    }
+    for (const item of items) {
+      const row = el('button', 'nxc-model-row');
+      row.type = 'button';
+      row.dataset.canvasNoZoom = 'true';
+      const active = item.value === node.metadata.model;
+      if (active) row.classList.add('is-active');
+      row.appendChild(modelIcon());
+      const text = el('span', 'nxc-model-row__text');
+      const head = el('span', 'nxc-model-row__head');
+      head.appendChild(el('span', 'nxc-model-row__name', item.label));
+      if (item.badge) head.appendChild(el('span', 'nxc-model-badge', item.badge));
+      text.appendChild(head);
+      if (item.subtitle) text.appendChild(el('span', 'nxc-model-row__sub', item.subtitle));
+      row.appendChild(text);
+      if (active) row.appendChild(el('span', 'nxc-model-row__check', '✓'));
+      row.title = item.note || item.label;
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        chooseModel(node, item.value);
+        closePanel();
+        render();
+      });
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+    panel.hidden = false;
+    const rect = panel.getBoundingClientRect();
+    const place = placePanel(anchorRect, rect, { width: window.innerWidth, height: window.innerHeight }, BAR_PANEL_SIDE);
+    panel.style.left = `${place.left}px`;
+    panel.style.top = `${place.top}px`;
+  }
+
+  /**
+   * Put the node on another model.
+   *
+   * Changing the model can retire the mode and the lines that mode carried,
+   * so the shared action layer does the work and the page says what it did.
+   */
+  function chooseModel(node, value) {
+    const result = applyModel(state.canvas, node, value, actionContext());
+    const at = state.canvas.nodes.findIndex((item) => item.id === node.id);
+    if (at >= 0) state.canvas.nodes[at] = result.node;
+    if (result.dropped.length) {
+      state.canvas.connections = state.canvas.connections.filter((conn) => !result.dropped.includes(conn));
+    }
+    if (result.mode.from !== result.mode.to) {
+      const label = modeModelOptions(node).find((item) => item.value === value)?.label ?? value;
+      showBanner(
+        `「${label}」跑不了「${modeLabelOf(node, result.mode.from)}」，已切到「${modeLabelOf(node, result.mode.to)}」${
+          result.dropped.length ? `，去掉了 ${result.dropped.length} 条连线` : ''
+        }。`,
+        'error',
+      );
+    }
+    markDirty();
   }
 
   /**
@@ -2324,16 +3056,191 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
    * The same list wherever the node is clicked, so the board and the panel
    * do not drift apart.
    */
+  /**
+   * What each entry of the card menu does.
+   *
+   * The entries themselves — the five sections and what is in them — are
+   * written down in `node-ui.mjs`, so the shape of the menu lives in one
+   * place; this table only says what the names mean.
+   */
+  const NODE_MENU_ACTIONS = {
+    'copy-media': (node) => copyMediaToClipboard(node),
+    'copy-text': (node) => copyTextToClipboard(node),
+    'save-local': (node) => saveMedia(node, node.metadata.output?.media?.[0]),
+    rename: (node) => {
+      state.editingTitleId = node.id;
+      render();
+    },
+    cut: () => cutSelection(),
+    copy: () => copySelection(),
+    duplicate: (node) => copyNode(node),
+    paste: () => pasteClipboard(),
+    group: () => groupSelection(),
+    ungroup: (node) => {
+      removeNode(node.id);
+      markDirty();
+      render();
+    },
+    focus: () => focusSelection(),
+    clear: (node) => clearResult(node),
+    delete: (node) => {
+      removeNode(node.id);
+      markDirty();
+      render();
+    },
+  };
+
+  /**
+   * The menu of a node.
+   *
+   * The same list wherever the node is clicked, so the board and the panel
+   * do not drift apart.
+   */
   function nodeMenuItems(node) {
-    const items = [{ label: '复制节点', action: () => copyNode(node) }];
-    // A node that holds material can hand the file over.
-    const item = node?.metadata?.output?.media?.[0];
-    if (item?.url) {
-      items.push({ label: '保存到本地', action: () => saveMedia(node, item) });
+    const entries = nodeMenuEntries(node, {
+      selectedCount: state.selection.length,
+      isGroup: node.type === 'group',
+      canPaste: Boolean(state.clip?.nodes?.length),
+    });
+    return entries.map((entry) => {
+      if (entry === '-') return '-';
+      const action = NODE_MENU_ACTIONS[entry.action];
+      return { ...entry, action: action ? () => action(node) : () => {} };
+    });
+  }
+
+  /** Cut: copy what is selected and take it off the board. */
+  function cutSelection() {
+    copySelection();
+    for (const id of [...state.selection]) removeNode(id);
+    state.selection = [];
+    markDirty();
+    render();
+  }
+
+  /** Put the view on what is selected. */
+  function focusSelection() {
+    const nodes = state.selection.map(getNode).filter(Boolean);
+    if (!nodes.length) return;
+    const left = Math.min(...nodes.map((node) => node.position.x));
+    const top = Math.min(...nodes.map((node) => node.position.y));
+    const right = Math.max(...nodes.map((node) => node.position.x + node.width));
+    const bottom = Math.max(...nodes.map((node) => node.position.y + node.height));
+    const k = state.canvas.viewport.k;
+    const rect = dom.viewport.getBoundingClientRect();
+    state.canvas.viewport = {
+      x: rect.width / 2 - ((left + right) / 2) * k,
+      y: rect.height / 2 - ((top + bottom) / 2) * k,
+      k,
+    };
+    applyViewport();
+  }
+
+  /** Take the result off a card, leaving the card and its settings alone. */
+  function clearResult(node) {
+    node.metadata.output = {
+      status: 'idle',
+      text: '',
+      media: [],
+      error: '',
+      posterUrl: '',
+      durationMs: 0,
+      width: 0,
+      height: 0,
+      missing: false,
+      updatedAt: '',
+    };
+    markDirty();
+    render();
+  }
+
+  /**
+   * Put a frame around what is selected.
+   *
+   * The frame does not keep a list of what is inside it: the cards inside it
+   * are its members, so a card dragged into the frame is in it and a card
+   * dragged out of it is not.
+   */
+  function groupSelection() {
+    const nodes = state.selection.map(getNode).filter(Boolean);
+    if (nodes.length < 2) {
+      showBanner('至少选两个节点才能编组');
+      return;
     }
-    items.push({ label: '删除节点', danger: true, action: () => { removeNode(node.id); markDirty(); render(); } });
-    items.push('-');
-    return [...items, ...kindMenuItems()];
+    const left = Math.min(...nodes.map((node) => node.position.x));
+    const top = Math.min(...nodes.map((node) => node.position.y));
+    const right = Math.max(...nodes.map((node) => node.position.x + node.width));
+    const bottom = Math.max(...nodes.map((node) => node.position.y + node.height));
+    const pad = 28;
+    const group = createNode('group', { x: left - pad, y: top - pad });
+    group.width = right - left + pad * 2;
+    group.height = bottom - top + pad * 2;
+    group.title = '分组';
+    // The frame stands behind the cards it holds.
+    state.canvas.nodes = [group, ...state.canvas.nodes.filter((node) => node.id !== group.id)];
+    state.selection = [group.id];
+    markDirty();
+    render();
+  }
+
+  /** Copy the text a card holds. */
+  async function copyTextToClipboard(node) {
+    const text = node?.metadata?.output?.text ?? '';
+    if (!text) {
+      showBanner('这个节点没有文本');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showBanner('文本已复制');
+    } catch (error) {
+      showBanner(`复制失败：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /**
+   * Copy the picture a card holds.
+   *
+   * The clipboard takes a PNG and nothing else, so a picture that is not one
+   * is drawn onto a canvas and given one before it is handed over.
+   */
+  async function copyMediaToClipboard(node) {
+    const item = node?.metadata?.output?.media?.[0];
+    const url = item?.url;
+    if (!url) {
+      showBanner('这个节点没有素材');
+      return;
+    }
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const png = await imageToPng(blob);
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+      showBanner('素材已复制（PNG）');
+    } catch (error) {
+      showBanner(`复制失败：${error?.message ?? error}`, 'error');
+    }
+  }
+
+  /** Draw a picture on a canvas and hand back a PNG. */
+  function imageToPng(blob) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      const url = URL.createObjectURL(blob);
+      image.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        canvas.getContext('2d')?.drawImage(image, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((out) => (out ? resolve(out) : reject(new Error('转成 PNG 失败'))), 'image/png');
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('读不出这张图'));
+      };
+      image.src = url;
+    });
   }
 
   // Toolbar entry point: the tools of whatever node is selected.
@@ -2403,14 +3310,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   // and a card holding a video offers none either — the finished clip is a
   // deliverable, not a working material.
   //
-  // The tools and the footer come from one rule, so the buttons under a card
-  // and the strip that holds them can never disagree.
-  function cardChromeFor(node) {
-    return cardChrome(node, state.palette?.tools ?? []);
-  }
-
+  // The tools come from one rule, so the buttons on the surface and the
+  // surface that holds them can never disagree.
   function toolsForNode(node) {
-    return cardChromeFor(node).tools;
+    return cardTools(node, state.palette?.tools ?? []);
   }
 
   // Why a tool cannot run right now, or null when it can. The local media
@@ -2429,18 +3332,39 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     if (tool.run === 'understand' && state.media && !state.media.canUpload) {
       return '当前客户端没有提供素材上传能力，provider 读不到这段素材';
     }
+    // The provider's picture tools have size limits of their own, and a
+    // picture that breaks one is refused. Saying so before the click is the
+    // difference between a clear reason and a provider's error.
+    if (tool.run === 'connector') {
+      if (state.media && !state.media.canUpload) {
+        return '当前客户端没有提供素材上传能力，provider 读不到这张图';
+      }
+      const tooBig = toolSizeReason(tool, mediaSizeOf(node));
+      if (tooBig) return tooBig;
+    }
     return null;
   }
 
+  // The size of the picture a card holds. An uploaded picture knows its own
+  // size, and a result card keeps the size the provider reported.
+  function mediaSizeOf(node) {
+    const media = node?.metadata?.output?.media?.[0] ?? null;
+    const output = node?.metadata?.output ?? {};
+    return {
+      width: Number(media?.width ?? output.width ?? 0) || 0,
+      height: Number(media?.height ?? output.height ?? 0) || 0,
+      bytes: Number(media?.bytes ?? 0) || 0,
+    };
+  }
+
   function renderToolBar(node) {
-    const chrome = cardChromeFor(node);
-    // No tools, no toolbar — and no footer either, so an empty strip is not
-    // left under the material.
-    if (!chrome.hasFooter) return null;
+    // No tools, no dock: the surface carries nothing it does not need.
+    const list = toolsForNode(node);
+    if (!list.length) return null;
     const bar = el('div', 'nxc-tools');
     bar.dataset.canvasNoZoom = 'true';
     const hasAsset = Boolean(node.metadata.output?.media?.length);
-    for (const tool of chrome.tools) {
+    for (const tool of list) {
       const pending = tool.status !== 'ready';
       const needsSource = tool.needs && !hasAsset;
       const blocked = toolBlockedReason(tool, node);
@@ -2451,16 +3375,331 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       // material yet".
       button.title = blocked ?? (needsSource ? '这个节点还没有素材，先生成一张再用工具' : tool.desc);
       button.disabled = pending || needsSource || Boolean(blocked);
-      const open = (event) => {
-        event.stopPropagation();
+      bindPanelControl(button, () => {
         if (pending || needsSource || blocked) return;
         openToolPanel(node, tool, button.getBoundingClientRect());
-      };
-      button.addEventListener('pointerdown', open);
-      button.addEventListener('click', open);
+      });
       bar.appendChild(button);
     }
     return bar;
+  }
+
+  /**
+   * The box of the card itself, in the page.
+   *
+   * A panel that belongs to a card hangs off that card, not off the button
+   * that opened it: the button is above the card, so a panel placed there
+   * covers the card.
+   */
+  function cardRectOf(node) {
+    const card = dom.nodes.querySelector(`[data-node-id="${node.id}"]`);
+    if (!card) return null;
+    const rect = card.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  /**
+   * The clip panel: the material itself as a strip, with two ends the user
+   * drags, and the material playing the range that is about to be cut.
+   *
+   * It writes the same two numbers the runtime cuts with — the strip is a
+   * way of choosing them, not a second kind of range.
+   */
+  function clipPanel(node, values, onReady) {
+    const media = node.metadata.output?.media?.[0] ?? null;
+    const isAudio = media?.kind === 'audio';
+    const body = el('div', `nxc-clip nxc-clip--${isAudio ? 'audio' : 'video'}`);
+
+    // The strip: the material itself, so the range is chosen on the thing
+    // that is about to be cut. A video is a row of frames, an audio its
+    // waveform.
+    const track = el('div', 'nxc-clip__track');
+    const strip = el('canvas', 'nxc-clip__strip');
+    // What is not kept is dimmed, so the eye finds the cut at once: the
+    // bright part of the strip is the part that is kept.
+    const shadeStart = el('div', 'nxc-clip__shade nxc-clip__shade--start');
+    const shadeEnd = el('div', 'nxc-clip__shade nxc-clip__shade--end');
+    const region = el('div', 'nxc-clip__region');
+    // The playhead: where the material is being played. It is a mark on
+    // the strip, and it is a mark the hand can take: the line is thin, so
+    // the place to hold it is wide.
+    const playhead = el('div', 'nxc-clip__playhead');
+    playhead.title = '拖动切换播放位置';
+    // The mark is a thin line with a head on top of it, and it is a
+    // slider: a keyboard can move it too.
+    playhead.appendChild(el('span', 'nxc-clip__playhead__head'));
+    playhead.setAttribute('role', 'slider');
+    playhead.setAttribute('tabindex', '0');
+    playhead.setAttribute('aria-label', '播放头');
+    const startHandle = el('button', 'nxc-clip__handle');
+    startHandle.type = 'button';
+    startHandle.dataset.edge = 'start';
+    startHandle.title = '拖动改起点';
+    const endHandle = el('button', 'nxc-clip__handle');
+    endHandle.type = 'button';
+    endHandle.dataset.edge = 'end';
+    endHandle.title = '拖动改终点';
+    track.appendChild(strip);
+    track.appendChild(shadeStart);
+    track.appendChild(shadeEnd);
+    track.appendChild(region);
+    track.appendChild(playhead);
+    track.appendChild(startHandle);
+    track.appendChild(endHandle);
+
+    // The transport: play the range, and show where the playhead is.
+    const toggle = el('button', 'nxc-clip__toggle', '▶');
+    toggle.type = 'button';
+    const clock = el('span', 'nxc-clip__clock', '00:00 / 00:00');
+    const transport = el('div', 'nxc-clip__transport');
+    transport.appendChild(toggle);
+    transport.appendChild(clock);
+    // The buttons of the panel belong on this row, next to the clock.
+    const actions = el('div', 'nxc-toolpanel__acts nxc-clip__acts');
+    transport.appendChild(actions);
+
+    body.appendChild(track);
+    body.appendChild(transport);
+
+    let range = clipRange({ durationMs: 0 });
+
+    // The engine: the material in the node itself. The panel drives it, so
+    // the picture and the sound come from the card the user is looking at.
+    let engine = null;
+    const resolveEngine = () => {
+      const found = document.querySelector(
+        `[data-node-id="${node.id}"] video, [data-node-id="${node.id}"] audio`,
+      );
+      if (!found || found === engine) return engine;
+      const target = found;
+      engine = target;
+      wirePreviewLoop(target, {
+        fromSec: loopFrom,
+        toSec: loopTo,
+        // The element is the truth: it says whether the preview plays.
+        isPlaying: () => !target.paused,
+        playAt: (sec) => playAt(target, sec),
+      });
+      target.addEventListener('play', paintTransport);
+      target.addEventListener('pause', paintTransport);
+      target.addEventListener('timeupdate', paintTransport);
+      return engine;
+    };
+
+    // Where the playhead stands. It follows the material: the mark is at
+    // the moment the material is at, so it is never a guess.
+    const paintPlayhead = () => {
+      const target = resolveEngine();
+      const current = target ? target.currentTime * 1000 : 0;
+      const ms = playheadMs({ ms: current, range });
+      playhead.style.left = stripAt(stripPercent(ms, range.durationMs));
+      // The mark says where it is, so it can be read out and moved.
+      const seconds = ms / 1000;
+      playhead.setAttribute('aria-valuemin', '0');
+      playhead.setAttribute('aria-valuemax', String(range.durationMs / 1000));
+      playhead.setAttribute('aria-valuenow', seconds.toFixed(2));
+      playhead.setAttribute('aria-valuetext', seconds.toFixed(2) + 's');
+    };
+
+    const paint = () => {
+      const { durationMs, startMs, endMs } = range;
+      const from = durationMs ? (startMs / durationMs) * 100 : 0;
+      const to = durationMs ? (endMs / durationMs) * 100 : 100;
+      region.style.left = stripAt(from);
+      region.style.width = stripWidth(Math.max(0, to - from));
+      // The two ends of the range dim what is outside it: what is bright is
+      // what is kept.
+      shadeStart.style.left = '0px';
+      shadeStart.style.width = stripAt(from);
+      shadeEnd.style.left = stripAt(to);
+      shadeEnd.style.right = '0px';
+      startHandle.style.left = stripAt(from);
+      endHandle.style.left = stripAt(to);
+      // The mark stands inside the range, so a range that moved takes the
+      // mark with it.
+      paintPlayhead();
+      if (!durationMs) return;
+      // The runtime cuts with seconds; the strip is dragged in milliseconds.
+      const seconds = clipSeconds(range);
+      values.start = seconds.start;
+      values.end = seconds.end;
+    };
+
+    // The preview plays the range that is about to be cut, over and over.
+    const loopFrom = () => clipSecond(range.startMs);
+    const loopTo = () => clipSecond(range.endMs);
+
+    const paintTransport = () => {
+      const current = engine ? engine.currentTime : 0;
+      const playing = isPlaying(engine);
+      toggle.textContent = playing ? '⏸' : '▶';
+      toggle.title = playing ? '暂停预览' : '预览这一段';
+      toggle.disabled = !resolveEngine();
+      clock.textContent = clipClock(current * 1000, range.durationMs);
+      // The playhead is where the material is: it moves with the clock.
+      paintPlayhead();
+    };
+
+    // Play from a point of the clip. The browser may refuse to start the
+    // sound on its own; then the preview waits for the user to say when.
+    const playAt = (target, sec) => {
+      if (!target) return;
+      try {
+        target.currentTime = sec;
+      } catch {
+        // The file is not loaded yet; the play attempt waits for it.
+      }
+      target.muted = false;
+      const attempt = target.play();
+      if (attempt && typeof attempt.catch === 'function') {
+        attempt.catch(() => {
+          // The browser refused to start on its own: the transport shows ▶.
+          paintTransport();
+        });
+      }
+    };
+
+    const drag = (edge) => (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const move = (moveEvent) => {
+        const rect = track.getBoundingClientRect();
+        if (!rect.width || !range.durationMs) return;
+        const usable = Math.max(1, rect.width - CLIP_HANDLE_INSET * 2);
+        const ratio = Math.min(1, Math.max(0, (moveEvent.clientX - rect.left - CLIP_HANDLE_INSET) / usable));
+        const ms = Math.round(ratio * range.durationMs);
+        range = clipRange(edge === 'start' ? { ...range, startMs: ms } : { ...range, endMs: ms });
+        paint();
+        // The preview follows the hand: it plays the point that is being
+        // moved, so the cut is heard while it is being chosen.
+        const target = resolveEngine();
+        if (isPlaying(target)) {
+          playAt(target, Math.min(loopTo(), Math.max(loopFrom(), clipSecond(ms))));
+        }
+      };
+      const stop = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', stop);
+        window.removeEventListener('pointercancel', stop);
+        // The range is settled: the preview starts over at its beginning.
+        const target = resolveEngine();
+        if (isPlaying(target)) playAt(target, loopFrom());
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', stop);
+      window.addEventListener('pointercancel', stop);
+    };
+    startHandle.addEventListener('pointerdown', drag('start'));
+    endHandle.addEventListener('pointerdown', drag('end'));
+
+    // The playhead is switched by pressing the strip: the material goes
+    // to the point that was pressed, and the drag keeps it there. A hand
+    // that takes the mark itself carries the mark from where it was.
+    // The material stops while the hand holds it, so the mark and the
+    // material do not fight each other.
+    let wasPlaying = false;
+    const stopPlayhead = wirePlayhead({
+      track,
+      playhead,
+      getRange: () => range,
+      getDurationMs: () => range.durationMs,
+      getCurrentMs: () => {
+        const target = resolveEngine();
+        return target ? target.currentTime * 1000 : 0;
+      },
+      // The material moves to that point, and the preview goes on playing
+      // from there.
+      seek: (ms) => {
+        const target = resolveEngine();
+        if (!target) return;
+        target.currentTime = ms / 1000;
+      },
+      paint: () => paintPlayhead(),
+      onPress: () => {
+        const target = resolveEngine();
+        wasPlaying = isPlaying(target);
+        if (wasPlaying) target.pause();
+      },
+      onRelease: () => {
+        const target = resolveEngine();
+        if (wasPlaying && target) playAt(target, target.currentTime);
+        wasPlaying = false;
+      },
+    });
+
+    toggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const target = resolveEngine();
+      if (!target) return;
+      if (target.paused) playAt(target, loopFrom());
+      else target.pause();
+      paintTransport();
+    });
+
+    // The material is drawn into the strip: the frames of a video, the
+    // waveform of an audio.
+    const paintStrip = async () => {
+      if (!media?.url || !range.durationMs) return;
+      const seconds = range.durationMs / 1000;
+      const done = isAudio
+        ? await paintWaveform(strip, media.url, 120)
+        : await paintFilmstrip(strip, media.url, frameStops(8, seconds));
+      strip.dataset.ready = done ? '1' : '0';
+    };
+
+    const setDuration = (ms) => {
+      // The whole clip is the range to begin with: the user narrows it.
+      range = clipRange({ durationMs: ms, startMs: 0, endMs: ms });
+      paint();
+      paintTransport();
+      onReady?.();
+    };
+
+    paintTransport();
+    const known = Math.round(Number(node.metadata.output?.durationMs) || 0);
+    if (known > 0) {
+      setDuration(known);
+    } else {
+      // The card may not have measured the material yet, so the panel reads
+      // the length from the material itself.
+      const target = resolveEngine();
+      if (target) {
+        const read = () => {
+          const ms = Math.round((target.duration || 0) * 1000);
+          if (ms > 0 && Number.isFinite(target.duration)) setDuration(ms);
+        };
+        if (Number.isFinite(target.duration) && target.duration > 0) read();
+        else target.addEventListener('loadedmetadata', read, { once: true });
+      }
+    }
+
+    // The panel is on the screen now: the strip can be drawn, and the
+    // preview can start on its own.
+    const ready = () => {
+      const target = resolveEngine();
+      if (target) playAt(target, loopFrom());
+      void paintStrip();
+      paintTransport();
+    };
+
+    // The preview stops when the panel goes.
+    const dispose = () => {
+      stopPlayhead();
+      try {
+        engine?.pause();
+      } catch {
+        // Nothing to stop.
+      }
+    };
+
+    return { body, dispose, actions, ready };
   }
 
   function openToolPanel(node, tool, anchorRect) {
@@ -2479,18 +3718,17 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       panel.appendChild(el('div', 'nxc-panel__desc', `每选一个「${multi.label}」跑一次生成，每个值一张图。`));
     }
 
-    const body = el('div', 'nxc-toolpanel__body');
-    for (const param of tool.params ?? []) {
-      body.appendChild(toolField(node, param, state.tool.params));
-    }
-    if ((tool.params ?? []).length === 0) {
-      body.appendChild(el('div', 'nxc-panel__desc', '这个工具不需要参数。'));
-    }
-    panel.appendChild(body);
+    // A clip is cut on a strip of the material, so the panel is wider and
+    // the button says what it does.
+    const isClip = tool.ui === 'clip';
+    if (isClip) panel.dataset.kind = 'clip';
 
     const actions = el('div', 'nxc-toolpanel__acts');
-    const apply = el('button', 'nxc-btn nxc-btn--primary', '应用');
+    const apply = el('button', 'nxc-btn nxc-btn--primary', isClip ? '确认' : '应用');
     apply.type = 'button';
+    // A clip that does not know how long the material is cannot be cut, so
+    // the button waits for the length.
+    apply.disabled = isClip;
     apply.addEventListener('click', (event) => {
       event.stopPropagation();
       void applyTool(node, tool, state.tool.params);
@@ -2499,22 +3737,69 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     cancel.type = 'button';
     cancel.addEventListener('click', (event) => {
       event.stopPropagation();
-      state.tool = null;
       closePanel();
     });
-    actions.appendChild(apply);
-    actions.appendChild(cancel);
-    panel.appendChild(actions);
+    // Esc closes the panel, because the panel says it can.
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    };
+    window.addEventListener('keydown', onKey);
+    state.tool.onKey = onKey;
+
+
+    const body = el('div', 'nxc-toolpanel__body');
+    let clip = null;
+    if (isClip) {
+      clip = clipPanel(node, state.tool.params, () => {
+        apply.disabled = false;
+      });
+      body.appendChild(clip.body);
+      // The preview stops when the panel goes.
+      state.tool.dispose = clip.dispose;
+      // The buttons of a clip belong on its transport row: cancel first,
+      // then the primary action.
+      clip.actions.appendChild(cancel);
+      clip.actions.appendChild(el('span', 'nxc-toolpanel__hint', 'Esc'));
+      clip.actions.appendChild(apply);
+    } else {
+      for (const param of tool.params ?? []) {
+        body.appendChild(toolField(node, param, state.tool.params));
+      }
+      if ((tool.params ?? []).length === 0) {
+        body.appendChild(el('div', 'nxc-panel__desc', '这个工具不需要参数。'));
+      }
+      actions.appendChild(apply);
+      actions.appendChild(cancel);
+    }
+    panel.appendChild(body);
+    if (!isClip) panel.appendChild(actions);
 
     panel.hidden = false;
     const rect = panel.getBoundingClientRect();
-    const place = placeOverlay(
-      { left: anchorRect.left, top: anchorRect.bottom + 6 },
-      rect,
-      { width: window.innerWidth, height: window.innerHeight },
-    );
+    // Which box the panel hangs off is one rule: a clip panel belongs to
+    // the card, every other panel to the button that opened it.
+    const anchor = panelAnchor({ isClip, card: cardRectOf(node), button: anchorRect });
+    const place = anchor.kind === 'card'
+      ? clipPlacement({
+        // The strip belongs to the card: it sits under the card, centred on
+        // it, so it never covers the material it is about to cut.
+        card: anchor.card,
+        size: { width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      })
+      : placeOverlay(
+        { left: anchorRect.left, top: anchorRect.bottom + 6 },
+        rect,
+        { width: window.innerWidth, height: window.innerHeight },
+      );
     panel.style.left = `${place.left}px`;
     panel.style.top = `${place.top}px`;
+    // The panel has a size now: the strip can be drawn, and the preview can
+    // start on its own.
+    clip?.ready();
   }
 
   function toolDefaults(tool) {
@@ -2574,7 +3859,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   }
 
   async function applyTool(node, tool, params) {
-    state.tool = null;
     closePanel();
     try {
       if (tool.run === 'local') {
@@ -2587,6 +3871,8 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         await runFfmpegTool(node, tool, params);
       } else if (tool.run === 'understand') {
         await runUnderstandTool(node, tool, params);
+      } else if (tool.run === 'connector') {
+        await runConnectorTool(node, tool, params);
       } else {
         throw new Error('这个工具尚未接入');
       }
@@ -2912,6 +4198,34 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     showBanner(`${tool.label} 完成`);
   }
 
+  // A tool the provider does itself: it sharpens a blurry picture, or it
+  // takes a subject away from its background. The Node service uploads the
+  // picture first, because the provider only reads assets it holds itself.
+  async function runConnectorTool(node, tool, params) {
+    const media = node.metadata.output?.media?.[0];
+    if (!media?.url) throw new Error('这个节点还没有素材');
+    showBanner(`正在执行 ${tool.label}…`);
+    const payload = await api('/api/tools/transform', {
+      method: 'POST',
+      body: { tool: tool.key, url: media.url },
+    });
+    const produced = payload.media?.[0];
+    if (!produced?.url) throw new Error('工具没有产出文件');
+
+    const child = createToolResult(node, {
+      kind: 'image',
+      media: produced,
+      title: `${node.title} · ${tool.label}`,
+      x: node.position.x + node.width + 80,
+      y: node.position.y + 40,
+    });
+    connect(node.id, child.id, 'image');
+    state.selection = [child.id];
+    markDirty();
+    render();
+    showBanner(`${tool.label} 完成`);
+  }
+
   // Model-backed tools: a child node is created with the tool template as its
   // prompt and the source node as its reference, then the Agent runs on it.
   async function runAgentTool(node, tool, params) {
@@ -3173,6 +4487,16 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   function isRunning(nodeId) {
     const task = state.tasks.get(state.nodeTasks.get(nodeId));
     return Boolean(task && (task.status === 'running' || task.status === 'waiting-question'));
+  }
+
+  // How long the run on this card has been going.
+  //
+  // A card that turns for ever tells the user nothing: the clock says the
+  // run is still going, and the panel says what it is doing meanwhile.
+  function runningFor(nodeId) {
+    const task = state.tasks.get(state.nodeTasks.get(nodeId));
+    if (!task || !['running', 'waiting-question'].includes(task.status)) return '';
+    return `（已跑 ${Math.round((task.elapsedMs ?? 0) / 1000)}s）`;
   }
 
   // The Host chat side panel, when this Mini App runs in a chat. It is not
@@ -3444,9 +4768,47 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
 
   // ---------------------------------------------------------------- panels
 
+  /**
+   * A control that opens something over the canvas.
+   *
+   * The press is read once. A pointer press and the click that follows it
+   * are one gesture, so listening to both opens the panel twice — and a
+   * panel that opens twice cannot be taken away by pressing the control
+   * that opened it. The key is read on its own, because a key opens the
+   * panel too.
+   */
+  function bindPanelControl(element, open) {
+    element.addEventListener('pointerdown', (event) => {
+      // The press belongs to this control: the canvas must not read it as
+      // a drag, and the document must not read it as a press somewhere else.
+      event.stopPropagation();
+      open(event);
+    });
+    element.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // The key does the opening itself, so the button must not raise a
+      // click on top of it.
+      event.preventDefault();
+      event.stopPropagation();
+      open(event);
+    });
+  }
+
   function closePanel() {
+    // The tool panel's preview stops when the panel goes. The state is
+    // cleared after this, never before: cleared first, the panel would let
+    // go of nothing and the sound would go on behind a closed panel.
+    state.tool?.dispose?.();
+    if (state.tool?.onKey) window.removeEventListener('keydown', state.tool.onKey);
+    state.tool = null;
+    // The chip that opened the panel stops saying that it is open.
+    const wasParams = state.panel?.type === 'params' || state.panel?.type === 'count';
     state.panel = null;
     dom.floatingPanel.hidden = true;
+    // The kind says how wide the panel wants to be, so it goes away with
+    // the panel itself.
+    delete dom.floatingPanel.dataset.kind;
+    if (wasParams) scheduleRender();
   }
 
   function openPanel(type, anchorRect, node) {
@@ -3855,6 +5217,21 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     closeMentionMenu();
   }
 
+  /**
+   * Take the overlays away.
+   *
+   * The canvas floats menus and panels over it, and a press somewhere else
+   * is a request for all of them to go. This is the one place that says
+   * so: the document, the nodes and the keys all come through here, so the
+   * menu a right click opened and the panel a chip opened go away in the
+   * same way.
+   */
+  function dismissOverlays(target) {
+    const what = overlaysDismissedBy(target);
+    if (what.includes('panel')) closePanel();
+    if (what.includes('menu')) closeMenus();
+  }
+
   function showMenu(menu, x, y, items) {
     menu.textContent = '';
     for (const item of items) {
@@ -3863,6 +5240,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         continue;
       }
       const button = el('button', `nxc-menu__item${item.danger ? ' nxc-menu__item--danger' : ''}`);
+      // An entry that cannot be used says so: a greyed-out entry with no
+      // reason is a dead end.
+      if (item.disabled) button.disabled = true;
       // The colour of the data the node moves, the same one the board uses.
       if (item.kind) {
         const dot = el('i', 'nxc-menu__dot');
@@ -3872,6 +5252,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       button.appendChild(el('span', null, item.label));
       if (item.hint) button.appendChild(el('small', null, item.hint));
       button.addEventListener('click', () => {
+        if (item.disabled) return;
         closeMenus();
         item.action();
       });
@@ -3920,21 +5301,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
    * They are returned in the order they have to run: the deepest one first.
    */
   function pendingAncestors(node) {
-    const seen = new Set([node.id]);
-    const order = [];
-    const visit = (current) => {
-      for (const conn of state.canvas.connections) {
-        if (conn.toNodeId !== current.id) continue;
-        const source = getNode(conn.fromNodeId);
-        if (!source || seen.has(source.id)) continue;
-        seen.add(source.id);
-        if (!isGeneratingNode(source) || hasResult(source)) continue;
-        visit(source);
-        order.push(source);
-      }
-    };
-    visit(node);
-    return order;
+    return pendingAncestorsIn(state.canvas, node);
   }
 
   /** Wait for the run that was started on this node to finish. */
@@ -3984,18 +5351,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     // the same thing: the text the card shows is the text the run sends.
     const spec = runSpecFor(state.canvas, node, { chain: options.chain !== false });
 
-    node.metadata.output = {
-      status: 'loading',
-      text: '',
-      media: [],
-      error: '',
-      posterUrl: '',
-      durationMs: 0,
-      width: 0,
-      height: 0,
-      missing: false,
-      updatedAt: new Date().toISOString(),
-    };
+    // The product that is already there stays there: a run that fails must not
+    // take away what the run before it produced. The card shows the old
+    // product while the new one is being made, and a failed run leaves it.
+    node.metadata.output = outputForRun(node.metadata.output, new Date().toISOString());
     // Leave the editor: while it holds the focus the canvas defers its
     // rendering, and the run progress would stay invisible.
     if (document.activeElement?.isContentEditable) document.activeElement.blur();
@@ -4082,6 +5441,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
       for (const task of tasks) {
         if (!task?.id || !task?.nodeId) continue;
+        // A run belongs to the canvas that holds its node. A run of another
+        // canvas has nowhere to land on this page.
+        if (!getNode(task.nodeId)) continue;
         state.nodeTasks.set(task.nodeId, task.id);
         state.tasks.set(task.id, task);
       }
@@ -4112,7 +5474,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       output.media = task.media || [];
       return;
     }
-    if (task.status === 'done') spawnResultNode(node, task);
+    if (task.status === 'done') landResultOnCard(node, task);
   }
 
   // The generating node this node feeds, if there is one.
@@ -4126,13 +5488,13 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
   }
 
   /**
-   * The result of a run becomes its own node.
+   * The result of a run lands on the card that made it.
    *
    * The rule is in `actions.mjs`, where the runtime reads the same one: a
    * result that is placed by the page and a result that is placed by the
    * runtime have to look the same, or the canvas would depend on who wrote it.
    */
-  function spawnResultNode(node, task) {
+  function landResultOnCard(node, task) {
     const placed = materializeResults(state.canvas, node, task, actionContext());
     if (placed.error) return null;
     state.canvas.nodes = placed.canvas.nodes;
@@ -4400,6 +5762,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       state.nodeTasks.clear();
       state.tasks.clear();
       render();
+      // The canvas came back from somewhere else, so the runs that were in
+      // flight are not on this page any more. The runtime kept them going;
+      // the page takes them back.
+      await reattachRuns();
       setSaveState('saved');
       if (reason === 'conflict') {
         showBanner('画布在别处被改过了，这次没保存上，已重新载入。', 'error');
@@ -4576,10 +5942,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     // A canvas that already has the new roles is left alone.
     if (canvas.nodes.some((node) => node.type === 'result' || node.type === 'input')) return false;
     let changed = false;
-    for (const node of [...canvas.nodes]) {
-      if (node.type === 'group') continue;
+    // The rule is in `actions.mjs`, so the page and the runtime read the same
+    // one: a product a run put on the card stays on the card.
+    for (const node of legacyProductNodes(canvas)) {
       const output = node.metadata.output ?? {};
-      if (!output.media?.length && !String(output.text ?? '').trim()) continue;
       const result = createNode(
         'result',
         { x: node.position.x + node.width + 80, y: node.position.y + 40 },
@@ -4630,6 +5996,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
         showBanner('旧画布已迁移为「输入 / 生成 / 结果」三段式。');
       }
       render();
+      // The page started with an empty table of runs, so the runs that were
+      // in flight are not on it any more. The runtime kept them going; the
+      // page takes them back.
+      void reattachRuns();
       resetHistory();
       setSaveState('saved');
       maybeRestoreDraft();
@@ -5107,6 +6477,11 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     wrap.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       const target = resolveEventTarget(event);
+      // A press on a card takes the overlays away: the panel that was open
+      // over it and the menu that was open over the board. The press that
+      // opened one of them is that overlay's own business — a chip that
+      // opens a panel stops the press before it gets here.
+      dismissOverlays(target);
       const portEl = target?.closest?.('[data-port]');
       const resizeEl = target?.closest?.('[data-resize]');
       if (portEl) {
@@ -5135,7 +6510,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
     wrap.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      selectNode(node.id);
+      // A right click on a card that is already part of the selection keeps
+      // the selection: collapsing it here would make "group" impossible to
+      // reach, because the group needs the whole selection.
+      if (!state.selection.includes(node.id)) selectNode(node.id);
       openNodeMenu(node, event.clientX, event.clientY);
     });
   }
@@ -5232,6 +6610,13 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
           closeMentionMenu();
           return;
         }
+        if (state.tool) {
+          // The tool panel is a panel too: Escape leaves it without running
+          // anything. closePanel lets go of the preview and clears the state
+          // in that order, so it is the only one that may do it.
+          closePanel();
+          return;
+        }
         if (state.panel) {
           closePanel();
           return;
@@ -5305,10 +6690,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       true,
     );
     document.addEventListener('pointerdown', (event) => {
-      if (event.target.closest?.('.nxc-menu') || event.target.closest?.('.nxc-panel')) return;
-      closeDropdown();
-      closeMentionMenu();
-      closePanel();
+      dismissOverlays(event.target);
     });
     // A pointer that goes down: the canvas is not redrawn while the click is
     // in flight, because the button under the pointer would be replaced
@@ -5367,14 +6749,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       const node = getNode(element.dataset.nodeId);
       const selected = state.selection.includes(element.dataset.nodeId);
       element.classList.toggle('nxc-node--selected', selected);
-      // The word and the name follow the state, so it is never carried by
+      // The name follows the state, so the selection is never carried by
       // the border colour alone.
-      const chip = element.querySelector('.nxc-node__sel');
-      if (chip) chip.hidden = !selected;
       if (node) element.setAttribute('aria-label', nodeAccessibleName(node));
       // The board steps back around the selection.
       element.classList.toggle('is-dim', !isRelatedToSelection(element.dataset.nodeId));
     }
+    // The surface of a card shows up when the card is selected, so it has to
+    // be told where there is room for it.
+    fitOpsSurfaces();
     // The lines are redrawn, so they pick up the selection and the focus
     // state in one go.
     renderConnections();
@@ -5592,6 +6975,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       if (target) {
         target.style.width = `${node.width}px`;
         target.style.height = `${node.height}px`;
+        // The picture is the frame of the card: it grows with the card, so a
+        // bigger card shows a bigger picture and no grey around it.
+        refitMedia(node, target);
       }
       renderConnections();
     };
@@ -5885,6 +7271,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, li
       renderToolbar();
     });
     dom.themeButton.addEventListener('click', cycleTheme);
+    watchSystemTheme();
 
     const win = window.mcode?.miniapp?.window;
     if (win?.update) {

@@ -18,11 +18,12 @@ import { createServer as createHttpServer } from 'node:http';
 
 import { start } from '../miniapp/node/server.mjs';
 import { palette, resolveLimits, resolutionsForDuration } from '../miniapp/node/capabilities.mjs';
-import { applyAction, materializeResults, runSpecFor } from '../miniapp/client/actions.mjs';
+import { applyAction, materializeResults, outputForRun, pendingAncestors, runSpecFor } from '../miniapp/client/actions.mjs';
 import { createActionQueue, OWNER_TTL_MS } from '../miniapp/node/action-queue.mjs';
 import { decodeHostConnectorValue } from '../miniapp/node/host-connector-value.mjs';
 import { findMediaTool, RETIRED_TOOLS, TOOL_ACCEPTS, TOOL_PRODUCES, delogoRect } from '../miniapp/node/media-tools.mjs';
-import { cropRectAfterDrag, fanOutParams, NODE_GAP, toolPrompt } from '../miniapp/client/tools.mjs';
+import { cropRectAfterDrag, fanOutParams, nodeHasProduct, NODE_GAP, toolPrompt } from '../miniapp/client/tools.mjs';
+import { providerFailure } from '../miniapp/node/connector-runner.mjs';
 import { scanFiles } from './scan-undefined.mjs';
 
 // The provider's asset host cannot be reached from a test, and a real request
@@ -109,7 +110,11 @@ function createMockAgent(options = {}) {
       const requestId = `req_${calls.filter((call) => call.kind === 'run').length}`;
       onEvent?.({ type: 'turn.started', sessionId, model: { providerId: 'minimax', modelId: 'minimax-M3' } });
       onEvent?.({ type: 'text.delta', sessionId, text: '生成结果：' });
-      onEvent?.({ type: 'text.delta', sessionId, text: 'https://cdn.example.com/out.png' });
+      // A turn that ends without a picture: the words are there, the file is
+      // not.
+      if (!options.textOnly) {
+        onEvent?.({ type: 'text.delta', sessionId, text: 'https://cdn.example.com/out.png' });
+      }
       onEvent?.({ type: 'tool.started', sessionId, name: 'image_gen' });
       onEvent?.({ type: 'tool.finished', sessionId, name: 'image_gen', ok: true });
       onEvent?.({
@@ -135,7 +140,7 @@ function createMockAgent(options = {}) {
       return {
         sessionId,
         status: 'finished',
-        text: '生成结果：\n![out](https://cdn.example.com/out.png)',
+        text: options.textOnly ? '生成结果：这次没有出图。' : '生成结果：\n![out](https://cdn.example.com/out.png)',
       };
     },
     async reply(payload) {
@@ -202,6 +207,8 @@ function createMockHostConnector(voices = [
           tool('describe_images'),
           tool('get_asset_url'),
           tool('upload_temp_url'),
+          tool('enhance_image'),
+          tool('remove_image_background'),
         ],
         partial: false,
       };
@@ -286,6 +293,12 @@ function createMockHostConnector(voices = [
           value: [{ type: 'text', text: JSON.stringify({ code: 500, message: 'video has no drive asset' }) }],
         };
       }
+      // The Host stops a call that runs over its window. The file it was
+      // asked about is still on the provider: the link is missing, the file
+      // is not. This is what that call looks like from here.
+      if (options.assetUrlFails) {
+        throw Object.assign(new Error('Connector call failed'), { code: 'CONNECTOR_CALL_FAILED' });
+      }
       return {
         invocationId: 'invocation-test',
         // The provider's asset host cannot be reached from a test, and a
@@ -309,10 +322,52 @@ function createMockHostConnector(voices = [
       if (options.failImageCall && position === options.failImageCall) {
         return { invocationId: 'invocation-test', value: [{ type: 'text', text: JSON.stringify({ code: 500, message: '这一张没出来' }) }] };
       }
+      // A provider that says "ok" and hands nothing back: the run cannot
+      // call that a picture.
+      if (options.imageReturnsNothing) {
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', success_items: [] }) }],
+        };
+      }
+      // A provider that refuses: the call went through (code 0) and the
+      // reason travels in the answer, not in the code.
+      if (options.imageRefused) {
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({
+            code: 0,
+            message: `all 1 failed: ${options.imageRefused}`,
+            total_requested: 1,
+            total_success: 0,
+            total_failed: 1,
+            success_items: [],
+            failed_items: [{ index: 0, err_code: 400, error_msg: options.imageRefused }],
+          }) }],
+        };
+      }
       const items = (Array.isArray(args?.requests) ? args.requests : []).map(() => ({ node_id: `node-${seq}`, file_name: 'a.png' }));
       return {
         invocationId: 'invocation-test',
         value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', success_items: items }) }],
+      };
+    }
+    if (name === 'enhance_image' || name === 'remove_image_background') {
+      // The provider's own picture tools: they answer with a picture of
+      // their own, and they say how big it is.
+      return {
+        invocationId: 'invocation-test',
+        value: [{
+          type: 'text',
+          text: JSON.stringify({
+            code: 0,
+            message: 'ok',
+            node_id: `node-${seq}`,
+            file_name: 'a.png',
+            width: 1024,
+            height: 1024,
+          }),
+        }],
       };
     }
     if (name === 'submit_video_generation') {
@@ -432,6 +487,58 @@ async function getJson(base, path, init) {
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
+// The body of one function in the client source. A test that looks at a
+// function has to look at the function and not at the file around it, or a
+// change somewhere else in the file would quietly satisfy the assertion.
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `${name} has to be in the client source`);
+  // A default value may hold braces of its own — `options = {}` — so the
+  // body starts after the parameter list, not at the first brace.
+  let parens = 0;
+  let after = start;
+  for (let index = start + `function ${name}(`.length - 1; index < source.length; index += 1) {
+    if (source[index] === '(') parens += 1;
+    else if (source[index] === ')') {
+      parens -= 1;
+      if (parens === 0) {
+        after = index;
+        break;
+      }
+    }
+  }
+  const from = source.indexOf('{', after);
+  let depth = 0;
+  for (let index = from; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    else if (source[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(from, index + 1);
+    }
+  }
+  assert.fail(`${name} has to close its body`);
+  return '';
+}
+
+// The body of an arrow function the page writes — `const name = () => {`.
+// The page keeps its helpers in arrows, so the function-body helper above
+// cannot see them; this one can.
+function blockAfter(source, marker) {
+  const at = source.indexOf(marker);
+  assert.ok(at >= 0, `${marker} has to be in the client source`);
+  const from = source.indexOf('{', at);
+  let depth = 0;
+  for (let index = from; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    else if (source[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(from, index + 1);
+    }
+  }
+  assert.fail(`${marker} has to close its body`);
+  return '';
+}
+
 // One call to the hosted MCP server. The Host speaks Streamable HTTP, so the
 // headers are the ones it sends.
 async function mcpCall(base, message, init = {}) {
@@ -452,6 +559,24 @@ async function mcpCall(base, message, init = {}) {
 function toolResult(reply) {
   assert.ok(reply?.body?.result?.content, 'the tool must answer with content');
   return JSON.parse(reply.body.result.content[0].text);
+}
+
+// The MCP server is named in two files: the manifest names it and the server
+// file describes it. The published copy and the preview copy give it
+// different names, so the test follows the manifest instead of hardcoding
+// one — and the file that has to answer for that name is checked against
+// the very same name.
+async function readMcpServer() {
+  const manifest = JSON.parse(
+    await readFile(fileURLToPath(new URL('../miniapp/miniapp.json', import.meta.url)), 'utf8'),
+  );
+  const servers = JSON.parse(
+    await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8'),
+  );
+  const name = manifest.mcpEndpoints[0].server;
+  const server = servers.mcpServers[name];
+  assert.ok(server, `servers.mcp.json 里要有一个叫 ${name} 的服务器`);
+  return { manifest, servers, name, server };
 }
 
 test('serves the page and its assets on the declared surface path', async (t) => {
@@ -496,9 +621,11 @@ test('capability surface differs per generation mode', async (t) => {
   const image = await getJson(h.base, '/api/capabilities?mode=image');
   assert.equal(image.status, 200);
   // These enums are copied from the live connector schema, not guessed.
-  assert.deepEqual(image.body.capabilities.ratios, ['1:1', '16:9', '9:16', '4:3', '3:4', '21:9']);
-  assert.deepEqual(image.body.capabilities.resolutions, ['1K', '2K', '4K']);
-  assert.equal(image.body.capabilities.maxImages, 9);
+  // `auto` is the model's own default shape and 4K the size it draws when
+  // it is not told otherwise, so those are the first entries.
+  assert.deepEqual(image.body.capabilities.ratios, ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '21:9']);
+  assert.deepEqual(image.body.capabilities.resolutions, ['4K', '2K', '1K']);
+  assert.equal(image.body.capabilities.maxImages, 16);
   assert.equal(image.body.capabilities.supportsDuration, false);
 
   const video = await getJson(h.base, '/api/capabilities?mode=video');
@@ -545,7 +672,7 @@ test('capability surface differs per generation mode', async (t) => {
   const text = await getJson(h.base, '/api/capabilities?mode=text');
   // A text node may look at an upstream image, so the reference limit is not
   // zero even though the mode has no picture parameters.
-  assert.equal(text.body.capabilities.maxImages, 9);
+  assert.equal(text.body.capabilities.maxImages, 16);
   assert.equal(text.body.capabilities.supportsMentionImages, true);
 });
 
@@ -926,9 +1053,9 @@ test('the server enforces the reference limits before starting a run', async (t)
   assert.equal(ten.status, 400);
   assert.match(ten.body.message, /参考图片超过上限/);
 
-  // The global reference cap applies regardless of model. It is the provider's
-  // own ceiling — a collection holds twelve items in all — so a request with
-  // thirteen is refused before it is sent.
+  // The global reference cap applies regardless of model. It is the widest
+  // request there is — sixteen pictures on one image request — so a request
+  // with seventeen is refused before it is sent.
   const tooMany = await getJson(h.base, '/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -937,7 +1064,7 @@ test('the server enforces the reference limits before starting a run', async (t)
       mode: 'image',
       prompt: 'x',
       modelKey: JSON.stringify({ providerId: 'minimax', modelId: 'minimax-M3' }),
-      references: Array.from({ length: 13 }, (_, index) => ({
+      references: Array.from({ length: 17 }, (_, index) => ({
         id: `n_${index}`,
         title: `素材 ${index}`,
         kind: 'image',
@@ -947,10 +1074,30 @@ test('the server enforces the reference limits before starting a run', async (t)
     }),
   });
   assert.equal(tooMany.status, 400);
-  assert.match(tooMany.body.message, /参考素材超过 12 个/);
-  // And twelve is not refused by the cap: the cap was a number of our own
-  // before, and it took a request the provider would have taken. A collection
-  // of nine pictures and three clips is twelve items, and H3 takes twelve.
+  assert.match(tooMany.body.message, /参考素材超过 16 个/);
+  // And sixteen is not refused by the cap: the cap was a number of our own
+  // before, and it took a request the provider would have taken. The image
+  // model takes sixteen reference pictures.
+  const sixteen = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_sixteen',
+      mode: 'image',
+      prompt: 'x',
+      modelKey: JSON.stringify({ providerId: 'minimax', modelId: 'minimax-M3' }),
+      references: Array.from({ length: 16 }, (_, index) => ({
+        id: `n_s${index}`,
+        title: `素材 ${index}`,
+        kind: 'image',
+        text: '',
+        media: [{ url: `https://cdn.example.com/s${index}.png`, kind: 'image' }],
+      })),
+    }),
+  });
+  assert.equal(sixteen.status, 202);
+  // And twelve is not refused by the cap either: a collection of nine
+  // pictures and three clips is twelve items, and H3 takes twelve.
   const twelve = await getJson(h.base, '/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -1148,6 +1295,39 @@ test('the mention caret maths counts the text before the caret', async (t) => {
   assert.equal(detectMention(parseSegments(withChip), 6), null);
 });
 
+test('text pasted with its formatting still becomes the prompt', async () => {
+  const { parseSegments, plainText } = await import('../miniapp/client/mention.mjs');
+
+  // A paste from a word processor leaves its paragraph and its font behind.
+  // The words inside are still the words the user wrote: the card showed the
+  // prompt, so the node has to keep it. Before this, the editor kept the text
+  // and the model was sent an empty prompt.
+  const text = (value) => ({ nodeType: 3, textContent: value, childNodes: [] });
+  const font = { nodeType: 1, childNodes: [] };
+  const paragraph = { nodeType: 1, childNodes: [font] };
+  font.childNodes = [text('一只橘猫坐在木质窗台上')];
+  const pasted = { nodeType: 1, childNodes: [paragraph] };
+
+  assert.deepEqual(parseSegments(pasted), [{ type: 'text', text: '一只橘猫坐在木质窗台上' }]);
+  assert.equal(plainText(parseSegments(pasted)), '一只橘猫坐在木质窗台上');
+
+  // A chip is a chip wherever it sits, and the words around it stay words.
+  const chip = {
+    nodeType: 1,
+    dataset: { mentionNodeId: 'n_1', mentionKind: 'image' },
+    childNodes: [text('素材标题')],
+  };
+  const mixed = {
+    nodeType: 1,
+    childNodes: [paragraph, chip, { nodeType: 1, childNodes: [text('，换成背景')] }],
+  };
+  assert.deepEqual(parseSegments(mixed), [
+    { type: 'text', text: '一只橘猫坐在木质窗台上' },
+    { type: 'mention', nodeId: 'n_1', kind: 'image' },
+    { type: 'text', text: '，换成背景' },
+  ]);
+});
+
 test('the preview box follows the ratio of the media it shows', async () => {
   const { fitMediaBox } = await import('../miniapp/client/tools.mjs');
 
@@ -1178,6 +1358,56 @@ test('the preview box follows the ratio of the media it shows', async () => {
   // A degenerate ratio still produces a usable box.
   const broken = fitMediaBox(0, 302);
   assert.ok(broken.width > 0 && broken.height > 0);
+});
+
+test('a card the user made bigger shows a bigger picture', async () => {
+  const { mediaBoxFor } = await import('../miniapp/client/tools.mjs');
+
+  // A card nobody resized is sized around the media, and the preview stays
+  // inside the bounds, so a huge asset cannot blow the card up.
+  const auto = mediaBoxFor(16 / 9, 302, false);
+  assert.ok(Math.abs(auto.width / auto.height - 16 / 9) < 0.05, 'the preview keeps the media ratio');
+  assert.ok(auto.width <= 320, 'the preview stays inside the bounds');
+
+  // A card the user sized by hand is a frame: the media takes the whole
+  // width of it and keeps its own ratio, so a bigger card shows a bigger
+  // picture and no grey is left over around the work.
+  const framed = mediaBoxFor(16 / 9, 600, true);
+  assert.equal(framed.width, 600, 'the picture takes the width of the frame');
+  assert.ok(Math.abs(framed.width / framed.height - 16 / 9) < 0.05, 'the picture keeps its ratio in the frame');
+  // The bounds that keep a huge asset from blowing the card up do not apply
+  // to a frame the user asked for.
+  assert.ok(framed.width > 320, 'the preview limits still bound the frame');
+
+  // A tall picture in a frame is just as tall as its own ratio says.
+  const tall = mediaBoxFor(9 / 16, 600, true);
+  assert.equal(tall.width, 600);
+  assert.ok(Math.abs(tall.width / tall.height - 9 / 16) < 0.05, 'a tall picture keeps its ratio');
+
+  const source = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // The card the user is resizing takes the media with it.
+  assert.match(functionBody(source, 'startResize'), /refitMedia\(node, target\);/);
+  // The refit works the box out from the card and from the media's own size.
+  assert.match(functionBody(source, 'refitMedia'), /mediaBoxForNode\(node, naturalWidth, naturalHeight\)/);
+  assert.match(functionBody(source, 'refitMedia'), /applyMediaBox\(mediaWrap, media, box\);/);
+  // And the card hugs the picture, so no grey is left over under it.
+  assert.match(functionBody(source, 'refitMedia'), /fitCardHeight\(node, card\);/);
+  // The box depends on the width of the card, so a widened card asks for a
+  // wider preview instead of keeping the one it had.
+  assert.match(functionBody(source, 'mediaSignature'), /@\$\{Math\.round\(cardWidth\)\}/);
+  // And the page works the box out again after a reload.
+  assert.match(functionBody(source, 'renderOutput'), /output\.fittedNatural/);
+
+  // The size the media was measured at survives a reload, so the box can be
+  // worked out again without the picture being loaded once more.
+  const store = await readFile(
+    fileURLToPath(new URL('../miniapp/node/store.mjs', import.meta.url)),
+    'utf8',
+  );
+  assert.match(store, /fittedNatural:/);
 });
 
 test('the watermark rectangle is inset so ffmpeg accepts it', () => {
@@ -1259,9 +1489,9 @@ test('a tool does not take the picture it worked on with it', async (t) => {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      tool: 'resize',
+      tool: 'enhance',
       sources: [{ url, kind: 'image' }],
-      params: { width: 48, height: 32 },
+      params: { scale: 2 },
     }),
   });
   assert.equal(response.status, 200, `工具跑不动：${response.body?.message ?? ''}`);
@@ -1291,8 +1521,6 @@ test('the image tools under a picture really run on this machine', async (t) => 
   const cases = [
     { tool: 'cutout', params: { color: 'green', tolerance: 0.3 } },
     { tool: 'enhance', params: { scale: 2 } },
-    { tool: 'resize', params: { width: 48, height: 32 } },
-    { tool: 'idPhoto', params: { size: '一寸' } },
   ];
   for (const item of cases) {
     const response = await getJson(h.base, '/api/tools/run', {
@@ -1766,6 +1994,7 @@ test('the client bundle never calls or reads a name that does not exist', () => 
     new URL('../miniapp/client/mention.mjs', import.meta.url),
     new URL('../miniapp/client/forms.mjs', import.meta.url),
     new URL('../miniapp/client/actions.mjs', import.meta.url),
+    new URL('../miniapp/client/node-ui.mjs', import.meta.url),
   ]);
   assert.deepEqual(
     problems.map((p) => `${p.file}:${p.line} ${p.name} [${p.kind}]`),
@@ -2004,8 +2233,10 @@ test('every tool states what it needs and what it produces', () => {
     if (tool.status === 'pending') {
       assert.ok(tool.pendingReason, `${tool.key} does not say why it is not wired yet`);
     } else {
-      // A tool that claims to be ready has to say how it runs.
-      assert.ok(['local', 'agent', 'ffmpeg', 'understand'].includes(tool.run), `${tool.key} has no run mode`);
+      // A tool that claims to be ready has to say how it runs. The provider's
+      // own picture tools run through the connector, like the ones that ask
+      // the provider about a picture.
+      assert.ok(['local', 'agent', 'ffmpeg', 'understand', 'connector'].includes(tool.run), `${tool.key} has no run mode`);
     }
   }
 });
@@ -2017,7 +2248,7 @@ test('the local ffmpeg tools the panel offers are all wired', () => {
   for (const key of [
     'frame', 'frameGrid', 'trim', 'cropVideo', 'autoSegment', 'splitAv', 'merge',
     'eraseSubtitle', 'removeWatermark', 'removeBg',
-    'cutout', 'enhance', 'resize', 'idPhoto',
+    'cutout', 'enhance',
   ]) {
     const tool = tools.find((item) => item.key === key);
     assert.ok(tool, `the tool ${key} is missing from the panel`);
@@ -2027,12 +2258,12 @@ test('the local ffmpeg tools the panel offers are all wired', () => {
 });
 
 test('the tools that were taken out stay taken out', () => {
-  // Four image tools were removed on purpose: a tool on a result node is a
-  // shortcut for that one picture, and these four were not (see
+  // Six image tools were removed on purpose: a tool on a result node is a
+  // shortcut for that one picture, and these six were not (see
   // RETIRED_TOOLS). The reason is written down so they are not put back by
   // someone reading the reference implementation's list.
   const tools = palette().tools;
-  for (const key of ['collage', 'poster', 'deWatermark', 'recolor']) {
+  for (const key of ['collage', 'poster', 'deWatermark', 'recolor', 'resize', 'idPhoto']) {
     assert.equal(
       tools.find((item) => item.key === key),
       undefined,
@@ -2040,10 +2271,9 @@ test('the tools that were taken out stay taken out', () => {
     );
     assert.equal(findMediaTool(key), null, `${key} 的实现还在运行时的工具表里`);
   }
-  assert.ok(RETIRED_TOOLS.collage, 'the reason for taking collage out is not written down');
-  assert.ok(RETIRED_TOOLS.poster, 'the reason for taking poster out is not written down');
-  assert.ok(RETIRED_TOOLS.deWatermark, 'the reason for taking deWatermark out is not written down');
-  assert.ok(RETIRED_TOOLS.recolor, 'the reason for taking recolor out is not written down');
+  for (const key of ['collage', 'poster', 'deWatermark', 'recolor', 'resize', 'idPhoto']) {
+    assert.ok(RETIRED_TOOLS[key], `the reason for taking ${key} out is not written down`);
+  }
 });
 
 test('a tool that asks for several values runs once per value', () => {
@@ -2226,15 +2456,16 @@ test('the result of a branch does not cover the branch next to it', async () => 
     sizes: { result: { width: 320, height: 420 } },
     idFor: (prefix) => `${prefix}_${++seq}`,
   });
-  const result = placed.results[0];
+  // The product lands on the card that made it, so there is no second card
+  // that could cover the branch next to it.
+  assert.equal(placed.canvas.nodes.length, 3);
+  assert.equal(placed.results[0].id, 'a1');
   const second = placed.canvas.nodes.find((node) => node.id === 'a2');
-  assert.ok(
-    result.position.x + result.width <= second.position.x,
-    `the result covers the branch next to it: ${result.position.x} and ${second.position.x}`,
-  );
-  // The branch the result belongs to did not move.
+  assert.equal(second.position.x, 800);
+  // The branch the product belongs to did not move, and it shows the product.
   const first = placed.canvas.nodes.find((node) => node.id === 'a1');
   assert.equal(first.position.x, 400);
+  assert.equal(first.metadata.output.media.length, 1);
 
   // A batch of results lands on a card as well, and the card in the way
   // steps aside.
@@ -2788,7 +3019,7 @@ test('an image node generates through the connector, not through an Agent turn',
   assert.ok(imageCall, 'generate_image was not called');
   assert.equal(imageCall.args.requests[0].prompt, '一只猫');
   assert.equal(imageCall.args.requests[0].aspect_ratio, '16:9');
-  assert.equal(imageCall.args.requests[0].resolution, '1K');
+  assert.equal(imageCall.args.requests[0].area, '1K');
 });
 
 test('an upstream asset travels with the connection, not only with a mention', async (t) => {
@@ -2821,8 +3052,8 @@ test('an upstream asset travels with the connection, not only with a mention', a
   const imageCall = await waitForCall(connector.calls, (call) => call.toolRef.endsWith('generate-image'));
   assert.ok(imageCall, 'generate_image was not called');
   assert.deepEqual(
-    imageCall.args.requests[0].input_urls,
-    ['https://cdn.example.com/up.png'],
+    imageCall.args.requests[0].reference_images,
+    [{ url: 'https://cdn.example.com/up.png' }],
     'the connected image did not travel with the run',
   );
 });
@@ -2904,7 +3135,7 @@ test('a reference file that is gone does not take the run down', async (t) => {
   // And the request carries only the material that could be read.
   const imageCall = connector.calls.find((call) => call.toolRef.endsWith('generate-image'));
   assert.ok(imageCall, 'generate_image was not called');
-  assert.deepEqual(imageCall.args.requests[0].input_urls, ['https://cdn.example.com/new.png']);
+  assert.deepEqual(imageCall.args.requests[0].reference_images, [{ url: 'https://cdn.example.com/new.png' }]);
 });
 
 test('the cleanup does not take the files when there is no canvas', async (t) => {
@@ -2957,35 +3188,52 @@ test('a stale tool reference is listed again and tried once more', async (t) => 
   assert.ok(connector.state.listCalls >= 2, 'the tool list was not read again');
 });
 
-test('a card holding a video shows no tools, a picture result shows its own', async () => {
-  // A finished clip is a deliverable, not a working material: a dozen buttons
-  // under it are noise. The video tools stay in the runtime, so the Agent can
-  // still call them.
-  const { cardChrome, cardTools } = await import('../miniapp/client/forms.mjs');
-  const tools = [
-    { key: 'cutout', kind: 'image' },
-    { key: 'gridSplit', kind: 'image' },
-    { key: 'videoSplit', kind: 'video' },
-    { key: 'frameExtract', kind: 'video' },
-  ];
+test('a card holding a video shows the sound and the clip, a picture result shows its own', async () => {
+  // A finished clip is working material again: the sound can come out of it
+  // and it can be cut. The rest of the video tools stay in the runtime, so
+  // the Agent can still call them.
+  const { cardTools } = await import('../miniapp/client/forms.mjs');
+  const { palette } = await import('../miniapp/node/capabilities.mjs');
+  const tools = palette().tools;
+
   const picture = { type: 'result', metadata: { kind: 'image', output: { media: [] } } };
   const video = { type: 'result', metadata: { kind: 'video', output: { media: [] } } };
   const generating = { type: 'image', metadata: { output: { media: [] } } };
 
+  // The video card offers the two the reference product puts on a video: the
+  // sound on its own, and a cut of it.
+  assert.deepEqual(cardTools(video, tools).map((tool) => tool.key), ['extractAudio', 'trim']);
+
   // A picture result offers the picture tools, and only those.
-  assert.deepEqual(cardTools(picture, tools).map((tool) => tool.key), ['cutout', 'gridSplit']);
-  // A video result offers none.
-  assert.deepEqual(cardTools(video, tools), []);
+  const pictureTools = cardTools(picture, tools);
+  assert.ok(pictureTools.length > 0, '图片卡没有工具了');
+  assert.ok(pictureTools.every((tool) => tool.kind === 'image'), '图片卡混进了别的工具');
   // A generating card has nothing to transform yet.
   assert.deepEqual(cardTools(generating, tools), []);
 
-  // The footer is the toolbar: a card with no tools has no footer either, so
-  // no empty strip is left under the material.
-  assert.equal(cardChrome(picture, tools).hasFooter, true);
-  assert.equal(cardChrome(video, tools).hasFooter, false);
-  assert.equal(cardChrome(generating, tools).hasFooter, false);
-  // The two answers come from the same rule, so they cannot disagree.
-  assert.deepEqual(cardChrome(video, tools).tools, cardTools(video, tools));
+  // The tools float in the rail above the card: a card with no tools gets
+  // no dock, so there is no empty strip anywhere.
+  const { cardLayers } = await import('../miniapp/client/node-ui.mjs');
+  assert.deepEqual(cardLayers(picture, { tools }).above, ['tools']);
+  assert.deepEqual(cardLayers(video, { tools }).above, ['tools']);
+  assert.deepEqual(cardLayers(generating, { tools }).ops, ['composer', 'params']);
+});
+
+test('the operation surface that holds a prompt is a page, not a column', async () => {
+  // A prompt is read across, so the surface under the card is a wide page
+  // and a long prompt scrolls inside it. The prompt can reach that surface
+  // two ways — the editor the user types in, and the text an upstream line
+  // handed over — and both are the same part, so both get the same page.
+  const { cardLayers, opsSurfaceClass } = await import('../miniapp/client/node-ui.mjs');
+
+  const generating = { type: 'image', metadata: { output: { media: [] } } };
+  const text = { type: 'text', metadata: { kind: 'text', output: { media: [], text: '' } } };
+  const result = { type: 'result', metadata: { kind: 'image', output: { media: [{ url: 'x' }] } } };
+
+  assert.equal(opsSurfaceClass(cardLayers(generating)), 'nxc-node__ops--prompt');
+  assert.equal(opsSurfaceClass(cardLayers(text)), 'nxc-node__ops--prompt');
+  // A card with nothing to type in gets no page under it.
+  assert.equal(opsSurfaceClass(cardLayers(result)), '');
 });
 
 test('a call that waited for the machine says how long it waited when it fails', async (t) => {
@@ -3084,8 +3332,12 @@ test('a stopped image call goes on by the Agent road instead of failing', async 
   assert.ok(runCall, 'the Agent was not asked to run');
   assert.match(runCall.payload.text, /把参考图里的字搬到牌匾上/, 'the request lost the prompt');
   assert.match(runCall.payload.text, /"aspect_ratio":"9:16"/, 'the request lost the ratio');
-  assert.match(runCall.payload.text, /"resolution":"1K"/, 'the request lost the resolution');
-  assert.match(runCall.payload.text, /cdn\.example\.com\/ref\.png/, 'the request lost the reference');
+  assert.match(runCall.payload.text, /"area":"1K"/, 'the request lost the size tier');
+  assert.match(
+    runCall.payload.text,
+    /"reference_images":\[\{"url":"https:\/\/cdn\.example\.com\/ref\.png"\}\]/,
+    'the request lost the reference',
+  );
 
   const approved = await getJson(h.base, `/api/runs/${runId}/permission`, {
     method: 'POST',
@@ -4036,8 +4288,10 @@ test('the client gives the controls a name and says what is selected', async () 
   assert.match(source, /wrap\.setAttribute\('role', 'group'\)/);
   assert.match(source, /nodeAccessibleName/);
   // The selection is said in words, so it is not carried by a border colour
-  // alone.
-  assert.match(source, /'已选'/);
+  // alone: the name of the card carries it. There is no chip on the card any
+  // more.
+  assert.match(source, /（已选）/);
+  assert.doesNotMatch(source, /nxc-node__sel/);
   // A status message is announced, and a failure is announced firmly.
   assert.match(source, /'alert' : 'status'/);
 });
@@ -4107,7 +4361,7 @@ test('a local reference is uploaded the way the provider expects', async (t) => 
   // And the provider was given the temporary URL, not the local path.
   const imageCall = h.hostConnector.calls.find((c) => c.toolRef.endsWith('generate-image'));
   assert.ok(imageCall, 'the image tool must have been called');
-  assert.deepEqual(imageCall.args.requests[0].input_urls, ['https://cdn.example.com/temp/sample.png']);
+  assert.deepEqual(imageCall.args.requests[0].reference_images, [{ url: 'https://cdn.example.com/temp/sample.png' }]);
 });
 
 test('the toolbar wraps instead of running out of a narrow window', async () => {
@@ -4142,7 +4396,9 @@ test('the palette ships the limits every model was resolved with', async (t) => 
   assert.deepEqual(hailuo.resolutionByDuration, { 6: ['768P', '1080P'], 10: ['768P'] });
   assert.equal(byModel.video['MiniMax-H3'].supportsReferences, true);
   assert.equal(byModel.video['MiniMax-H3-Max'].supportsReferences, false);
-  assert.deepEqual(byModel.image['matrix-image'].ratios, ['1:1', '16:9', '9:16', '4:3', '3:4', '21:9']);
+  assert.deepEqual(byModel.image['matrix-image'].ratios, ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '21:9']);
+  assert.deepEqual(byModel.image['matrix-image'].resolutions, ['4K', '2K', '1K']);
+  assert.equal(byModel.image['matrix-image'].maxImages, 16);
 });
 
 test('the capability list only claims the connector tools the app drives', async () => {
@@ -4160,6 +4416,8 @@ test('the capability list only claims the connector tools the app drives', async
     'get_asset_url',
     'describe_images',
     'videos_understand',
+    'enhance_image',
+    'remove_image_background',
   ];
   for (const tool of CONNECTOR_TOOLS) {
     const suffix = tool.tool.split('__').pop();
@@ -4172,7 +4430,16 @@ test('the capability list only claims the connector tools the app drives', async
 
   // And each tool marked as driven has a call site in the runtime, not only a
   // name in the table.
-  const files = ['connector-runner.mjs', 'provider-upload.mjs', 'media-store.mjs', 'server.mjs'];
+  // The provider's own picture tools are named in the capability table — the
+  // table says which tool a canvas tool runs through — so the table is part
+  // of the runtime the scan looks at.
+  const files = [
+    'capabilities.mjs',
+    'connector-runner.mjs',
+    'provider-upload.mjs',
+    'media-store.mjs',
+    'server.mjs',
+  ];
   const sources = await Promise.all(files.map((file) => readFile(
     fileURLToPath(new URL(`../miniapp/node/${file}`, import.meta.url)),
     'utf8',
@@ -4348,7 +4615,15 @@ test('a destructive action carries the danger colour before it is clicked', asyn
   assert.match(css, /\.nxc-btn--danger \{[^}]*color: var\(--mcode-danger\)/);
   assert.match(css, /\.nxc-menu__item--danger \{[^}]*color: var\(--mcode-danger\)/);
   // And the delete in the node menu is the destructive one.
-  assert.match(app, /label: '删除节点', danger: true/);
+  const { nodeMenuEntries } = await import('../miniapp/client/node-ui.mjs');
+  const entries = nodeMenuEntries(
+    { type: 'result', metadata: { output: {} } },
+    { selectedCount: 1, isGroup: false, canPaste: false },
+  );
+  const remove = entries.find((entry) => entry !== '-' && entry.action === 'delete');
+  assert.ok(remove, '卡片菜单有删除');
+  assert.equal(remove.label, '删除节点');
+  assert.equal(remove.danger, true);
 });
 
 test('every kind of data has a colour of its own', async () => {
@@ -4382,9 +4657,20 @@ test('every kind of data has a colour of its own', async () => {
   // of the card it sits on.
   assert.match(css, /\.nxc-node__port\[data-kind='text'\] \{ --port-kind: var\(--nxc-kind-text\)/);
   assert.match(css, /\.nxc-node__port\[data-kind='image'\] \{ --port-kind: var\(--nxc-kind-image\)/);
-  // An output is filled and an input is hollow until it is plugged.
-  assert.match(css, /\.nxc-node__port--out \{[^}]*background: var\(--port-kind\)/);
+  // A port is a ring to grab, not a bead on the card: it stays hollow
+  // until something is plugged into it or the pointer comes near.
+  assert.match(css, /\.nxc-node__port \{[^}]*background: var\(--mcode-surface\)/);
+  // The port is small: it is a hole to grab, not a bead on the card. Its size
+  // is said in one place, and the browser's own button rules are taken away,
+  // or the ring comes out a wide oval.
+  const portBlock = /\.nxc-node__port \{([^}]*)\}/.exec(css);
+  assert.ok(portBlock, 'the port has no rule of its own');
+  const portSize = Number(/--port-size:\s*(\d+)px/.exec(portBlock[1])?.[1] ?? 999);
+  assert.ok(portSize > 0 && portSize <= 10, 'the port grew into a bead');
+  assert.match(portBlock[1], /padding:\s*0;/, 'the browser still pads the port');
+  assert.match(portBlock[1], /min-width:\s*0;/, 'the browser still sets a floor under the port');
   assert.match(css, /\.nxc-node__port--in\.is-connected \{[^}]*background: var\(--port-kind\)/);
+  assert.doesNotMatch(css, /\.nxc-node__port--out \{[^}]*background:/);
   // An input node that holds nothing yet is still the kind it was made for,
   // so its card, its port and its line are one colour. The rule itself lives
   // in the shared module, so it is checked by what it returns.
@@ -4463,44 +4749,135 @@ test('every node declares the slots it takes and the one it hands on', async () 
     fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
     'utf8',
   );
-  // The page feeds the rule with what the node knows about itself.
-  assert.match(source, /return \{ inputs: stripInputs\(node, effectiveCaps\(node\)\), outputs: slots\.outputs \};/);
-  // A node with a text box takes its text in the text box: the text has no
-  // port of its own and no slot in the strip. One thing, one place.
+  // The page does not build a list of slots of its own any more: the ports
+  // on the card are drawn from the table the rule lives in.
+  assert.match(source, /const ports = portList\(node, caps\);/);
+  assert.doesNotMatch(source, /stripInputs/);
+  // A generating card shows what it produced, so its prompt is not on the
+  // card: the text is an input like any other, and it lands on a port. Only
+  // a card that holds text has a text box of its own.
   const { hasTextBox, portKinds, stripInputs } = await import('../miniapp/client/forms.mjs');
-  assert.equal(hasTextBox({ type: 'image', metadata: {} }), true);
+  assert.equal(hasTextBox({ type: 'image', metadata: {} }), false);
   assert.equal(hasTextBox({ type: 'input', metadata: { kind: 'text' } }), true);
   assert.equal(hasTextBox({ type: 'input', metadata: { kind: 'image' } }), false);
   assert.equal(hasTextBox({ type: 'result', metadata: { kind: 'text' } }), false);
-  // A 文生图 node waits for a text, and the text goes into the box: no port.
-  assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'text2image' } }), []);
+  // A 文生图 node waits for a text, and the text comes in on a port.
+  assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'text2image' } }), ['text']);
   // The other kinds keep their ports.
-  assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'image2image' } }), ['image']);
+  assert.deepEqual(portKinds({ type: 'image', metadata: { mode: 'image2image' } }), ['text', 'image']);
   // A text-to-video run carries no reference: the reference set is a request
   // of its own.
-  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'text2video' } }), []);
+  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'text2video' } }), ['text']);
   // And the reference set takes the three kinds the provider takes in it: a
   // picture, a clip and a sound.
-  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'image2video' } }), ['image', 'video', 'audio']);
+  assert.deepEqual(portKinds({ type: 'video', metadata: { mode: 'image2video' } }), ['text', 'image', 'video', 'audio']);
   // And the strip reads the same rule, so the card never says two different
   // things about the same input.
-  assert.deepEqual(stripInputs({ type: 'image', metadata: { mode: 'image2image' } }), [{ kind: 'image', role: '', label: '' }]);
-  assert.deepEqual(stripInputs({ type: 'image', metadata: { mode: 'text2image' } }), []);
+  assert.deepEqual(stripInputs({ type: 'image', metadata: { mode: 'image2image' } }), [
+    { kind: 'text', role: '', label: '' },
+    { kind: 'image', role: '', label: '' },
+  ]);
+  assert.deepEqual(stripInputs({ type: 'image', metadata: { mode: 'text2image' } }), [{ kind: 'text', role: '', label: '' }]);
   // A node with no text box keeps its text slot: the result card shows it.
   assert.deepEqual(stripInputs({ type: 'result', metadata: { kind: 'text' } }), [{ kind: 'text', role: '', label: '' }]);
   // 图生视频·首尾帧 takes two pictures, and the role is what tells the two
-  // apart: one is the first frame and one is the last.
+  // apart: one is the first frame and one is the last. The text comes first:
+  // a generating card has no text box of its own any more, so the prompt
+  // reaches it through a port like every other input.
   assert.deepEqual(stripInputs({ type: 'video', metadata: { mode: 'imagefl2video' } }), [
+    { kind: 'text', role: '', label: '' },
     { kind: 'image', role: 'first', label: '首帧' },
     { kind: 'image', role: 'last', label: '尾帧' },
   ]);
-  // The strip is drawn on the card, right under the header.
-  assert.match(source, /wrap\.appendChild\(renderSlotStrip\(node, slots\)\)/);
-  // An open slot says it is waiting in words, not only by a hollow ring.
-  assert.match(source, /if \(open\) item\.appendChild\(el\('span', 'nxc-slot__wait', '待接入'\)\)/);
-  assert.match(css, /\.nxc-slot\.is-open \.nxc-slot__dot \{[^}]*inset 0 0 0 1\.5px var\(--slot-kind\)/);
-  // The slot, the port, the node and the line share one colour per kind.
-  assert.match(css, /\.nxc-slot\[data-kind='image'\] \{ --slot-kind: var\(--nxc-kind-image\)/);
+  // The card carries no strip of slots and no pills: the ports on its edge
+  // say where data goes, and nothing else says it a second time.
+  assert.doesNotMatch(source, /renderSlotStrip/);
+  assert.doesNotMatch(css, /\.nxc-slots/);
+  assert.doesNotMatch(source, /slotPill|renderSlotPill|nxc-node__hint/);
+  assert.doesNotMatch(css, /nxc-node__hint/);
+  // And the card is renameable from its own menu: it has no button of its
+  // own any more.
+  const { nodeMenuEntries } = await import('../miniapp/client/node-ui.mjs');
+  assert.ok(
+    nodeMenuEntries({ type: 'result', metadata: {} }, {}).some((entry) => entry.action === 'rename'),
+    'the card has to be renameable from its own menu',
+  );
+});
+
+test('the card keeps one hairline and no dots, the way the reference board does', async () => {
+  const css = await readFile(
+    fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
+    'utf8',
+  );
+  const app = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // One frame for every card: the state is said in words in the header, so
+  // the frame does not change colour with it.
+  assert.match(
+    css,
+    /\.nxc-node \{[^}]*border: 1px solid color-mix\(in srgb, var\(--mcode-text\) 9%, transparent\)/,
+  );
+  assert.doesNotMatch(css, /\.nxc-node\[data-state='(done|error|running)'\] \{/);
+  // The selection is the ring drawn inside the card, not a coloured frame.
+  assert.doesNotMatch(css, /\.nxc-node--selected \{[^}]*border-color:/);
+  assert.match(css, /\.nxc-node--selected::after \{[^}]*var\(--brand\)/);
+  // The state dot is gone: the words in the header say it, so the card does
+  // not need a bead of its own.
+  assert.doesNotMatch(app, /nxc-node__state/);
+  assert.doesNotMatch(css, /nxc-node__state/);
+  // The media is the picture, not a picture in a box.
+  assert.match(css, /\.nxc-node__media-wrap \{[^}]*border: 0;/);
+});
+
+test('the card is the work itself: no head, no words, no icons', async () => {
+  const app = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  const css = await readFile(
+    fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
+    'utf8',
+  );
+  // The head of a card is empty: no kind icon, no 「已选」, no handle, no
+  // pencil and no state mark. None of them has a rule any more.
+  assert.doesNotMatch(app, /nxc-node__(info|sel|plus|edit|status)/);
+  assert.doesNotMatch(css, /nxc-node__(info|sel|plus|edit|status)/);
+  assert.doesNotMatch(app, /nodeBadge|cardFace|stateMark/);
+  // What is left of the head is the rename field, and an empty head takes no
+  // room at all.
+  assert.match(app, /const head = el\('div', 'nxc-node__head'\);\s*if \(state\.editingTitleId === node\.id\) \{/);
+  assert.match(css, /\.nxc-node__head:empty \{\s*display: none;/);
+  // What a card is and how it is doing is said by the card itself: the
+  // picture it made, the error it hit, or the empty frame that says it has
+  // not run yet.
+  const frame = functionBody(app, 'renderEmptyFrame');
+  // A card that is working says how long it has been working: a card that
+  // turns for ever tells the user nothing.
+  assert.match(frame, /正在生成…/);
+  assert.match(frame, /runningFor\(node\.id\)/);
+  assert.match(frame, /'还没有产物 · 写好提示词点「生成」'/);
+  assert.match(functionBody(app, 'renderErrorCard'), /el\('div', 'nxc-node__error'\)/);
+  // What floats above a card is the dock of tools and the small buttons, and
+  // nothing else.
+  const { railParts } = await import('../miniapp/client/node-ui.mjs');
+  assert.deepEqual(railParts({ above: ['tools', 'save', 'menu'] }), [
+    { part: 'tools', where: 'main' },
+    { part: 'save', where: 'acts' },
+    { part: 'menu', where: 'acts' },
+  ]);
+  assert.match(app, /railParts\(layers\)/);
+  // The selection is still said in words, for a reader that cannot see the
+  // ring around the card.
+  assert.match(app, /selection\.includes\(node\.id\) \? `\$\{name\}（已选）`/);
+  // And the name of the card is still read from the same table the menu and
+  // the ports read.
+  const { nodeKindLabel } = await import('../miniapp/client/node-ui.mjs');
+  assert.equal(
+    nodeKindLabel({ type: 'input', metadata: { kind: 'image' } }, { inputKindLabels: { image: '图片' } }),
+    '输入 · 图片',
+  );
 });
 
 test('the hosted MCP server speaks the protocol the Host expects', async (t) => {
@@ -4573,15 +4950,10 @@ test('the hosted MCP server speaks the protocol the Host expects', async (t) => 
   const wrongMethod = await fetch(`${h.base}/mcp/canvas`, { method: 'GET' });
   assert.equal(wrongMethod.status, 405);
 
-  // The manifest and the server have to name the same path.
-  const manifest = JSON.parse(
-    await readFile(fileURLToPath(new URL('../miniapp/miniapp.json', import.meta.url)), 'utf8'),
-  );
+  // The manifest and the server file have to name the same server.
+  const { manifest, server } = await readMcpServer();
   assert.equal(manifest.mcpEndpoints[0].path, '/mcp/canvas');
-  const servers = JSON.parse(
-    await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8'),
-  );
-  assert.equal(servers.mcpServers.canvas.type, 'streamable-http');
+  assert.equal(server.type, 'streamable-http');
   const plugin = JSON.parse(
     await readFile(fileURLToPath(new URL('../.minimax-plugin/plugin.json', import.meta.url)), 'utf8'),
   );
@@ -4634,13 +5006,18 @@ test('the MCP tools read the canvas the card shows', async (t) => {
   assert.equal(doc.nodeCount, 3);
   assert.equal(doc.connectionCount, 2);
 
-  // The slots are the ones the card shows, with the same three states. The text
-  // is not among them: it goes into the card's text box. A port with a role
-  // says which one it is, so the Agent can tell two picture ports apart.
+  // The slots are the ones the card shows, with the same three states. The
+  // text is among them: a generating card has no text box, so the prompt
+  // arrives through the text port — and this card has written its own
+  // prompt, so that slot says it is ready. A port with a role says which one
+  // it is, so the Agent can tell two picture ports apart.
   const gen = doc.nodes.find((node) => node.id === 'n_gen');
   // The picture is connected, so the node sits in the mode that takes a
-  // picture — and that mode takes the text as well, in its text box.
-  assert.deepEqual(gen.slots.inputs, [{ kind: 'image', role: '', label: '', state: 'filled' }]);
+  // picture — and that mode takes the text as well, on the text port.
+  assert.deepEqual(gen.slots.inputs, [
+    { kind: 'text', role: '', label: '', state: 'ready' },
+    { kind: 'image', role: '', label: '', state: 'filled' },
+  ]);
   assert.deepEqual(gen.slots.outputs, [{ kind: 'image', state: 'out' }]);
   // The input card is a source, the result card is fed and hands on.
   const source = doc.nodes.find((node) => node.id === 'n_in');
@@ -4663,7 +5040,9 @@ test('the MCP tools read the canvas the card shows', async (t) => {
   // The parameters are the ones the card shows: a node that was never
   // touched keeps an empty value, and the drop-down shows the first one the
   // model offers. A reader has to see that value, not the empty one.
-  assert.deepEqual(gen.params, { ratio: '1:1', resolution: '1K', duration: '', count: 1 });
+  // The image model's own defaults are the first ones it offers: the shape
+  // follows the prompt, and the size is 4K.
+  assert.deepEqual(gen.params, { ratio: 'auto', resolution: '4K', duration: '', count: 1 });
 
   // Reading does not write: the page is the only writer, and a tool that
   // wrote here would leave the open page holding a stale copy.
@@ -4876,10 +5255,28 @@ test('the count of a batch is decided in one place', async () => {
   );
   assert.match(source, /count: spec\.count,/);
   assert.match(rules, /count: batchCount\(node\.type, node\.metadata\?\.count\),/);
-  // And the count sits next to the button that starts the run.
-  assert.match(source, /paramSelect\('数量'/);
-  // And a batch that lost an asset says so on the card.
-  assert.match(source, /已完成 \$\{made\}\/\$\{asked\}/);
+  // And the count is offered where the user sets it: the panel behind the
+  // count chip, which holds the count and nothing else.
+  const { paramFields, panelFields } = await import('../miniapp/client/node-ui.mjs');
+  const countFields = paramFields(
+    { type: 'image', metadata: { mode: 'text2image', count: 3 } },
+    resolveLimits('image'),
+    { counts: [{ value: '1', label: '× 1' }, { value: '3', label: '× 3' }] },
+  );
+  const count = countFields.find((field) => field.key === 'count');
+  assert.ok(count, '数量在自己的浮层里');
+  assert.equal(count.value, '3');
+  // The count panel holds the count — and the shape panel does not, so the
+  // same option is never offered in two places.
+  assert.deepEqual(panelFields(countFields, 'count').map((field) => field.key), ['count']);
+  assert.ok(
+    !panelFields(countFields, 'params').some((field) => field.key === 'count'),
+    '形状浮层里没有数量',
+  );
+  // A batch that lost an asset used to be a badge on the card. There is no
+  // badge now: the card shows what came out, and the count it was asked for
+  // is in the parameter row under it.
+  assert.doesNotMatch(source, /nodeBadge|cardFace|stateMark/);
 });
 
 test('the kinds that travel are the four the whole app knows', async () => {
@@ -5238,26 +5635,26 @@ test('the modes and the ports follow the model the node selected', async () => {
   // The ports are the kinds the mode takes and the model allows: the
   // reference set takes a picture, a clip and a sound.
   const ref = { type: 'video', metadata: { mode: 'image2video' } };
-  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
+  assert.deepEqual(portKindsFor(ref, h3), ['text', 'image', 'video', 'audio']);
 
   // MiniMax-H3-Max has no reference collection, so the mode that runs on a
   // set of references is off the table.
   const max = resolveLimits('video', 'MiniMax-H3-Max');
   // A kind the model cannot take has no port either: the reference set has an
   // audio port and a video port, and H3-Max takes neither.
-  assert.deepEqual(portKindsFor(ref, max), ['image']);
+  assert.deepEqual(portKindsFor(ref, max), ['text', 'image']);
   assert.deepEqual(
     modesFor(video, max).map((mode) => mode.id),
     ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video'],
   );
-  assert.deepEqual(portKindsFor(video, max), ['image']);
+  assert.deepEqual(portKindsFor(video, max), ['text', 'image']);
   // The model that can take a clip still offers the reference set, and the set
   // is the same one for every kind of reference.
   assert.deepEqual(
     modesFor(ref, h3).map((mode) => mode.id),
     ['text2video', 'imagekey2video', 'imagefl2video', 'imageend2video', 'image2video'],
   );
-  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
+  assert.deepEqual(portKindsFor(ref, h3), ['text', 'image', 'video', 'audio']);
 
   // Hailuo has the first frame and nothing else.
   const hailuo = resolveLimits('video', 'MiniMax-Hailuo-2.3');
@@ -5272,20 +5669,24 @@ test('the modes and the ports follow the model the node selected', async () => {
   assert.deepEqual(referenceKinds(hailuo), ['image']);
 
   // And the strip reads the same rule: a kind the model cannot take is not an
-  // input of the node either.
+  // input of the node either. The text is the one kind the limits never
+  // narrow: it is the prompt, and every model takes one.
   const { stripInputs } = await import('../miniapp/client/forms.mjs');
   assert.deepEqual(stripInputs(ref, h3), [
+    { kind: 'text', role: '', label: '' },
     { kind: 'image', role: '', label: '' },
     { kind: 'video', role: '', label: '' },
     { kind: 'audio', role: '', label: '' },
   ]);
   // The first frame mode has one picture port, and it says which end it is.
   assert.deepEqual(stripInputs(video, max), [
+    { kind: 'text', role: '', label: '' },
     { kind: 'image', role: 'first', label: '首帧' },
   ]);
   // A kind the model cannot take is not an input of the node either: the
   // reference set has a clip port and a sound port, and H3-Max takes neither.
   assert.deepEqual(stripInputs(ref, max), [
+    { kind: 'text', role: '', label: '' },
     { kind: 'image', role: '', label: '' },
   ]);
 });
@@ -5301,7 +5702,7 @@ test('the reference set takes a picture, a clip and a sound', async () => {
   const record = modeRecordOf(ref);
   assert.equal(record.id, 'image2video');
   assert.deepEqual(record.ports.map((port) => port.kind), ['text', 'image', 'video', 'audio']);
-  assert.deepEqual(portKindsFor(ref, h3), ['image', 'video', 'audio']);
+  assert.deepEqual(portKindsFor(ref, h3), ['text', 'image', 'video', 'audio']);
 });
 
 test('the modes that split the reference set land on the one that carries them all', async () => {
@@ -5315,7 +5716,7 @@ test('the modes that split the reference set land on the one that carries them a
     assert.equal(currentModeId(old), 'image2video');
     const node = { type: 'video', metadata: { mode: old } };
     assert.equal(modeOf(node), 'image2video');
-    assert.deepEqual(portKindsFor(node, h3), ['image', 'video', 'audio']);
+    assert.deepEqual(portKindsFor(node, h3), ['text', 'image', 'video', 'audio']);
   }
 });
 
@@ -5345,13 +5746,19 @@ test('the mode list of the card follows the model too', async () => {
     fileURLToPath(new URL('../miniapp/client/actions.mjs', import.meta.url)),
     'utf8',
   );
+  const ui = await readFile(
+    fileURLToPath(new URL('../miniapp/client/node-ui.mjs', import.meta.url)),
+    'utf8',
+  );
   // The card offers the modes the model can run, and the ports the model can
-  // take: a card must never offer something the run would refuse.
-  assert.match(source, /const modes = modesFor\(node, caps\);/);
+  // take: a card must never offer something the run would refuse. The rule
+  // lives in the pure module, and the page asks it.
+  assert.match(ui, /const modes = modesFor\(node, caps\);/);
+  assert.match(source, /const mode = modeChoice\(node, caps\);/);
   assert.match(source, /const ports = portList\(node, caps\);/);
   // And switching the model goes through the shared rule, so the Agent and
   // the runtime land on the same mode.
-  assert.match(source, /const result = applyModel\(state\.canvas, node, next, actionContext\(\)\);/);
+  assert.match(source, /const result = applyModel\(state\.canvas, node, \w+, actionContext\(\)\);/);
   assert.match(rules, /export function applyModel\(canvas, node, modelKey, context = \{\}\)/);
 });
 
@@ -5512,10 +5919,22 @@ test('a text line that lands on a node hands its text over', async () => {
     fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
     'utf8',
   );
-  // The text box is where a text line lands: the line ends on it, not on a
-  // port on the edge of the card.
-  assert.match(source, /wrap\.dataset\.textBox = '1';/);
-  assert.match(source, /box\.dataset\.textBox = '1';/);
+  // The box a text line lands on is on the card: the upstream's text when a
+  // line landed, the card's own text otherwise. The operation surface may
+  // float out of the card, but the landing box does not go with it.
+  const { cardLayers, textAnchor } = await import('../miniapp/client/node-ui.mjs');
+  // A generating card shows what it made, not what it was told: the prompt
+  // lives in the surface under the card, so the text line lands on the
+  // card's text port and the card has no box to land on.
+  const own = { type: 'image', metadata: { prompt: '一只猫' } };
+  assert.equal(textAnchor(cardLayers(own)), null);
+  assert.deepEqual(cardLayers(own).material, ['frame']);
+  // A text input card is the one that keeps its text on the card, so the
+  // line still ends on the box that holds it.
+  const textInput = { type: 'input', metadata: { kind: 'text', prompt: '一只猫' } };
+  assert.equal(textAnchor(cardLayers(textInput)), 'text');
+  assert.deepEqual(cardLayers(textInput).material, ['text']);
+  // The line ends on a box only when the card has one.
   assert.match(source, /side === 'in' && kind === 'text' && hasTextBox\(node\)/);
   assert.match(source, /\[data-node-id="\$\{node\.id\}"\] \[data-text-box\]/);
   // The inherited text is shown read-only, and the own prompt is not thrown
@@ -5804,14 +6223,20 @@ test('the mention menu offers the whole canvas', async () => {
     fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
     'utf8',
   );
-  const near = (header, call) => {
-    const at = source.indexOf(header);
-    if (at < 0) return false;
-    return source.slice(at, at + 2500).includes(call);
-  };
-  assert.ok(near('function insertMention(', 'applyMentions(node.id);'), '提到素材时要问接线规则');
-  assert.ok(near('function connect(', 'applyMentions(fromId);'), '连线时要问接线规则');
-  assert.ok(near('function renderParams(', 'applyMentions(node.id);'), '切模式时要问接线规则');
+  // The call has to be inside the function that needs it: a call somewhere
+  // else on the page is not a call that fires.
+  assert.ok(
+    functionBody(source, 'insertMention').includes('applyMentions(node.id);'),
+    '提到素材时要问接线规则',
+  );
+  assert.ok(
+    functionBody(source, 'connect').includes('applyMentions(fromId);'),
+    '连线时要问接线规则',
+  );
+  assert.ok(
+    functionBody(source, 'applyModeChoice').includes('applyMentions(node.id);'),
+    '切模式时要问接线规则',
+  );
 });
 
 test('the holder of a material survives the save', async (t) => {
@@ -6189,8 +6614,24 @@ test('a material can be handed to the user, and the library can be opened', asyn
   // folder under the name the node carries, and says where it landed.
   assert.match(source, /\/api\/library\/\$\{encodeURIComponent\(file\)\}\/save/);
   assert.match(source, /已保存到 \$\{result\.path\}/);
-  assert.match(source, /renderMediaActions\(node, item\)/);
-  assert.match(source, /label: '保存到本地'/);
+  // The button that does it floats above the card, and the rule that says so
+  // is the one the layers of a card are drawn from.
+  const { cardLayers } = await import('../miniapp/client/node-ui.mjs');
+  const layers = cardLayers(
+    { type: 'result', metadata: { output: { media: [{ kind: 'image', url: '/assets/a.png' }] } } },
+    {},
+  );
+  assert.ok(layers.above.includes('save'), '有素材的卡片上方有「保存」按钮');
+  // And the menu on a card offers the way out as well.
+  const { nodeMenuEntries } = await import('../miniapp/client/node-ui.mjs');
+  const entries = nodeMenuEntries(
+    { type: 'result', metadata: { output: { media: [{ kind: 'image', url: '/assets/a.png' }] } } },
+    { selectedCount: 1, isGroup: false, canPaste: false },
+  );
+  assert.ok(
+    entries.some((entry) => entry !== '-' && entry.label === '保存到本地'),
+    '卡片菜单有「保存到本地」',
+  );
   // The runtime says it in the headers as well, so the file is saved even
   // when the link is opened on its own.
   const server = await readFile(
@@ -6484,7 +6925,7 @@ test('a run takes the chain above it with it', () => {
   assert.deepEqual(promptSpec.segments, []);
 });
 
-test('the result of a run becomes a node of its own', () => {
+test('the result of a run lands on the card that made it', () => {
   const canvas = {
     nodes: [{ id: 'n1', type: 'image', title: '图', position: { x: 0, y: 0 }, width: 320, height: 420, metadata: {} }],
     connections: [],
@@ -6494,16 +6935,22 @@ test('the result of a run becomes a node of its own', () => {
   let seq = 0;
   const ctx = { sizes: { result: { width: 320, height: 420 } }, idFor: (prefix) => `${prefix}_${++seq}` };
   const placed = materializeResults(canvas, canvas.nodes[0], { id: 't1', media: [{ kind: 'image', url: 'u' }] }, ctx);
-  assert.equal(placed.canvas.nodes.length, 2);
-  assert.equal(placed.canvas.nodes[1].type, 'result');
-  assert.equal(placed.canvas.nodes[1].metadata.sourceTaskId, 't1');
-  assert.equal(placed.canvas.connections.length, 1);
-  // The same task twice is not a second result: the result that is already
+  // The generating card and the result are one card now: the product lands
+  // on the card that made it, and no second card appears.
+  assert.equal(placed.canvas.nodes.length, 1);
+  assert.equal(placed.results[0].id, 'n1');
+  assert.equal(placed.canvas.nodes[0].metadata.output.status, 'success');
+  assert.deepEqual(placed.canvas.nodes[0].metadata.output.media, [{ kind: 'image', url: 'u' }]);
+  // The card names the run that made its product, so the migration cannot
+  // mistake it for the product an old canvas left on the card.
+  assert.equal(placed.canvas.nodes[0].metadata.sourceTaskId, 't1');
+  // The same task twice is not a second result: the card that is already
   // there is the one that stays.
   const again = materializeResults(placed.canvas, canvas.nodes[0], { id: 't1', media: [{ kind: 'image', url: 'u' }] }, ctx);
-  assert.equal(again.canvas.nodes.length, 2);
+  assert.equal(again.canvas.nodes.length, 1);
   assert.equal(again.results[0].id, placed.results[0].id);
-  // A batch is one result per asset, in one row.
+  // A batch is more than one product, and one card holds one product, so a
+  // batch still gets a card each, in one row.
   const batch = materializeResults(canvas, canvas.nodes[0], {
     id: 't2',
     media: [{ kind: 'image', url: 'a' }, { kind: 'image', url: 'b' }],
@@ -6516,6 +6963,50 @@ test('the result of a run becomes a node of its own', () => {
   assert.equal(batch.canvas.nodes[1].position.y, batch.canvas.nodes[2].position.y);
   // The first result starts next to the node it came from, not on top of it.
   assert.ok(batch.canvas.nodes[1].position.x >= canvas.nodes[0].position.x + canvas.nodes[0].width);
+  // And the card that made them says how many there are instead of showing
+  // one of them twice.
+  assert.equal(batch.canvas.nodes[0].metadata.output.resultCount, 2);
+  assert.deepEqual(batch.canvas.nodes[0].metadata.output.media, []);
+});
+
+test('the product of a run stays on the card, even for a canvas of one kind', async () => {
+  // A canvas from before the three roles kept the product of a run on the
+  // card that made it, and the migration split it off into a result node. A
+  // product that names the run that made it is already in the new shape.
+  const { legacyProductNodes } = await import('../miniapp/client/actions.mjs');
+  const running = {
+    id: 'n1',
+    type: 'image',
+    title: '图',
+    position: { x: 0, y: 0 },
+    width: 320,
+    height: 420,
+    metadata: {
+      sourceTaskId: 't1',
+      output: { status: 'success', text: '', media: [{ kind: 'image', url: 'u' }] },
+    },
+  };
+  // Only generate cards: this canvas has no result node and no input node,
+  // so the canvas-level rule does not stop the migration — the node-level
+  // rule has to.
+  assert.deepEqual(legacyProductNodes({ nodes: [running] }), []);
+
+  // An old canvas keeps the product on the card and names no run, so that
+  // one is what the migration splits.
+  const old = {
+    id: 'n2',
+    type: 'image',
+    title: '图',
+    position: { x: 0, y: 0 },
+    width: 320,
+    height: 420,
+    metadata: { output: { status: 'success', text: '', media: [{ kind: 'image', url: 'u' }] } },
+  };
+  assert.deepEqual(legacyProductNodes({ nodes: [old] }), [old]);
+  // A card that made nothing is not a product, and a group is not a card.
+  const empty = { id: 'n3', type: 'image', title: '图', position: { x: 0, y: 0 }, width: 320, height: 420, metadata: {} };
+  const group = { id: 'n4', type: 'group', title: '组', position: { x: 0, y: 0 }, width: 320, height: 420, metadata: { output: { media: [{ kind: 'image', url: 'u' }] } } };
+  assert.deepEqual(legacyProductNodes({ nodes: [empty, group] }), []);
 });
 
 test('a change from the Agent waits for the page that holds the canvas', async (t) => {
@@ -7544,16 +8035,19 @@ test('the Agent can ask for a run, and the result lands on the canvas', async (t
   assert.equal(answer.status, 'started');
   assert.ok(answer.runId);
 
-  // The result becomes a node of its own, without anybody touching the page.
+  // The result lands on the card that made it, without anybody touching the
+  // page.
   let canvasNow = null;
   for (let i = 0; i < 80; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
     canvasNow = (await getJson(h.base, `/api/canvases/${canvas.id}`)).body.canvas;
-    if (canvasNow.nodes.length > 1) break;
+    if (canvasNow.nodes[0]?.metadata?.output?.status === 'success') break;
   }
-  assert.equal(canvasNow.nodes.length, 2);
-  assert.equal(canvasNow.nodes[1].type, 'result');
-  assert.equal(canvasNow.connections.length, 1);
+  // The generating card and the result are one card now.
+  assert.equal(canvasNow.nodes.length, 1);
+  assert.equal(canvasNow.nodes[0].metadata.output.status, 'success');
+  assert.equal(canvasNow.nodes[0].metadata.output.media.length, 1);
+  assert.equal(canvasNow.connections.length, 0);
 });
 
 test('a page that goes quiet keeps the canvas its own', async () => {
@@ -7651,7 +8145,13 @@ test('the menu offers the kinds of node, and a mode is a choice on the card', as
   // model cannot take has no port either, because the run would refuse it.
   assert.match(source, /const ports = portList\(node, caps\);/);
   // The modes follow the model as well: only MiniMax-H3 can continue a video.
-  assert.match(source, /const modes = modesFor\(node, caps\);/);
+  // The rule lives in the pure module, and the page asks it.
+  const ui = await readFile(
+    fileURLToPath(new URL('../miniapp/client/node-ui.mjs', import.meta.url)),
+    'utf8',
+  );
+  assert.match(ui, /const modes = modesFor\(node, caps\);/);
+  assert.match(source, /const mode = modeChoice\(node, caps\);/);
   // Which line may land on which node is one rule, and it lives in the shared
   // action layer: the page asks it, and does not answer the question again on
   // its own. A line of a kind the mode does not take moves the node to the mode
@@ -7668,7 +8168,7 @@ test('the menu offers the kinds of node, and a mode is a choice on the card', as
   // page sends the same action the Agent sends, so the rule lives in the
   // shared action layer.
   assert.match(rules, /dropped = linesDroppedByMode\(doc, next, args\.mode\);/);
-  assert.match(source, /type: 'update_node', args: \{ id: node\.id, mode: value \}/);
+  assert.match(source, /type: 'update_node', args: \{ id: node\.id, mode: \w+ \}/);
   // And every line on the page is drawn through one door: the one that asks
   // the shared rule first. A second place that pushes a connection would be a
   // line that skipped the rule.
@@ -7697,13 +8197,21 @@ test('a ratio says which way the frame lies', async () => {
   assert.equal(ratioLabel('whatever'), 'whatever');
   assert.equal(ratioLabel(''), '');
 
-  // And the menu uses it: the label grows, the value stays the ratio the
-  // provider takes.
-  const source = await readFile(
-    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
-    'utf8',
+  // And the panel uses it: the button says the ratio and the grid draws the
+  // shape next to it, so which way the frame lies is in the tooltip. The
+  // value stays the ratio the provider takes.
+  const { paramFields } = await import('../miniapp/client/node-ui.mjs');
+  const fields = paramFields(
+    { type: 'image', metadata: { mode: 'text2image', ratio: '16:9' } },
+    resolveLimits('image'),
+    {},
   );
-  assert.match(source, /label: ratioLabel\(ratio\),/);
+  const ratio = fields.find((field) => field.key === 'ratio');
+  assert.ok(ratio, '图片节点有画幅');
+  const wide = ratio.options.find((option) => option.value === '16:9');
+  assert.equal(wide.label, '16:9');
+  assert.equal(wide.hint, '16:9 横屏');
+  assert.equal(wide.value, '16:9');
 });
 
 test('the modes that were two are one, and an old canvas lands on the one that is left', async (t) => {
@@ -7975,8 +8483,13 @@ test('an input node only takes the files of its own kind', async (t) => {
     'utf8',
   );
   // A text node holds text, so it has nothing to pick: the upload belongs to
-  // the nodes that hold material.
-  assert.match(source, /if \(kind === 'text'\) \{[\s\S]{0,600}?\} else \{[\s\S]{0,600}?renderUpload\(node\)/);
+  // the nodes that hold material. The rule that says so is the one that
+  // decides what a card keeps.
+  const { cardLayers } = await import('../miniapp/client/node-ui.mjs');
+  const pictureInput = { type: 'input', metadata: { kind: 'image', output: { media: [] } } };
+  const textInput = { type: 'input', metadata: { kind: 'text', output: { media: [] } } };
+  assert.ok(cardLayers(pictureInput, {}).above.includes('upload'));
+  assert.ok(!cardLayers(textInput, {}).above.includes('upload'));
   assert.doesNotMatch(source, /picker\.accept = kind === 'image' \? 'image\/\*' : kind === 'video' \? 'video\/\*' : kind === 'audio' \? 'audio\/\*' : 'image\/\*,video\/\*,audio\/\*'/);
 });
 test('the focus never scrolls the canvas, and the mode switch keeps it in the node', async () => {
@@ -7992,7 +8505,7 @@ test('the focus never scrolls the canvas, and the mode switch keeps it in the no
   assert.match(source, /open\.button\.focus\(\{ preventScroll: true \}\)/);
   // And the mode switch puts the focus back on the node it belongs to, so the
   // next Tab does not wander to another node.
-  assert.match(source, /field\.dataset\.field = 'mode';/);
+  assert.match(source, /control\.dataset\.field = 'mode';/);
   assert.match(source, /focusModeControl\(node\);/);
 });
 
@@ -8817,8 +9330,8 @@ test('a canvas takes the name of a template only when the steps are on it', asyn
 test('the MCP server says what it can do', async () => {
   // The description of the server has to name the tools it really has,
   // including the ones that delete something and the ones that spend money.
-  const raw = await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8');
-  const description = JSON.parse(raw).mcpServers.canvas.description;
+  const { server } = await readMcpServer();
+  const description = server.description;
   for (const tool of ['canvas_list', 'canvas_read', 'canvas_add_node', 'canvas_connect', 'canvas_update_node', 'canvas_remove_node', 'canvas_run', 'canvas_list_templates', 'canvas_apply_template']) {
     assert.ok(description.includes(tool), `描述里要写明 ${tool}`);
   }
@@ -8856,6 +9369,2712 @@ test('the MCP server is given a minute', async () => {
   // a run has to hand the work to the page and wait for the page's answer, so
   // the window is a minute: a page that is busy must not turn the call into a
   // failure.
-  const raw = await readFile(fileURLToPath(new URL('../servers.mcp.json', import.meta.url)), 'utf8');
-  assert.equal(JSON.parse(raw).mcpServers.canvas.timeout, 60000);
+  const { server } = await readMcpServer();
+  assert.equal(server.timeout, 60000);
+});
+
+test('the image model names its references the way its own interface does', async () => {
+  // The image interface addresses the pictures it was given by their place:
+  // 图1, 图2 … in the order of `reference_images`. The prompt has to say the
+  // same word, or the number in the prompt points at another picture than the
+  // one the request sends.
+  const { providerFamily, compilePrompt, buildMentionMap, referenceSlots, tokenize } = await import('../miniapp/node/prompt.mjs');
+  assert.equal(providerFamily('matrix-image'), 'matrix');
+  const references = [
+    { id: 'n_a', kind: 'image', title: '甲', media: [{ url: 'https://cdn.example.com/a.png', kind: 'image' }] },
+    { id: 'n_b', kind: 'image', title: '乙', media: [{ url: 'https://cdn.example.com/b.png', kind: 'image' }] },
+  ];
+  const segments = [
+    { type: 'text', text: '把' },
+    { type: 'mention', kind: 'image', nodeId: 'n_b' },
+    { type: 'text', text: '里的猫换成' },
+    { type: 'mention', kind: 'image', nodeId: 'n_a' },
+    { type: 'text', text: '里的狗' },
+  ];
+  const slots = referenceSlots({ path: '', frames: [], segments, references });
+  const compiled = compilePrompt(tokenize(segments), buildMentionMap(references), 'image', providerFamily('matrix-image'), slots);
+  // The number is the place the picture has in the request.
+  assert.equal(compiled.promptForApi, '把图1里的猫换成图2里的狗');
+  assert.deepEqual(compiled.imageUrls, ['https://cdn.example.com/b.png', 'https://cdn.example.com/a.png']);
+  // The video family keeps its own spelling.
+  const video = compilePrompt(tokenize(segments), buildMentionMap(references), 'video', 'minimax', slots);
+  assert.equal(video.promptForApi, '把@图片1里的猫换成@图片2里的狗');
+});
+
+test('the image request carries the field names the image interface takes', async (t) => {
+  // The interface takes `area` for the size tier and `reference_images` for
+  // the pictures it works from. A field it does not know is dropped without a
+  // word, so a request that still says `resolution` or `input_urls` would
+  // quietly lose the size tier and the references.
+  const connector = createMockHostConnector();
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_fields',
+      mode: 'image',
+      prompt: '照着图1画',
+      params: { ratio: '16:9', resolution: '1K' },
+      references: [
+        {
+          id: 'n_ref',
+          title: '参考',
+          kind: 'image',
+          text: '',
+          media: [{ url: 'https://cdn.example.com/ref.png', kind: 'image' }],
+        },
+      ],
+    }),
+  });
+  assert.equal(started.status, 202);
+  const imageCall = await waitForCall(connector.calls, (call) => call.toolRef.endsWith('generate-image'));
+  assert.ok(imageCall, 'generate_image was not called');
+  const request = imageCall.args.requests[0];
+  assert.equal(request.aspect_ratio, '16:9');
+  assert.equal(request.area, '1K');
+  assert.deepEqual(request.reference_images, [{ url: 'https://cdn.example.com/ref.png' }]);
+  assert.equal(request.resolution, undefined, 'the interface does not know resolution');
+  assert.equal(request.input_urls, undefined, 'the interface does not know input_urls');
+});
+
+test('an image node that says nothing means the model own defaults', async (t) => {
+  // No shape and no size chosen: the model draws the shape from the prompt
+  // and the size at 4K. The node sends those, so the card and the request
+  // say the same thing.
+  const connector = createMockHostConnector();
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_defaults', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const imageCall = await waitForCall(connector.calls, (call) => call.toolRef.endsWith('generate-image'));
+  assert.ok(imageCall, 'generate_image was not called');
+  const request = imageCall.args.requests[0];
+  assert.equal(request.aspect_ratio, 'auto');
+  assert.equal(request.area, '4K');
+});
+
+test('a run with nothing to say says what is missing', async (t) => {
+  // The provider answers an empty prompt with "the request parameters are
+  // invalid", which tells the user nothing they can act on. The run is
+  // refused here, and the node says the thing that is missing.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_empty', mode: 'image', prompt: '' }),
+  });
+  assert.equal(started.status, 400);
+  assert.match(started.body.message, /提示词是空的/);
+
+  // And the provider was never asked: an empty prompt is not a request.
+  const connector = createMockHostConnector();
+  const h2 = await createHarness({ hostConnector: connector });
+  t.after(() => h2.cleanup());
+  const again = await getJson(h2.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_empty2', mode: 'image', prompt: '   ' }),
+  });
+  assert.equal(again.status, 400);
+  assert.equal(
+    connector.calls.filter((call) => call.toolRef.endsWith('generate-image')).length,
+    0,
+    'the provider was asked for a picture nobody described',
+  );
+});
+
+test('a picture knows its own size, read from its own header', async () => {
+  // The provider's picture tools have size limits of their own, so the canvas
+  // has to know how big a picture is before it asks for that picture to be
+  // changed. The header says so, and no ffmpeg is needed to read it.
+  const { imageSize } = await import('../miniapp/node/image-size.mjs');
+
+  // A PNG: the first chunk is the header, and it holds the size.
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  png.writeUInt32BE(13, 8);
+  png.write('IHDR', 12, 'ascii');
+  png.writeUInt32BE(1200, 16);
+  png.writeUInt32BE(800, 20);
+  assert.deepEqual(imageSize(png), { width: 1200, height: 800 });
+
+  // A JPEG: the start-of-frame marker says the size.
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x58, 0x04, 0xb0, 0x00]);
+  assert.deepEqual(imageSize(jpeg), { width: 1200, height: 600 });
+
+  // A WebP: the extended shape carries the canvas size.
+  const webp = Buffer.alloc(30);
+  webp.write('RIFF', 0, 'ascii');
+  webp.write('WEBP', 8, 'ascii');
+  webp.write('VP8X', 12, 'ascii');
+  webp.writeUIntLE(1023, 24, 3);
+  webp.writeUIntLE(767, 27, 3);
+  assert.deepEqual(imageSize(webp), { width: 1024, height: 768 });
+
+  // A file that is not a picture has no size here.
+  assert.equal(imageSize(Buffer.from('not an image at all')), null);
+  assert.equal(imageSize(null), null);
+});
+
+test('a picture too big for a tool says so before the click', async () => {
+  const { toolSizeReason } = await import('../miniapp/client/tools.mjs');
+
+  const upscale = {
+    key: 'aiUpscale',
+    label: 'AI 放大',
+    limits: { maxLongSide: 2048, minShortSide: 256, maxBytes: 10 * 1024 * 1024 },
+  };
+  const cutout = {
+    key: 'aiCutout',
+    label: 'AI 抠图',
+    limits: { maxLongSide: 10240, maxShortSide: 6000, maxMegapixels: 40 },
+  };
+
+  // A 4K picture is too big for the upscale, and fine for the cutout.
+  const reason = toolSizeReason(upscale, { width: 5472, height: 3072 });
+  assert.match(String(reason), /5472×3072/);
+  assert.match(String(reason), /2048/);
+  assert.equal(toolSizeReason(cutout, { width: 5472, height: 3072 }), null);
+
+  // A picture that fits is not refused.
+  assert.equal(toolSizeReason(upscale, { width: 1024, height: 1024 }), null);
+
+  // A picture whose size is not known is not refused here: the provider is
+  // the authority on what it takes, and it says so when it refuses.
+  assert.equal(toolSizeReason(upscale, { width: 0, height: 0 }), null);
+
+  // And a tool without limits is never refused for its size.
+  assert.equal(toolSizeReason({ key: 'enhance', label: '变清晰' }, { width: 8000, height: 8000 }), null);
+});
+
+test('a picture the user brought in can be worked on too', async () => {
+  // The tools sit under a card that holds a picture: the result of a run, or
+  // a picture the user brought in. Both are working material, so both can be
+  // cut up or cleaned up.
+  const { cardTools } = await import('../miniapp/client/forms.mjs');
+  const tools = [
+    { key: 'cutout', kind: 'image' },
+    { key: 'gridSplit', kind: 'image' },
+    { key: 'videoSplit', kind: 'video' },
+  ];
+  const pictureInput = {
+    type: 'input',
+    metadata: { kind: 'image', output: { media: [{ kind: 'image', url: '/uploads/a.png' }] } },
+  };
+  const textInput = { type: 'input', metadata: { kind: 'text', output: { media: [] } } };
+
+  assert.deepEqual(cardTools(pictureInput, tools).map((tool) => tool.key), ['cutout', 'gridSplit']);
+  // The tools float in the rail above the card, so a card that holds a
+  // picture carries them there — with the way out of the app and the menu
+  // of the material beside them.
+  const { cardLayers } = await import('../miniapp/client/node-ui.mjs');
+  assert.deepEqual(cardLayers(pictureInput, { tools }).above, ['tools', 'save', 'menu']);
+  // An input that holds no picture offers nothing.
+  assert.deepEqual(cardTools(textInput, tools), []);
+  assert.deepEqual(cardLayers(textInput, { tools }).ops, ['style', 'composer']);
+});
+
+test('the provider is asked to change the picture with the picture itself', async (t) => {
+  // The two tools the provider does itself. The picture is uploaded first,
+  // because the provider only reads assets it holds itself.
+  const received = [];
+  const uploadServer = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push(Buffer.concat(chunks));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const uploadHost = `http://127.0.0.1:${uploadServer.address().port}/upload`;
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const connector = createMockHostConnector(undefined, { uploadHost });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAl0lEQVR4nO3SsQ0AMAzDsBTo/ycX/SB6gFy9CT7zhsXdRgRKHhQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAs/vTyQH8APl2oAAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const published = await fetch(`${h.base}/api/media/publish?name=source.png`, {
+    method: 'POST',
+    headers: { 'content-type': 'image/png' },
+    body: png,
+  });
+  assert.equal(published.status, 200);
+  const url = (await published.json()).url;
+
+  const response = await getJson(h.base, '/api/tools/transform', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'aiCutout', url }),
+  });
+  assert.equal(response.status, 200, `工具跑不动：${response.body?.message ?? ''}`);
+
+  // The provider is asked with the picture's own link, and the picture it
+  // answers with comes back as the tool's result.
+  const call = connector.calls.find((item) => item.toolRef.endsWith('remove-image-background'));
+  assert.ok(call, '没有调用抠图工具');
+  assert.equal(call.args.image_url, 'https://cdn.example.com/temp/sample.png');
+  assert.equal(response.body?.media?.[0]?.kind, 'image');
+
+  // A tool that is not the provider's is refused, whatever the caller says.
+  const refused = await getJson(h.base, '/api/tools/transform', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'enhance', url }),
+  });
+  assert.equal(refused.status, 400);
+  assert.match(String(refused.body?.message ?? ''), /未知工具/);
+});
+
+test('a picture the user brought in can be handed to the provider', async (t) => {
+  // The picture an input node holds was uploaded from the user's machine, so
+  // it lives in this runtime's own upload folder. The provider is given that
+  // file: it cannot reach the loopback address, and the file is not a link
+  // it could fetch either.
+  const received = [];
+  const uploadServer = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push(Buffer.concat(chunks));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const uploadHost = `http://127.0.0.1:${uploadServer.address().port}/upload`;
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const connector = createMockHostConnector(undefined, { uploadHost });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAl0lEQVR4nO3SsQ0AMAzDsBTo/ycX/SB6gFy9CT7zhsXdRgRKHhQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAs/vTyQH8APl2oAAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const uploaded = await fetch(`${h.base}/api/uploads?name=photo.png&kind=image`, {
+    method: 'POST',
+    headers: { 'content-type': 'image/png' },
+    body: png,
+  });
+  assert.equal(uploaded.status, 200);
+  const url = (await uploaded.json()).url;
+  assert.match(url, /^\/uploads\//);
+
+  const response = await getJson(h.base, '/api/tools/transform', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'aiCutout', url }),
+  });
+  assert.equal(response.status, 200, `工具跑不动：${response.body?.message ?? ''}`);
+
+  // The provider was given the uploaded picture, and it was uploaded first:
+  // the bytes went to the signed form.
+  const call = connector.calls.find((item) => item.toolRef.endsWith('remove-image-background'));
+  assert.ok(call, '没有调用抠图工具');
+  assert.equal(call.args.image_url, 'https://cdn.example.com/temp/sample.png');
+  assert.equal(received.length, 1, '素材没有上传给 provider');
+});
+
+test('an uploaded picture comes back with its size', async (t) => {
+  // The card has to know how big a picture is: the provider's picture tools
+  // have limits, and the user is told before the click.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAl0lEQVR4nO3SsQ0AMAzDsBTo/ycX/SB6gFy9CT7zhsXdRgRKHhQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAs/vTyQH8APl2oAAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const response = await fetch(`${h.base}/api/uploads?name=photo.png&kind=image`, {
+    method: 'POST',
+    headers: { 'content-type': 'image/png' },
+    body: png,
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.width, png.readUInt32BE(16));
+  assert.equal(body.height, png.readUInt32BE(20));
+});
+
+// ---------------------------------------------------------------- the rules
+// that decide what a card shows: the parameter chip, the panel behind it,
+// the handle, the failure card and the menu on a card.
+
+test('the parameter chip and the panel behind it read one list', async () => {
+  const { paramFields, paramSummary } = await import('../miniapp/client/node-ui.mjs');
+  const caps = resolveLimits('image');
+  const node = {
+    type: 'image',
+    metadata: { mode: 'text2image', ratio: '16:9', resolution: '2K', model: 'matrix-image' },
+  };
+  const ctx = {
+    models: [{ value: 'matrix-image', label: 'MiniMax-H3-Image' }],
+    counts: [{ value: '1', label: '1 张' }],
+  };
+  const fields = paramFields(node, caps, ctx);
+  const byKey = Object.fromEntries(fields.map((field) => [field.key, field]));
+
+  // Every value the panel offers is the one the chip sums up.
+  assert.equal(byKey.ratio.value, '16:9');
+  assert.equal(byKey.resolution.value, '2K');
+  assert.equal(byKey.model.value, 'matrix-image');
+  assert.equal(byKey.count.value, '1');
+  // The count has a panel of its own, so it says what it holds.
+  assert.equal(byKey.count.label, '生成数量');
+  assert.equal(byKey.count.chip, '× 1');
+  // The chip says the shape and the size. The model has a button of its
+  // own and the count has a chip of its own, so neither is said twice.
+  assert.equal(paramSummary(fields), '16:9 · 2K');
+
+  // Changing the value changes the chip, because the chip is computed from
+  // the same list the panel holds.
+  const moved = { ...node, metadata: { ...node.metadata, ratio: '9:16', resolution: '4K' } };
+  const movedFields = paramFields(moved, caps, ctx);
+  assert.equal(paramSummary(movedFields), '9:16 · 4K');
+});
+
+test('each chip opens a panel of its own', async () => {
+  const { openChip, panelFields } = await import('../miniapp/client/node-ui.mjs');
+  // The chip for the shape and the size owns the panel that holds them.
+  assert.equal(openChip({ type: 'params', nodeId: 'n1' }, 'n1'), 'params');
+  // The chip for the count owns the panel that holds the count.
+  assert.equal(openChip({ type: 'count', nodeId: 'n1' }, 'n1'), 'count');
+  // Another card's panel does not belong to this card.
+  assert.equal(openChip({ type: 'params', nodeId: 'n2' }, 'n1'), null);
+  // Another kind of panel is not a chip's panel.
+  assert.equal(openChip({ type: 'model', nodeId: 'n1' }, 'n1'), null);
+  // And with no panel open, no chip is open.
+  assert.equal(openChip(null, 'n1'), null);
+
+  const fields = [
+    { key: 'ratio' },
+    { key: 'resolution' },
+    { key: 'model' },
+    { key: 'count' },
+  ];
+  // The shape panel holds the shape and the size — and not the count, which
+  // has a chip and a panel of its own.
+  assert.deepEqual(panelFields(fields, 'params').map((field) => field.key), ['ratio', 'resolution']);
+  // The count panel holds the count and nothing else.
+  assert.deepEqual(panelFields(fields, 'count').map((field) => field.key), ['count']);
+});
+
+test('the count panel is narrower than the panels that hold more', async () => {
+  const css = await readFile(
+    fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
+    'utf8',
+  );
+  // Every panel of the bar shares one base rule, so the count panel has to
+  // say how narrow it is on its own.
+  const base = /\.nxc-panel \{([^}]*)\}/.exec(css);
+  assert.ok(base, 'the base panel rule is there');
+  const baseMin = Number(/min-width:\s*(\d+)px/.exec(base[1])?.[1]);
+  assert.equal(baseMin, 200, 'the base panel asks for 200px');
+
+  const rule = /\.nxc-panel\[data-kind='count'\] \{([^}]*)\}/.exec(css);
+  assert.ok(rule, 'the count panel has a rule of its own');
+  const countMin = Number(/min-width:\s*(\d+)px/.exec(rule[1])?.[1]);
+  assert.ok(countMin, 'the count panel says how narrow it is');
+  // A minimum width beats a maximum width, so a panel that only sets a
+  // maximum stays as wide as a parameter panel and floats over the card
+  // for nothing. This one has to be narrower than the base.
+  assert.ok(countMin < baseMin, 'the count panel is narrower than the base panel');
+  // And it hugs what it holds instead of stretching to the widest panel.
+  assert.match(rule[1], /width:\s*max-content/);
+});
+
+test('the bar carries the mode, so a node with no chip can still be told what to do', async () => {
+  const { modeChoice } = await import('../miniapp/client/node-ui.mjs');
+  const textOnly = { maxImages: 0, maxVideos: 0, maxAudios: 0 };
+
+  // A text node can be told to write text or to expand a prompt — the two
+  // the text model can run.
+  const text = modeChoice({ type: 'text', metadata: { mode: 'generate' } }, textOnly);
+  assert.equal(text.value, 'generate');
+  assert.deepEqual(text.options.map((option) => option.value), ['generate', 'prompt']);
+  assert.deepEqual(text.options.map((option) => option.label), ['文本生成', '提示词增强']);
+  // A model that takes a picture offers the mode that is about a picture too.
+  const withPicture = modeChoice(
+    { type: 'text', metadata: { mode: 'generate' } },
+    { ...textOnly, maxImages: 1 },
+  );
+  assert.deepEqual(withPicture.options.map((option) => option.value), ['generate', 'prompt', 'describe']);
+  // A node with no mode of its own carries no mode control.
+  assert.equal(modeChoice({ type: 'input', metadata: {} }, textOnly), null);
+
+  const source = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // The bar draws it: the mode is the first thing the row says.
+  assert.match(functionBody(source, 'renderParams'), /const mode = modeChoice\(node, caps\);/);
+  assert.match(functionBody(source, 'renderParams'), /className: 'nxc-chip nxc-chip--mode'/);
+  // And the control is really drawn — a control that is built and never
+  // added is no control at all. It goes in a line of its own.
+  assert.match(functionBody(source, 'renderParams'), /modeRow\.appendChild\(control\);/);
+  assert.doesNotMatch(functionBody(source, 'renderParams'), /row\.appendChild\(control\);/);
+  assert.match(functionBody(source, 'renderParams'), /onChange: \(value\) => applyModeChoice\(node, value\)/);
+  // And the panel holds the values only: the mode is said in one place.
+  assert.doesNotMatch(functionBody(source, 'openParamPanel'), /paramSelect\('模式'/);
+  assert.doesNotMatch(functionBody(source, 'openParamPanel'), /modesFor\(/);
+  // Switching the mode goes through the shared rule, asks the mentions again
+  // so the new mode gets the material it needs, and puts the focus back.
+  assert.match(functionBody(source, 'applyModeChoice'), /type: 'update_node', args: \{ id: node\.id, mode: modeId \}/);
+  assert.match(functionBody(source, 'applyModeChoice'), /applyMentions\(node\.id\);/);
+  assert.match(functionBody(source, 'applyModeChoice'), /focusModeControl\(node\);/);
+});
+
+test('the bar has two lines, and the run button sits at the right of the bottom one', async () => {
+  const source = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  const css = await readFile(
+    fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
+    'utf8',
+  );
+  const body = functionBody(source, 'renderParams');
+
+  // The mode says what the node is going to do, so it gets a line of its own.
+  assert.match(body, /const modeRow = el\('div', 'nxc-row'\);/);
+  assert.match(body, /modeRow\.appendChild\(control\);/);
+  assert.match(body, /wrap\.appendChild\(modeRow\);/);
+  // The values share the line below it.
+  assert.match(body, /const row = el\('div', 'nxc-row'\);/);
+  assert.match(body, /row\.appendChild\(modelButton\(node\)\);/);
+  // The run button is the last thing in that line, and it is the one that
+  // carries the class that pushes it to the right end.
+  assert.match(body, /const generate = el\('button', 'nxc-btn nxc-btn--primary nxc-row__run'/);
+  assert.ok(
+    body.indexOf('row.appendChild(generate);') > body.indexOf('row.appendChild(fresh);'),
+    'the run button comes after the session buttons',
+  );
+  // The two lines are stacked, and the run button is pushed to the right.
+  const params = /\.nxc-node__params \{([^}]*)\}/.exec(css);
+  assert.ok(params, 'the bar has a rule of its own');
+  assert.match(params[1], /flex-direction:\s*column/);
+  const run = /\.nxc-row__run \{([^}]*)\}/.exec(css);
+  assert.ok(run, 'the run button has a rule of its own');
+  assert.match(run[1], /margin-left:\s*auto/);
+  // The flag the session buttons read is asked for before they read it: a
+  // node that ran through an Agent turn would fail to draw otherwise.
+  const declared = body.indexOf('const running = isRunning(node.id);');
+  assert.ok(declared >= 0, 'the running flag is asked for');
+  assert.ok(
+    body.indexOf('fresh.disabled = running;') > declared,
+    'the running flag is asked for before it is read',
+  );
+});
+
+test('the page keeps the chips in the row and marks the one that is open', async () => {
+  const source = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // The chips are always in the row: nothing hides them, and the old rule
+  // that took them out of the row is gone from the source.
+  assert.match(source, /if \(paramSummary\(fields\)\) \{\s*row\.appendChild\(paramChip\(node, fields\)\);/);
+  assert.match(source, /if \(countField\) \{\s*row\.appendChild\(countChip\(node, countField\)\);/);
+  assert.doesNotMatch(source, /paramChipsHidden/);
+  // The model button stays: the panel behind the chip does not hold the
+  // model — it has a button and a panel of its own.
+  assert.match(source, /row\.appendChild\(modelButton\(node\)\);/);
+  // Each chip says whether it is the one that is open.
+  assert.match(functionBody(source, 'paramChip'), /openChip\(state\.panel, node\.id\) === 'params'/);
+  assert.match(functionBody(source, 'countChip'), /openChip\(state\.panel, node\.id\) === 'count'/);
+  // The count chip opens the count panel, and that panel holds the count.
+  assert.match(functionBody(source, 'countChip'), /openCountPanel\(node, chip\.getBoundingClientRect\(\), field\);/);
+  assert.match(functionBody(source, 'openCountPanel'), /state\.panel = \{ type: 'count', nodeId: node\.id \};/);
+  // The shape panel takes the fields that are not the count.
+  assert.match(functionBody(source, 'openParamPanel'), /panelFields\(paramFields\(node, caps, paramContext\(node\)\), 'params'\)/);
+  // And the row is drawn again when a panel opens and when it closes, so the
+  // chip that is open says so — and stops saying so.
+  assert.match(functionBody(source, 'openParamPanel'), /scheduleRender\(\);/);
+  assert.match(functionBody(source, 'openCountPanel'), /scheduleRender\(\);/);
+  assert.match(functionBody(source, 'closePanel'), /if \(wasParams\) scheduleRender\(\);/);
+});
+
+test('a parameter the request does not take is not on the card', async () => {
+  const { paramFields } = await import('../miniapp/client/node-ui.mjs');
+  const video = resolveLimits('video');
+  const node = {
+    type: 'video',
+    metadata: { mode: 'text2video', ratio: '16:9', resolution: '768P', duration: 6, model: 'MiniMax-H3' },
+  };
+  const fields = paramFields(node, video, {
+    models: [{ value: 'MiniMax-H3', label: 'MiniMax-H3' }],
+  });
+  const keys = fields.map((field) => field.key);
+  assert.ok(keys.includes('duration'), '视频节点有���长');
+  assert.ok(keys.includes('ratio'), '视频节点有画幅');
+  assert.ok(!keys.includes('voice'), '视频节点没有音色');
+
+  // A keyframe request follows the frame, so there is no ratio to choose.
+  const keyframe = { ...node, metadata: { ...node.metadata, mode: 'imagekey2video' } };
+  const keyframeFields = paramFields(keyframe, video, {});
+  assert.ok(!keyframeFields.some((field) => field.key === 'ratio'), '首帧请求不给画幅');
+});
+
+test('the card has no handle: the next card is made and wired by hand', async () => {
+  const app = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // The handle is gone with the rest of the head, and so is the menu that
+  // used to hang on it.
+  assert.doesNotMatch(app, /deriveTypes|openDeriveMenu|createDerivedNode|nxc-node__plus/);
+  // What each kind of node takes is still one table, so a line lands on a
+  // port that the node really has.
+  const { slotsOf } = await import('../miniapp/client/forms.mjs');
+  assert.deepEqual(
+    slotsOf({ type: 'image', metadata: { mode: 'image2image' } }).inputs.map((slot) => slot.kind),
+    ['text', 'image'],
+  );
+  assert.deepEqual(
+    slotsOf({ type: 'result', metadata: { kind: 'video' } }).inputs.map((slot) => slot.kind),
+    ['video'],
+  );
+});
+
+test('a failed card grows four buttons', async () => {
+  const { errorActions } = await import('../miniapp/client/node-ui.mjs');
+  const failed = { type: 'image', metadata: { output: { error: '上游挂了' } } };
+  assert.deepEqual(errorActions(failed).map((action) => action.key), ['retry', 'cancel', 'delete', 'report']);
+
+  // A card that only holds something cannot be tried again.
+  const holding = { type: 'input', metadata: { output: { error: '文件没了' } } };
+  assert.deepEqual(errorActions(holding).map((action) => action.key), ['cancel', 'delete', 'report']);
+
+  // A card that did not fail has nothing to offer.
+  assert.deepEqual(errorActions({ type: 'image', metadata: { output: { error: '' } } }), []);
+});
+test('the card keeps the material and the surface keeps the operation', async () => {
+  // One rule decides what belongs where, so the card and the surface below
+  // it can never disagree about it.
+  const { cardLayers, textAnchor } = await import('../miniapp/client/node-ui.mjs');
+  const tools = [{ key: 'cutout', kind: 'image' }];
+
+  // A generating card is a media card: it shows what it made, and an empty
+  // frame until it has made something. The prompt that made it is not on the
+  // card — it is in the surface below, where it can be edited.
+  const generating = { type: 'image', metadata: { prompt: '一只猫' } };
+  assert.deepEqual(cardLayers(generating, { tools }).material, ['frame']);
+  assert.deepEqual(cardLayers(generating, { tools }).ops, ['composer', 'params']);
+  assert.deepEqual(cardLayers(generating, { tools }).above, []);
+
+  // Once it has made something, the product is on the card itself, and the
+  // card can be worked on like any other picture — the dock floats above it.
+  const made = {
+    type: 'image',
+    metadata: { prompt: '一只猫', output: { media: [{ kind: 'image', url: 'u' }] } },
+  };
+  assert.deepEqual(cardLayers(made, { tools, hasOutput: true }).material, ['output']);
+  assert.deepEqual(cardLayers(made, { tools, hasOutput: true }).ops, ['composer', 'params']);
+  assert.deepEqual(cardLayers(made, { tools, hasOutput: true }).above, ['tools', 'save']);
+
+  // A result card shows what it made; the tools float above it.
+  const result = { type: 'result', metadata: { kind: 'image', output: { media: [] } } };
+  assert.deepEqual(cardLayers(result, { tools }).material, ['output']);
+  assert.deepEqual(cardLayers(result, { tools }).ops, []);
+  assert.deepEqual(cardLayers(result, { tools }).above, ['tools']);
+
+  // A text input card holds text: the card shows it, the editor floats below.
+  const textInput = { type: 'input', metadata: { kind: 'text', output: { media: [] } } };
+  assert.deepEqual(cardLayers(textInput, { tools }).material, ['text']);
+  assert.deepEqual(cardLayers(textInput, { tools }).ops, ['style', 'composer']);
+  assert.deepEqual(cardLayers(textInput, { tools }).above, []);
+
+  // A picture input card shows an empty frame until it holds a picture, and
+  // the way in is the button above the card: nothing else floats there, for
+  // there is nothing to work on yet.
+  const pictureInput = { type: 'input', metadata: { kind: 'image', output: { media: [] } } };
+  assert.deepEqual(cardLayers(pictureInput, { tools }).material, ['frame']);
+  assert.deepEqual(cardLayers(pictureInput, { tools }).ops, []);
+  assert.deepEqual(cardLayers(pictureInput, { tools }).above, ['upload']);
+  // Once it holds a picture, the card shows it and the rail carries the
+  // dock, the way out of the app and the menu of the material.
+  const held = {
+    type: 'input',
+    metadata: { kind: 'image', output: { media: [{ kind: 'image', url: 'u' }] } },
+  };
+  assert.deepEqual(cardLayers(held, { tools, hasOutput: true }).material, ['output']);
+  assert.deepEqual(cardLayers(held, { tools, hasOutput: true }).above, ['tools', 'save', 'menu']);
+
+  // A group holds cards, not material, and it floats nothing.
+  assert.deepEqual(cardLayers({ type: 'group', metadata: {} }, { tools }), {
+    material: ['note'],
+    ops: [],
+    above: [],
+  });
+
+  // The box a text line lands on is on the card, whichever text it holds.
+  assert.equal(textAnchor(cardLayers(textInput, { tools })), 'text');
+  // A card that takes no text of its own has no box: the line ends on a port.
+  assert.equal(textAnchor(cardLayers(result, { tools })), null);
+  assert.equal(textAnchor(cardLayers(generating, { tools })), null);
+});
+
+test('a panel of the bar opens upward', async () => {
+  const { BAR_PANEL_SIDE, placePanel } = await import('../miniapp/client/tools.mjs');
+  const viewport = { width: 1200, height: 900 };
+  const anchor = { left: 100, top: 600, bottom: 640, right: 220 };
+
+  // The panels of the bar open upward: the bar is under the card, and the
+  // board below is where the next card is.
+  assert.equal(BAR_PANEL_SIDE, 'above');
+  const over = placePanel(anchor, { width: 200, height: 300 }, viewport, BAR_PANEL_SIDE);
+  assert.equal(over.side, 'above');
+  assert.ok(over.top < anchor.top);
+
+  // And they come down when there is no room above.
+  const low = { left: 100, top: 40, bottom: 80, right: 220 };
+  const under = placePanel(low, { width: 200, height: 300 }, viewport, BAR_PANEL_SIDE);
+  assert.equal(under.side, 'below');
+});
+
+test('a ratio is drawn as the shape it stands for', async () => {
+  const { ratioGlyph } = await import('../miniapp/client/node-ui.mjs');
+
+  // A square stays a square.
+  const square = ratioGlyph('1:1');
+  assert.equal(square.width, square.height);
+
+  // A wide ratio is wider than it is tall, and it stays inside the box.
+  const wide = ratioGlyph('16:9');
+  assert.ok(wide.width > wide.height);
+  assert.ok(wide.width <= 24 && wide.height <= 16);
+
+  // A tall ratio is taller than it is wide.
+  const tall = ratioGlyph('9:16');
+  assert.ok(tall.height > tall.width);
+
+  // A shape the provider decides has no proportion to draw, so it is drawn
+  // as a square and says that it is adaptive.
+  const adaptive = ratioGlyph('auto');
+  assert.equal(adaptive.adaptive, true);
+  assert.equal(adaptive.width, adaptive.height);
+});
+
+test('the model list says what a model can do', async () => {
+  const { modelRange } = await import('../miniapp/client/node-ui.mjs');
+
+  // The two ends are put in order, whatever order the provider lists them.
+  assert.equal(modelRange({ resolutions: ['4K', '2K', '1K'] }), '1K-4K');
+  assert.equal(modelRange({ resolutions: ['768P', '2K'] }), '768P-2K');
+  // One resolution is that resolution.
+  assert.equal(modelRange({ resolutions: ['2K'] }), '2K');
+  // A model that has none says nothing.
+  assert.equal(modelRange({}), '');
+});
+
+test('the operation surface goes where there is room for it', async () => {
+  const { opsSide } = await import('../miniapp/client/node-ui.mjs');
+  // Room below the card: the surface hangs under it.
+  assert.equal(
+    opsSide({ nodeTop: 100, nodeBottom: 300, panelHeight: 200, viewTop: 0, viewBottom: 800 }),
+    'below',
+  );
+  // No room below: it flips above the card.
+  assert.equal(
+    opsSide({ nodeTop: 500, nodeBottom: 700, panelHeight: 200, viewTop: 0, viewBottom: 800 }),
+    'above',
+  );
+  // Neither side has room: it stays below, because that is where the card is.
+  assert.equal(
+    opsSide({ nodeTop: 100, nodeBottom: 300, panelHeight: 600, viewTop: 0, viewBottom: 700 }),
+    'below',
+  );
+});
+
+
+test('the menu on a card is in five sections', async () => {
+  const { nodeMenuEntries } = await import('../miniapp/client/node-ui.mjs');
+  const node = {
+    type: 'result',
+    metadata: { output: { media: [{ kind: 'image', url: '/assets/a.png' }], text: '', status: 'success' } },
+  };
+  const entries = nodeMenuEntries(node, { selectedCount: 1, isGroup: false, canPaste: false });
+  const labels = entries.filter((entry) => entry !== '-').map((entry) => entry.label);
+  assert.deepEqual(labels, [
+    '复制素材', '保存到本地',
+    '重命名', '剪切', '复制', '创建副本', '粘贴',
+    '聚焦选中内容', '清除结果',
+    '删除节点',
+  ]);
+  // Four sections with something in them, so three dividers.
+  assert.equal(entries.filter((entry) => entry === '-').length, 3);
+
+  // The last entry is the dangerous one, and it is marked as such.
+  assert.equal(entries[entries.length - 1].danger, true);
+
+  // An empty clipboard makes the paste entry unavailable instead of hiding it.
+  const paste = entries.find((entry) => entry !== '-' && entry.action === 'paste');
+  assert.equal(paste.disabled, true);
+});
+
+test('grouping is offered only when there is something to group', async () => {
+  const { nodeMenuEntries } = await import('../miniapp/client/node-ui.mjs');
+  const node = { type: 'result', metadata: { output: {} } };
+  const one = nodeMenuEntries(node, { selectedCount: 1, isGroup: false, canPaste: true });
+  assert.ok(!one.some((entry) => entry !== '-' && entry.action === 'group'), '只选一个不给编组');
+  const two = nodeMenuEntries(node, { selectedCount: 2, isGroup: false, canPaste: true });
+  assert.ok(two.some((entry) => entry !== '-' && entry.action === 'group'), '选两个才给编组');
+  const group = nodeMenuEntries({ type: 'group', metadata: {} }, { selectedCount: 1, isGroup: true, canPaste: true });
+  assert.ok(group.some((entry) => entry !== '-' && entry.action === 'ungroup'), '分组自己给解组');
+});
+
+test('a group holds the cards that are inside it', async () => {
+  const { groupMembers } = await import('../miniapp/client/node-ui.mjs');
+  const group = { id: 'g1', type: 'group', position: { x: 0, y: 0 }, width: 400, height: 400 };
+  const inside = { id: 'n1', type: 'image', position: { x: 10, y: 10 }, width: 100, height: 100 };
+  const edge = { id: 'n2', type: 'image', position: { x: 360, y: 10 }, width: 100, height: 100 };
+  const outside = { id: 'n3', type: 'image', position: { x: 900, y: 900 }, width: 100, height: 100 };
+  const otherGroup = { id: 'g2', type: 'group', position: { x: 20, y: 20 }, width: 50, height: 50 };
+  const members = groupMembers(group, [inside, edge, outside, otherGroup]);
+  // The card whose middle is inside the frame is a member; the one that
+  // only overlaps the edge is not.
+  assert.deepEqual(members, ['n1']);
+});
+
+test('the ratio reads short on the chip and long in the menu', async () => {
+  const { ratioLabel } = await import('../miniapp/client/forms.mjs');
+  assert.equal(ratioLabel('16:9'), '16:9 横屏');
+  assert.equal(ratioLabel('16:9', { short: true }), '16:9');
+  assert.equal(ratioLabel('auto'), '自适应（按提示词）');
+  assert.equal(ratioLabel('auto', { short: true }), '自适应');
+});
+
+test('a panel opens under the chip and flips above it when there is no room', async () => {
+  const { placePanel } = await import('../miniapp/client/tools.mjs');
+  const viewport = { width: 1200, height: 800 };
+  const anchor = { left: 100, top: 100, bottom: 120 };
+
+  const under = placePanel(anchor, { width: 200, height: 200 }, viewport, 'below');
+  assert.equal(under.side, 'below');
+  assert.equal(under.top, 128);
+
+  // The chip sits near the bottom of the screen: the panel goes above it.
+  const low = { left: 100, top: 700, bottom: 720 };
+  const over = placePanel(low, { width: 200, height: 300 }, viewport, 'below');
+  assert.equal(over.side, 'above');
+  assert.equal(over.top, 700 - 300 - 8);
+});
+
+
+test('the prompt is written sideways in a box that does not grow', async () => {
+  const { opsOffset } = await import('../miniapp/client/node-ui.mjs');
+
+  const view = { left: 0, right: 1920, top: 0, bottom: 1080, width: 1920, height: 1080 };
+  // A surface that is inside the window stays where it is.
+  assert.equal(opsOffset({ rect: { left: 400, right: 1020, width: 620 }, view }), 0);
+  // A surface hanging off the left edge moves back inside.
+  assert.equal(opsOffset({ rect: { left: -60, right: 560, width: 620 }, view }), 68);
+  // A surface hanging off the right edge moves back inside.
+  assert.equal(opsOffset({ rect: { left: 1700, right: 2320, width: 620 }, view }), -408);
+  // A surface wider than the window has nowhere to move to.
+  assert.equal(opsOffset({ rect: { left: -100, right: 2100, width: 2200 }, view }), 0);
+  // And a surface that is not measured yet is not moved.
+  assert.equal(opsOffset({ rect: null, view }), 0);
+
+  const css = await readFile(
+    fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)),
+    'utf8',
+  );
+  // The surface that holds the prompt has a rule of its own: the other
+  // surfaces on the board are bars, and a bar does not need a page.
+  // The rule is named by the class the app puts on the surface, so the
+  // two can never drift apart.
+  const { opsSurfaceClass } = await import('../miniapp/client/node-ui.mjs');
+  const promptClass = opsSurfaceClass({ ops: ['composer'] });
+  assert.equal(promptClass, 'nxc-node__ops--prompt', 'the prompt surface has a class of its own');
+  const wide = new RegExp(`\\.${promptClass} \\{([^}]*)\\}`).exec(css);
+  assert.ok(wide, 'the surface that holds the prompt has a rule of its own');
+  const width = /width:\s*min\(max\(100%,\s*(\d+)px\),\s*calc\(100vw\s*-\s*(\d+)px\)\)/.exec(wide[1]);
+  assert.ok(width, 'the prompt surface says how wide it is');
+  const page = Number(width[1]);
+  const margin = Number(width[2]);
+  // A maximum width beats a width, so a cap on the surface would undo the
+  // page again and put the prompt back into a column.
+  assert.ok(!/max-width:\s*\d/.test(wide[1]), 'the prompt surface has no cap that makes it narrow again');
+  // The prompt is read across, so the box has to be wide enough for a line
+  // of text to lie down in it.
+  assert.ok(page >= 560, 'the prompt surface is as wide as a page');
+  // And it is never wider than the window it is in.
+  assert.ok(margin >= 16, 'the prompt surface keeps a margin from the edge of the window');
+  const surfaceWidth = (cardWidth, viewportWidth) => Math.min(Math.max(cardWidth, page), viewportWidth - margin);
+  assert.ok(surfaceWidth(320, 1920) >= 560, 'a prompt is written across a page');
+  assert.ok(surfaceWidth(320, 700) <= 700 - 16, 'the page never runs off the window');
+
+  // The box the prompt is written in has one height, so a long prompt
+  // scrolls inside it instead of making the card taller and taller.
+  const editor = /\.nxc-composer__editor \{([^}]*)\}/.exec(css);
+  assert.ok(editor, 'the editor has a rule of its own');
+  const height = /(?:^|[^-])height:\s*(\d+)px/.exec(editor[1]);
+  assert.ok(height, 'the editor says how tall it is');
+  assert.ok(Number(height[1]) >= 100, 'the editor is tall enough to read in');
+  assert.ok(!/max-height/.test(editor[1]), 'the editor has one height, not a height that grows');
+  assert.match(editor[1], /overflow-y:\s*auto/, 'a long prompt scrolls inside the box');
+
+  // The prompt that an upstream line handed over is read in the same
+  // box: it has one height too, so it cannot grow into a tower.
+  const inherited = /\.nxc-inherited__text \{([^}]*)\}/.exec(css);
+  assert.ok(inherited, 'the inherited prompt has a rule of its own');
+  assert.match(inherited[1], /max-height:\s*\d+px/, 'the inherited prompt keeps one height');
+  assert.match(inherited[1], /overflow-y:\s*auto/, 'a long inherited prompt scrolls inside the box');
+
+  // The surface can be moved back inside the window.
+  const ops = /\.nxc-node__ops \{([^}]*)\}/.exec(css);
+  assert.ok(ops, 'the operation surface has a rule of its own');
+  assert.match(ops[1], /var\(--nxc-ops-dx, 0px\)/, 'the surface can be moved back inside the window');
+
+  const source = await readFile(
+    fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)),
+    'utf8',
+  );
+  // The surface is told where to move.
+  assert.match(functionBody(source, 'fitOpsSurfaces'), /opsOffset\(\{ rect: surface\.getBoundingClientRect\(\), view \}\)/);
+  assert.match(functionBody(source, 'fitOpsSurfaces'), /--nxc-ops-dx/);
+  // The wheel over the prompt scrolls the prompt: the editor keeps out of
+  // the way of the zoom, or the board would zoom while the text is read.
+  assert.match(functionBody(source, 'createComposer'), /editor\.dataset\.canvasNoZoom = 'true';/);
+  // The surface is told it is a page: the class the stylesheet gives the
+  // page is put on the surface, or the prompt is back in a column.
+  assert.match(functionBody(source, 'renderNode'), /if \(promptSurface\) surface\.classList\.add\(promptSurface\)/);
+});
+
+test('an audio card offers the clip, and the clip is cut on a strip', async () => {
+  // The reference product gives an audio card one button: the clip. The clip
+  // is chosen on a strip of the material, not on two number boxes.
+  const { cardTools } = await import('../miniapp/client/forms.mjs');
+  const { palette } = await import('../miniapp/node/capabilities.mjs');
+  const { CLIP_MIN_MS, clipRange, clipSeconds, durationLabel, timecode } = await import('../miniapp/client/node-ui.mjs');
+
+  const tools = palette().tools;
+  const audio = { type: 'result', metadata: { kind: 'audio', output: { media: [] } } };
+  const clip = tools.find((tool) => tool.key === 'trimAudio');
+  assert.ok(clip, '没有音频剪辑这个工具');
+  assert.equal(clip.ui, 'clip', '音频剪辑没有走时间轴');
+
+  // The audio card offers the clip and nothing else.
+  assert.deepEqual(cardTools(audio, tools).map((tool) => tool.key), ['trimAudio']);
+
+  // The whole clip is the range to begin with.
+  const whole = clipRange({ durationMs: 3000, startMs: 0, endMs: 3000 });
+  assert.deepEqual([whole.startMs, whole.endMs], [0, 3000]);
+
+  // A handle dragged past the other one: the window follows the drag.
+  const crossed = clipRange({ durationMs: 3000, startMs: 2500, endMs: 1000 });
+  assert.deepEqual([crossed.startMs, crossed.endMs], [1000, 2500]);
+
+  // A window shorter than the shortest cut is refused.
+  const tiny = clipRange({ durationMs: 3000, startMs: 1000, endMs: 1050 });
+  assert.equal(tiny.endMs - tiny.startMs, CLIP_MIN_MS);
+
+  // A handle dragged outside the clip is held at the edge.
+  const outside = clipRange({ durationMs: 3000, startMs: -500, endMs: 9999 });
+  assert.deepEqual([outside.startMs, outside.endMs], [0, 3000]);
+
+  // The runtime cuts with seconds; the strip is dragged in milliseconds.
+  assert.deepEqual(clipSeconds({ startMs: 1500, endMs: 2500 }), { start: 1.5, end: 2.5 });
+
+  // The readout says what the reference product says.
+  assert.equal(timecode(3000), '00:03');
+  assert.equal(timecode(65000), '01:05');
+  assert.equal(durationLabel(3000), '3.00s');
+});
+
+test('the sound and the clip are tools the runtime really has', async () => {
+  const { MEDIA_TOOLS, TOOL_ACCEPTS, TOOL_PRODUCES } = await import('../miniapp/node/media-tools.mjs');
+  const { TOOLS } = await import('../miniapp/node/capabilities.mjs');
+
+  // The sound comes out of a video and leaves an audio node behind.
+  assert.ok(MEDIA_TOOLS.extractAudio, '没有分离音频这个工具');
+  assert.equal(TOOL_ACCEPTS.extractAudio, 'video');
+  assert.deepEqual(TOOL_PRODUCES.extractAudio, ['audio']);
+
+  // The clip cuts an audio and leaves an audio node behind.
+  assert.ok(MEDIA_TOOLS.trimAudio, '没有音频剪辑这个工具');
+  assert.equal(TOOL_ACCEPTS.trimAudio, 'audio');
+  assert.deepEqual(TOOL_PRODUCES.trimAudio, ['audio']);
+
+  // The page and the runtime agree on what the tools are.
+  for (const key of ['extractAudio', 'trimAudio', 'trim']) {
+    const tool = TOOLS.find((item) => item.key === key);
+    assert.ok(tool, key + ' 没有在工具表里');
+    assert.equal(tool.run, 'ffmpeg');
+    assert.equal(tool.status, 'ready');
+  }
+  // Both clips are cut on the strip.
+  assert.equal(TOOLS.find((tool) => tool.key === 'trim').ui, 'clip');
+  assert.equal(TOOLS.find((tool) => tool.key === 'trimAudio').ui, 'clip');
+
+  // Every tool the page offers is one the runtime knows how to run.
+  for (const tool of TOOLS) {
+    if (tool.run !== 'ffmpeg') continue;
+    assert.ok(MEDIA_TOOLS[tool.key], tool.key + ' 在工具表里，运行时却没有');
+  }
+});
+
+test('the sound and the clip really run on this machine', async (t) => {
+  // The two buttons under a video are only worth having if they produce
+  // something. They run ffmpeg on this machine, so they are asked for a real
+  // file and the answer is a real file.
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+
+  const state = (await getJson(h.base, '/api/media/status')).body.media;
+  if (!state.available) {
+    // No ffmpeg here: the tools say so instead of pretending.
+    assert.equal(state.available, false);
+    return;
+  }
+
+  // A clip that has a sound on it: the sound has to come out of something.
+  const source = { url: 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAX4bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAA+gAAAJYAAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAp50cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAH0AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAADAAAAAwAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAB9AAAAQAAABAAAAAAIWbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAIABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABwW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAYFzdGJsAAAAvXN0c2QAAAAAAAAAAQAAAK1hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAADAAMABIAAAASAAAAAAAAAABFExhdmM2My4xLjEwMiBsaWJ4MjY0AAAAAAAAAAAAAAAAGP//AAAAM2F2Y0MBZAAK/+EAF2dkAAqs2U3sBEAAAAMAQAAABAPEiWWAAQAFaO+CnLD9+PgAAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAAL3AAAAAAAAAAGHN0dHMAAAAAAAAAAQAAAAQAAAgAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAAAoY3R0cwAAAAAAAAADAAAAAQAAEAAAAAABAAAgAAAAAAIAAAgAAAAAKHN0c2MAAAAAAAAAAgAAAAEAAAACAAAAAQAAAAIAAAABAAAAAQAAACRzdHN6AAAAAAAAAAAAAAAEAAAC0wAAAAwAAAAMAAAADAAAABxzdGNvAAAAAAAAAAMAAAYoAAAJxAAACyUAAAKFdHJhawAAAFx0a2hkAAAAAwAAAAAAAAAAAAAAAgAAAAAAACWAAAAAAAAAAAAAAAABAQAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAJGVkdHMAAAAcZWxzdAAAAAAAAAABAAAlgAAABAAAAQAAAAAB/W1kaWEAAAAgbWRoZAAAAAAAAAAAAAAAAAAAPoAAACmAVcQAAAAAAC1oZGxyAAAAAAAAAABzb3VuAAAAAAAAAAAAAAAAU291bmRIYW5kbGVyAAAAAahtaW5mAAAAEHNtaGQAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAWxzdGJsAAAAfnN0c2QAAAAAAAAAAQAAAG5tcDRhAAAAAAAAAAEAAAAAAAAAAAABABAAAAAAPoAAAAAAADZlc2RzAAAAAAOAgIAlAAIABICAgBdAFQAAAAAARuAAAEbgBYCAgAUUCFblAAaAgIABAgAAABRidHJ0AAAAAAAARuAAAEbgAAAAIHN0dHMAAAAAAAAAAgAAAAoAAAQAAAAAAQAAAYAAAAA0c3RzYwAAAAAAAAADAAAAAQAAAAEAAAABAAAAAgAAAAIAAAABAAAAAwAAAAgAAAABAAAAQHN0c3oAAAAAAAAAAAAAAAsAAAC9AAAAsAAAAKUAAAB/AAAAggAAAHwAAAB9AAAAgAAAAKMAAACuAAAABQAAABxzdGNvAAAAAAAAAAMAAAkHAAAJ0AAACzEAAAAac2dwZAEAAAByb2xsAAAAAgAAAAH//wAAABxzYmdwAAAAAHJvbGwAAAABAAAACwAAAAEAAABhdWR0YQAAAFltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAACxpbHN0AAAAJKl0b28AAAAcZGF0YQAAAAEAAAAATGF2ZjYzLjEuMTAyAAAACGZyZWUAAAjhbWRhdAAAAqwGBf//qNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjUgcjMyMjMgMDQ4MGNiMCAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjUgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0xIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9aGV4IHN1Ym1lPTIgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MCBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTAgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9MCB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0zIGJfcHlyYW1pZD0yIGJfYWRhcHQ9MSBiX2JpYXM9MCBkaXJlY3Q9MSB3ZWlnaHRiPTEgb3Blbl9nb3A9MCB3ZWlnaHRwPTEga2V5aW50PTI1MCBrZXlpbnRfbWluPTggc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD0xMCByYz1jcmYgbWJ0cmVlPTEgY3JmPTM2LjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAfZYiEABD/lAGxWw+ZT59JTAe56CfJNmdSr+ZM7DyafwAAAAhBmiMYh38CAtwATGF2YzYzLjEuMTAyAAJEoVpg6RVK7r7PrTiiZKkuVKQkg0dmHMWYbaxXEsV0lo3SXFuYti6O3DFoxmKeZ6pnKWcVKaeE4h/D1HC237/U0Bf3B3Wtys3Ktarc7ra67a21TOmzprU1qa0y0yUyUyUSUS0SUDAwMDAwMDAwMDAwMDAwMiBgYGBgYGBgZEbNmzYMiRSyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy8AAAAAhBnkFCHf9QwQEEltoZc2XLIsJtQkwm4nD/+5/3+taua1XP//L/1/Eatw5//q/+36mpd33//y/8/3NScWEvG7TML0vPPPBLyQwSL0VYXLNg8fOxeR5e89pbj3387d1M70870873NO9OpTyZznU89zVUqwl7s/eo59+ez99CEICBhEKS6kWMGUjRSpI6pBgm6SCboME3QYJCcgay7dtEjq4SV1+NVfoaR9uBzuEZpTAwMDEhzINmodnwAOzwrTBSiYnPfP6d/tX+PLUrNRpclovVScClvr39L7M/pF+u51F6z9R7py6oXN51/qanU1HkLtp3jVK7cNk1OBBpp1LX7bmqmnVbScng7na1LJkqVVVVU4o60WWSQhcr4+Gx7++gZPhsZ/fQMnxmGf30B/4zB330If+MwXnIH+AGvcgPHMLPf3B8nwE++0D4+GJ0e4P8eNZ/RQn8Of0XosJdK5jgAAAACAGeYkQ7/1DAAOQwrUhDYoTM64r+K//rV//5141d+Lvm+fOt+vipWu7lBqYWppnqeaecPSXnPnX122umfr3yKZhYmFiYUxwAUZ1DWAFQAp6MXcwu52uZKElQkJtCe9WE33RaCfjN2VZzaTBFYisY3hQc5KB4hwEzEzEUzQTi0SLKYnhBaKwUcADiMKjWKBkNZpL9d//X/j//xxqq47lZeprfr476VatA0ZNGVSl+rr9S01Lx608i5DdxtWqsuVLcAF+lgH6C4A4+K+9fvFvPvPvUUa6MDUKMQKsXsMhkJF+7QsAXAoLyEBsOqRYJFfnJzyEByDAWFBHIc+ArgLyHAMB5ADjAuQkV0HAA5jCYVEsjCNykMbUv7P/7P9f/+9yqc3uTfxPGXc0tuB2A7b7ejeAe6B+4DY98HIZsGbA2ZAPVLoz/xp0Az/NkZux3sDjYMrLjhYO5dbvFyK6UFjCzHJIrpggyEVjZTgrxF7F0HAMhsKD18hz4C/Yn4j84YngFHhQaQb5wAOYwoNZGEblCZmpvuf/6/P//rSs1jKq9fHrxxXGa3ToMtUWsnKyfzbXhcHhWNlk7Ki1JpXOVRTAGXPWBkbYBcs3RFzRFzOliwprvdnZ21tPDrdCSi9uljXMSZ5RIunBdLGmQeEUTg4+MjxFjAymNM91OLfEEzCzwDuKhvHAA6jCg1kQZtU7i85f/3v7f/72/O1VfNOvPjx01vWqdgIglTZ02v1uu1udwbbNzosaLotDou8+AOL+F0GvAN63tVsfPltJVbqZfk3yYCl53jCiUW+O61jCkc5IuQVMSRiZzQTPP2jjgICwoMBYd/Ac+A59IrQvsDsD2wLDmFgBJwAEEUK2FVuc1X9/t/9h4jUtLkXEky7GKUw4GbvjOn7bpt1vVOU5mDYmxKYcED9PyuAmM5NTicKPGdP8Z1HH8GZCB1pR/nf5/8/9T5rxeHr2CCRhFII0JCuz5/OPD7fYD5/Mx/t9rk/P5mH2+xD5/OMfb7XD5/NQv+xD5/PeMPttHZBGfD7TDs8oxh9rgPnGjDawWAALA7Pn/QPYJ8vnGMPtc9JwBBJeyCpLC7LIubqa23L/+p/p/p54dZ5j//B/79eeNcXNf/5s/9gL1/t//y/3hLki26MD8Dbp6IxBq1Jrirzk4ORiNRFRRFRRFQYhRFRFAbGr+cWyz+er+cS8ZnBV34SQP24TBIE3pT1j6UIxRURRUFFQUVEUXGgxREijcEVcR9NetIQBgiz/56rnt1taf9fDw8PDw8PDw8PJKgkTwzBvDj2LMzIyMzMzMzMzMzNwBGIG0cA==', kind: 'video' };
+
+  // The sound comes out on its own.
+  const split = await getJson(h.base, '/api/tools/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'extractAudio', sources: [source], params: {} }),
+  });
+  assert.equal(split.status, 200, '分离音频跑不动：' + (split.body?.message ?? ''));
+  const tracks = split.body.artifacts ?? [];
+  assert.equal(tracks.length, 1, '分离音频不只产出了一个文件');
+  assert.equal(tracks[0].kind, 'audio');
+
+  // And the clip cuts that sound.
+  const cut = await getJson(h.base, '/api/tools/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'trimAudio',
+      sources: [{ url: tracks[0].url, kind: 'audio' }],
+      params: { start: 0, end: 0.3 },
+    }),
+  });
+  assert.equal(cut.status, 200, '音频剪辑跑不动：' + (cut.body?.message ?? ''));
+  const clips = cut.body.artifacts ?? [];
+  assert.equal(clips.length, 1, '音频剪辑产出的文件不是一个');
+  assert.equal(clips[0].kind, 'audio');
+  // The cut really is shorter than the sound it came from.
+  assert.ok(clips[0].bytes < tracks[0].bytes, '裁出来的音频和原来的一样长');
+});
+
+test('the preview plays the range that is about to be cut', async () => {
+  // The preview is the material itself, playing the range that is about to
+  // be cut. It loops: when it reaches the end it goes back to the start.
+  const { clipSecond, previewAction } = await import('../miniapp/client/node-ui.mjs');
+
+  // A point on the clip, in seconds.
+  assert.equal(clipSecond(1500), 1.5);
+  assert.equal(clipSecond(-100), 0);
+
+  // Inside the range: the preview keeps playing where it is.
+  assert.deepEqual(previewAction({ currentSec: 2, fromSec: 1, toSec: 5, playing: true }), { type: 'continue', at: 2 });
+  // At the end: back to the start, so the range loops.
+  assert.deepEqual(previewAction({ currentSec: 5, fromSec: 1, toSec: 5, playing: true }), { type: 'seek', at: 1 });
+  // Past the end (the browser drifted): back to the start.
+  assert.deepEqual(previewAction({ currentSec: 9, fromSec: 1, toSec: 5, playing: true }), { type: 'seek', at: 1 });
+  // Before the start: back to the start.
+  assert.deepEqual(previewAction({ currentSec: 0.2, fromSec: 1, toSec: 5, playing: true }), { type: 'seek', at: 1 });
+  // A range of nothing has no length to play: the preview sits at its start.
+  assert.deepEqual(previewAction({ currentSec: 3, fromSec: 2, toSec: 2, playing: true }), { type: 'seek', at: 2 });
+  // The material ran out before the range did — the range is the whole
+  // material — so the preview starts over instead of stopping at the end.
+  assert.deepEqual(previewAction({ currentSec: 10, fromSec: 0, toSec: 10, ended: true, playing: true }), { type: 'restart', at: 0 });
+  // The material really ended, so the preview starts over whatever it was
+  // doing a moment ago.
+  assert.deepEqual(previewAction({ currentSec: 10, fromSec: 0, toSec: 10, ended: true, playing: false }), { type: 'restart', at: 0 });
+  // The preview is stopped: it does not move on its own.
+  assert.deepEqual(previewAction({ currentSec: 4, fromSec: 1, toSec: 5, playing: false }), { type: 'pause', at: 4 });
+});
+
+test('the preview starts over when the material runs out', async () => {
+  // The preview plays the range that is about to be cut, over and over. The
+  // material can run out before the range does — the range is often the whole
+  // material — and the browser stops the playback there, so the preview has
+  // to start over by itself.
+  const { wirePreviewLoop } = await import('../miniapp/client/preview-loop.mjs');
+
+  const makePreview = () => {
+    const listeners = {};
+    return {
+      currentTime: 0,
+      listeners,
+      addEventListener(type, handler) {
+        listeners[type] = handler;
+      },
+    };
+  };
+
+  // The material ran out: the range starts over.
+  const preview = makePreview();
+  const started = [];
+  wirePreviewLoop(preview, {
+    fromSec: () => 0,
+    toSec: () => 10,
+    isPlaying: () => true,
+    playAt: (sec) => started.push(sec),
+  });
+  preview.currentTime = 10;
+  preview.listeners.ended();
+  assert.deepEqual(started, [0]);
+
+  // The range is over: the playhead goes back to the start, so the range loops.
+  const looping = makePreview();
+  wirePreviewLoop(looping, {
+    fromSec: () => 1,
+    toSec: () => 5,
+    isPlaying: () => true,
+    playAt: () => {},
+  });
+  looping.currentTime = 6;
+  looping.listeners.timeupdate();
+  assert.equal(looping.currentTime, 1);
+
+  // Inside the range the playhead stays where it is.
+  looping.currentTime = 3;
+  looping.listeners.timeupdate();
+  assert.equal(looping.currentTime, 3);
+
+  // The preview was stopped: it neither moves nor starts over.
+  const stopped = makePreview();
+  const stoppedStarts = [];
+  wirePreviewLoop(stopped, {
+    fromSec: () => 0,
+    toSec: () => 10,
+    isPlaying: () => false,
+    playAt: (sec) => stoppedStarts.push(sec),
+  });
+  stopped.currentTime = 10;
+  stopped.listeners.timeupdate();
+  assert.equal(stopped.currentTime, 10);
+  assert.deepEqual(stoppedStarts, []);
+});
+
+test('the strip shows the material, and the clock shows the playhead', async () => {
+  // The strip is the material itself: a video is a row of frames taken from
+  // the file, an audio its waveform. The clock says where the playhead is.
+  const { clipClock } = await import('../miniapp/client/node-ui.mjs');
+  const { frameStops, waveformPeaks } = await import('../miniapp/client/strip.mjs');
+
+  // The clock: the playhead and the whole material, both in mm:ss.
+  assert.equal(clipClock(0, 15000), '00:00 / 00:15');
+  assert.equal(clipClock(61000, 15000), '01:01 / 00:15');
+
+  // The frames of a filmstrip spread over the material, head to tail.
+  assert.deepEqual(frameStops(3, 10), [0, 5, 10]);
+  assert.deepEqual(frameStops(8, 7), [0, 1, 2, 3, 4, 5, 6, 7]);
+  // A material of no length has one frame, at the start.
+  assert.deepEqual(frameStops(8, 0), [0]);
+  assert.deepEqual(frameStops(1, 10), [0]);
+
+  // The waveform: every slice of the sound keeps its loudest moment.
+  assert.deepEqual(waveformPeaks([0, 0.5, -1, 0.2], 2), [0.5, 1]);
+  assert.deepEqual(waveformPeaks([], 3), [0, 0, 0]);
+});
+
+test('the clip strip hangs under the card, and never on it', async () => {
+  // The strip is the material itself, so it belongs to the card: it sits
+  // under the card, centred on it. A strip that covered the picture it is
+  // about to cut would hide the very thing the user is choosing from.
+  const { clipPlacement } = await import('../miniapp/client/clip-place.mjs');
+
+  const card = { left: 500, top: 200, right: 800, bottom: 600, width: 300, height: 400 };
+  const size = { width: 560, height: 180 };
+  const viewport = { width: 1400, height: 900 };
+
+  // Under the card, centred on it.
+  const below = clipPlacement({ card, size, viewport });
+  assert.equal(below.side, 'below');
+  assert.equal(below.top, 608);
+  assert.equal(below.left, 370);
+
+  // No room under the card: the strip goes above it, so it stays on screen.
+  const tight = clipPlacement({ card, size, viewport: { width: 1400, height: 700 } });
+  assert.equal(tight.side, 'above');
+  assert.ok(tight.top + size.height <= card.top, 'the strip is still on the card');
+
+  // A card at the left edge: the strip is pulled back inside the window.
+  const edge = clipPlacement({
+    card: { ...card, left: 0, right: 300, width: 300 },
+    size,
+    viewport,
+  });
+  assert.equal(edge.left, 8);
+
+  // A card at the right edge: the same, the other way.
+  const right = clipPlacement({
+    card: { ...card, left: 1300, right: 1600, width: 300 },
+    size,
+    viewport,
+  });
+  assert.ok(right.left + size.width <= viewport.width - 8, 'the strip hangs off the window');
+});
+
+test('the clip panel is placed by the card, not by the button', async () => {
+  // The strip hangs under the card. Placing it by the button that opened it
+  // drops it on top of the card — the button sits above the card, so a panel
+  // under the button covers the picture.
+  const { panelAnchor } = await import('../miniapp/client/clip-place.mjs');
+
+  const card = { left: 500, top: 200, right: 800, bottom: 600, width: 300, height: 400 };
+  const button = { left: 500, top: 150, right: 539, bottom: 174, width: 39, height: 24 };
+
+  // A clip panel hangs off the card.
+  assert.deepEqual(panelAnchor({ isClip: true, card, button }), { kind: 'card', card });
+  // Every other panel hangs off its own button, right under it.
+  assert.deepEqual(panelAnchor({ isClip: false, card, button }), { kind: 'button', button });
+  // A clip panel whose card is gone falls back to the button, so it still opens.
+  assert.deepEqual(panelAnchor({ isClip: true, card: null, button }), { kind: 'button', button });
+
+  // And the page asks the rule with the real card and the real button, so
+  // the rule is what decides where the panel goes.
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  assert.match(
+    functionBody(source, 'openToolPanel'),
+    /panelAnchor\(\{ isClip, card: cardRectOf\(node\), button: anchorRect \}\)/,
+    'the page does not ask the rule where the panel goes',
+  );
+});
+
+test('the strip has a playhead, and the hand can move it', async () => {
+  // The strip shows the material, and the playhead says where the material
+  // is being played. The two rules are one rule: a point of the strip is a
+  // moment of the material, and the playhead stands at that moment.
+  const { playheadMs, stripMsAt, stripPercent } = await import('../miniapp/client/node-ui.mjs');
+
+  // A point of the strip, as a percent of the material.
+  assert.equal(stripPercent(0, 10000), 0);
+  assert.equal(stripPercent(5000, 10000), 50);
+  assert.equal(stripPercent(10000, 10000), 100);
+  // A material of no length has no points.
+  assert.equal(stripPercent(500, 0), 0);
+  // A point past the end is held at the end.
+  assert.equal(stripPercent(15000, 10000), 100);
+  assert.equal(stripPercent(-500, 10000), 0);
+
+  // A press on the strip is a moment of the material. The strip is 560 wide
+  // and the handles hold 6px in at each end, so the usable part is 548.
+  const strip = { rectLeft: 100, rectWidth: 560, durationMs: 10000 };
+  assert.equal(stripMsAt({ clientX: 106, ...strip }), 0);
+  assert.equal(stripMsAt({ clientX: 380, ...strip }), 5000);
+  assert.equal(stripMsAt({ clientX: 654, ...strip }), 10000);
+  // A press outside the strip is held at the end it belongs to.
+  assert.equal(stripMsAt({ clientX: 0, ...strip }), 0);
+  assert.equal(stripMsAt({ clientX: 900, ...strip }), 10000);
+
+  // The playhead stands inside the range that is about to be cut: the
+  // material outside it is not what will be cut, so the mark does not
+  // stand there.
+  const range = { durationMs: 10000, startMs: 2000, endMs: 8000 };
+  assert.equal(playheadMs({ ms: 5000, range }), 5000);
+  assert.equal(playheadMs({ ms: 1000, range }), 2000);
+  assert.equal(playheadMs({ ms: 9000, range }), 8000);
+  // A range of the whole material lets the mark stand anywhere.
+  const whole = { durationMs: 10000, startMs: 0, endMs: 10000 };
+  assert.equal(playheadMs({ ms: 1000, range: whole }), 1000);
+  assert.equal(playheadMs({ ms: 9999, range: whole }), 9999);
+  // A material of no length has no playhead.
+  assert.equal(playheadMs({ ms: 1000, range: { durationMs: 0 } }), 0);
+});
+
+test('pressing the strip moves the material, and the mark follows it', async () => {
+  // The playhead is not a picture that is painted once: the strip is
+  // pressed, the material goes to that point, and the mark stands there.
+  const { wirePlayhead } = await import('../miniapp/client/clip-playhead.mjs');
+
+  // A window that keeps every listener, so a drag that was ended can be
+  // told apart from one that was never begun.
+  const makeWin = () => {
+    const kept = new Map();
+    return {
+      addEventListener(name, fn) {
+        if (!kept.has(name)) kept.set(name, []);
+        kept.get(name).push(fn);
+      },
+      removeEventListener(name, fn) {
+        const list = kept.get(name) ?? [];
+        const at = list.indexOf(fn);
+        if (at >= 0) list.splice(at, 1);
+      },
+      fire(name, event) {
+        for (const fn of [...(kept.get(name) ?? [])]) fn(event);
+      },
+      count(name) {
+        return (kept.get(name) ?? []).length;
+      },
+    };
+  };
+
+  const track = {
+    listeners: {},
+    rect: { left: 100, width: 560 },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    removeEventListener(name, fn) { if (this.listeners[name] === fn) delete this.listeners[name]; },
+    getBoundingClientRect() { return this.rect; },
+  };
+
+  const range = { durationMs: 10000, startMs: 2000, endMs: 8000 };
+  const sought = [];
+  const marks = [];
+  const win = makeWin();
+  const stop = wirePlayhead({
+    track,
+    getRange: () => range,
+    getDurationMs: () => range.durationMs,
+    seek: (ms) => { sought.push(ms); },
+    paint: () => { marks.push(sought[sought.length - 1]); },
+    win,
+  });
+
+  // A press in the middle of the strip: the material goes to that point.
+  const press = (clientX) => track.listeners.pointerdown({ clientX, preventDefault() {}, stopPropagation() {} });
+
+  press(380);
+  assert.deepEqual(sought, [5000]);
+  // The mark is painted at the moment the material went to.
+  assert.deepEqual(marks, [5000]);
+  // The hand lets go.
+  win.fire('pointerup', {});
+
+  // A press outside the range is held at the end it belongs to.
+  sought.length = 0;
+  press(120);
+  assert.deepEqual(sought, [2000]);
+  win.fire('pointerup', {});
+
+  // The drag keeps it there: the material follows the hand. The press
+  // itself is a move too, so the hand lands on the point and the drag
+  // carries it on.
+  sought.length = 0;
+  press(380);
+  win.fire('pointermove', { clientX: 500 });
+  // 500 - 100 - 6 = 394 of the 548 usable, so 7190 of 10000.
+  assert.deepEqual(sought, [5000, 7190]);
+
+  // The drag ends with the hand.
+  win.fire('pointerup', {});
+  sought.length = 0;
+  win.fire('pointermove', { clientX: 300 });
+  assert.deepEqual(sought, [], 'the material still followed the hand after the drag ended');
+
+  // And the panel going stops the drag with it.
+  press(380);
+  stop();
+  sought.length = 0;
+  win.fire('pointermove', { clientX: 300 });
+  assert.deepEqual(sought, [], 'the material followed the hand after the panel went');
+  assert.equal(track.listeners.pointerdown, undefined, 'the strip still listens after the panel went');
+});
+
+test('the page puts the playhead on the strip and moves it', async () => {
+  // The rules above are the rules; the page has to use them. A rule that
+  // is not called is a rule that is not in force.
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  const panel = functionBody(source, 'clipPanel');
+
+  // The strip carries the mark.
+  assert.ok(panel.includes("el('div', 'nxc-clip__playhead')"), 'the strip carries no playhead');
+  assert.ok(panel.includes('track.appendChild(playhead);'), 'the playhead is not on the strip');
+  // And the mark is moved by the rule, not by a number of its own.
+  assert.ok(
+    panel.includes('playhead.style.left = stripAt(stripPercent(ms, range.durationMs));'),
+    'the playhead is not placed by the rule',
+  );
+  // The clock and the mark move together: they are the same moment.
+  // The transport is where the clock is written, so that is where the mark
+  // has to be written too.
+  assert.ok(
+    blockAfter(source, 'const paintTransport =').includes('paintPlayhead();'),
+    'the playhead does not follow the clock',
+  );
+  // The strip is pressed to move the material: the call hands the
+  // wiring the real track and the real range, so the hand moves the strip
+  // the user is looking at.
+  assert.ok(
+    /wirePlayhead\(\{\s*track,\s*playhead,\s*getRange: \(\) => range,/.test(panel),
+    'the strip is not pressed to move the material',
+  );
+  // And the drag stops when the panel goes.
+  assert.ok(panel.includes('stopPlayhead();'), 'the drag does not stop with the panel');
+  // The mark stands on the strip, and the hand can take it: the line
+  // is thin, but the place to hold it is wide.
+  const mark = /\.nxc-clip__playhead\s*\{([^}]*)\}/.exec(css);
+  assert.ok(mark, 'the mark has no style of its own');
+  assert.match(mark[1], /cursor:\s*grab;/);
+  assert.doesNotMatch(mark[1], /pointer-events:\s*none/);
+});
+
+test('a range header says which bytes the caller asked for', async () => {
+  const { parseByteRange } = await import('../miniapp/node/http-range.mjs');
+
+  // The middle of the file.
+  assert.deepEqual(parseByteRange('bytes=2-5', 10), { start: 2, end: 5 });
+  // The rest of it.
+  assert.deepEqual(parseByteRange('bytes=4-', 10), { start: 4, end: 9 });
+  // The last bytes of it.
+  assert.deepEqual(parseByteRange('bytes=-3', 10), { start: 7, end: 9 });
+  // An end past the file is held at the end of the file.
+  assert.deepEqual(parseByteRange('bytes=8-100', 10), { start: 8, end: 9 });
+
+  // A part that is not there cannot be sent.
+  assert.equal(parseByteRange('bytes=99-120', 10), 'unsatisfiable');
+  // A file of no length has no part to serve.
+  assert.equal(parseByteRange('bytes=0-0', 0), 'unsatisfiable');
+
+  // A header that means something else is left to the caller: only the
+  // caller knows what it meant.
+  assert.equal(parseByteRange('', 10), null);
+  assert.equal(parseByteRange('items=0-5', 10), null);
+  assert.equal(parseByteRange('bytes=abc', 10), null);
+  // An end before the start means nothing.
+  assert.equal(parseByteRange('bytes=5-2', 10), null);
+});
+
+test('the media server answers a range request, so a playhead can move inside the file', async (t) => {
+  const h = await createHarness();
+  t.after(() => h.cleanup());
+
+  // A clip the user put on the machine: this is the file a playhead has to
+  // be able to move inside.
+  const uploaded = await fetch(`${h.base}/api/uploads?name=clip.mp4&kind=video`, {
+    method: 'POST',
+    headers: { 'content-type': 'video/mp4' },
+    body: Buffer.from('0123456789'),
+  });
+  const info = await uploaded.json();
+  assert.equal(uploaded.status, 200, `the file was not taken: ${info?.message ?? ''}`);
+  assert.match(info.url, /^\/uploads\//);
+
+  // The whole file, and the server saying that it can serve parts of it.
+  const whole = await fetch(`${h.base}${info.url}`);
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get('accept-ranges'), 'bytes');
+  assert.equal(await whole.text(), '0123456789');
+
+  // A part of it: the middle four bytes.
+  const part = await fetch(`${h.base}${info.url}`, { headers: { range: 'bytes=2-5' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), 'bytes 2-5/10');
+  assert.equal(await part.text(), '2345');
+
+  // The last bytes of it.
+  const last = await fetch(`${h.base}${info.url}`, { headers: { range: 'bytes=-3' } });
+  assert.equal(last.status, 206);
+  assert.equal(last.headers.get('content-range'), 'bytes 7-9/10');
+  assert.equal(await last.text(), '789');
+
+  // A part that is not there cannot be sent.
+  const gone = await fetch(`${h.base}${info.url}`, { headers: { range: 'bytes=99-120' } });
+  assert.equal(gone.status, 416);
+  assert.equal(gone.headers.get('content-range'), 'bytes */10');
+});
+
+test('the mark can be taken by the hand, and a keyboard can move it too', async () => {
+  const { wirePlayhead } = await import('../miniapp/client/clip-playhead.mjs');
+
+  // A window that keeps every listener, so a drag that was ended can be
+  // told apart from one that was never begun.
+  const makeWin = () => {
+    const kept = new Map();
+    return {
+      addEventListener(name, fn) {
+        if (!kept.has(name)) kept.set(name, []);
+        kept.get(name).push(fn);
+      },
+      removeEventListener(name, fn) {
+        const list = kept.get(name) ?? [];
+        const at = list.indexOf(fn);
+        if (at >= 0) list.splice(at, 1);
+      },
+      fire(name, event) {
+        for (const fn of [...(kept.get(name) ?? [])]) fn(event);
+      },
+    };
+  };
+
+  // An element that takes a press: the strip, and the mark that stands on
+  // it.
+  const makeEl = (rect) => ({
+    listeners: {},
+    rect,
+    focused: false,
+    focus() { this.focused = true; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    removeEventListener(name, fn) { if (this.listeners[name] === fn) delete this.listeners[name]; },
+    getBoundingClientRect() { return this.rect; },
+    contains(node) { return node === this; },
+  });
+
+  const track = makeEl({ left: 100, width: 560 });
+  const playhead = makeEl({ left: 380, width: 1 });
+  const range = { durationMs: 10000, startMs: 2000, endMs: 8000 };
+  const sought = [];
+  const held = { pressed: 0, released: 0 };
+  let now = 4000;
+  const win = makeWin();
+
+  const stop = wirePlayhead({
+    track,
+    playhead,
+    getRange: () => range,
+    getDurationMs: () => range.durationMs,
+    getCurrentMs: () => now,
+    seek: (ms) => { sought.push(ms); now = ms; },
+    paint: () => {},
+    onPress: () => { held.pressed += 1; },
+    onRelease: () => { held.released += 1; },
+    win,
+  });
+
+  // A hand that takes the mark does not send the material to the point it
+  // pressed: the mark stays where it was and is carried from there.
+  track.listeners.pointerdown({
+    clientX: 380, target: playhead, preventDefault() {}, stopPropagation() {},
+  });
+  assert.deepEqual(sought, [4000], 'the mark jumped to the point the hand pressed');
+  assert.equal(held.pressed, 1, 'the material did not stop while the hand held the mark');
+  // The mark takes the focus, so the keyboard can carry on from there: the
+  // press stops the default focus of a click, so it is asked for by hand.
+  assert.equal(playhead.focused, true, 'the mark did not take the focus');
+
+  // The hand moves 137px: a quarter of the 548px a press may use, so a
+  // quarter of the material — 2500ms on from where the mark was.
+  win.fire('pointermove', { clientX: 517 });
+  assert.deepEqual(sought, [4000, 6500]);
+
+  // The hand lets go: the material goes on playing where it was left.
+  win.fire('pointerup', {});
+  assert.equal(held.released, 1, 'the material did not go on after the hand let go');
+
+  // The mark is a slider as well: the keyboard moves it a step at a time.
+  const key = (name, shiftKey = false) => {
+    sought.length = 0;
+    playhead.listeners.keydown({
+      key: name, shiftKey, preventDefault() {}, stopPropagation() {},
+    });
+  };
+
+  key('ArrowRight');
+  assert.deepEqual(sought, [6510], 'an arrow did not move the mark by a tenth of a second');
+  key('ArrowLeft', true);
+  assert.deepEqual(sought, [5510], 'a held shift did not move the mark by a second');
+  key('Home');
+  assert.deepEqual(sought, [2000], 'home did not take the mark to the start of the range');
+  key('End');
+  assert.deepEqual(sought, [8000], 'end did not take the mark to the end of the range');
+
+  // The mark never leaves the range that is about to be cut.
+  key('ArrowRight');
+  assert.deepEqual(sought, [8000], 'the mark left the range that is about to be cut');
+
+  // And the panel going takes the keyboard with it.
+  stop();
+  assert.equal(playhead.listeners.keydown, undefined, 'the mark still listens after the panel went');
+});
+
+test('the page gives the mark a head, a slider role and the strip it belongs to', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  const panel = functionBody(source, 'clipPanel');
+
+  // The line is thin, so the mark has a head of its own on top of it.
+  assert.ok(
+    panel.includes("el('span', 'nxc-clip__playhead__head')"),
+    'the mark has no head',
+  );
+  // The mark is a slider, so a keyboard can move it as well.
+  assert.ok(
+    panel.includes("playhead.setAttribute('role', 'slider')"),
+    'the mark is not a slider',
+  );
+  assert.ok(
+    panel.includes("playhead.setAttribute('tabindex', '0')"),
+    'the keyboard cannot reach the mark',
+  );
+  // It says where it is, so it can be read out.
+  assert.ok(
+    panel.includes("playhead.setAttribute('aria-valuenow'"),
+    'the mark does not say where it is',
+  );
+
+  // The mark is handed to the wiring, so the hand can take it, and the
+  // wiring is told where the material is, so the mark can be carried from
+  // there instead of jumping.
+  const wiring = blockAfter(source, 'const stopPlayhead = wirePlayhead(');
+  assert.ok(wiring.includes('playhead,'), 'the mark is not given to the wiring');
+  assert.ok(wiring.includes('getCurrentMs:'), 'the wiring is not told where the material is');
+  // The material stops while the hand holds the mark, and goes on after.
+  assert.ok(wiring.includes('onPress:'), 'the material does not stop while the mark is held');
+  assert.ok(wiring.includes('onRelease:'), 'the material does not go on after the mark is let go');
+
+
+  // The mark catches the hand: the line is thin, but the place to hold it
+  // is wide, and the mark is not out of the way.
+  const mark = /\.nxc-clip__playhead\s*\{([^}]*)\}/.exec(css);
+  assert.ok(mark, 'the mark has no style of its own');
+  assert.match(mark[1], /cursor:\s*grab;/);
+  assert.doesNotMatch(mark[1], /pointer-events:\s*none/);
+  assert.match(css, /\.nxc-clip__playhead::before\s*\{[^}]*inset:\s*0\s+-22px;/);
+  assert.match(css, /\.nxc-clip__playhead__head\s*\{[^}]*width:\s*6px;/);
+});
+
+// ---------------------------------------------------------------- overlays
+//
+// A menu and a panel float over the canvas, and a press somewhere else is
+// a request for them to go. The rules live in pure functions, so the page
+// and the tests read the same one.
+
+test('a press away from an overlay takes the menu and the panel away', async () => {
+  const { overlaysDismissedBy } = await import('../miniapp/client/tools.mjs');
+
+  // A press on the board asks for both of them to go.
+  assert.deepEqual(overlaysDismissedBy(null), ['menu', 'panel']);
+  assert.deepEqual(overlaysDismissedBy({ closest: () => null }), ['menu', 'panel']);
+  // A press inside a menu or a panel is that overlay's own business.
+  assert.deepEqual(overlaysDismissedBy({ closest: () => ({}) }), []);
+});
+
+test('the chip that opened the panel closes it again', async () => {
+  const { chipPress } = await import('../miniapp/client/node-ui.mjs');
+
+  // Nothing is open, so the chip opens its own panel.
+  assert.equal(chipPress(null, 'n1', 'params'), 'open');
+  // The panel that this chip opened is closed by this chip.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n1' }, 'n1', 'params'), 'close');
+  // Another chip of the same card opens its own panel.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n1' }, 'n1', 'count'), 'open');
+  // Another card's panel is not this chip's panel.
+  assert.equal(chipPress({ type: 'params', nodeId: 'n2' }, 'n1', 'params'), 'open');
+});
+
+test('the page takes the overlays away and reads a chip press once', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+
+  // The node stops the press, so the document never sees it: the node has
+  // to take the overlays away itself.
+  assert.ok(
+    functionBody(source, 'bindNodeGestures').includes('dismissOverlays(target)'),
+    'a press on a card leaves the panel and the menu where they are',
+  );
+  // And the one place that says so takes both away.
+  const closer = functionBody(source, 'dismissOverlays');
+  assert.ok(closer.includes('closePanel()'), 'the panel is not taken away');
+  assert.ok(closer.includes('closeMenus()'), 'the menu is not taken away');
+
+  // A control is read once: a pointer press and the click that follows it
+  // are one gesture, so listening to both opens the panel twice — and a
+  // panel that opens twice cannot be taken away by the control that opened
+  // it.
+  const control = functionBody(source, 'bindPanelControl');
+  assert.ok(control.includes("'pointerdown'"), 'the control does not answer the press');
+  assert.ok(control.includes("'keydown'"), 'the control does not answer the key');
+  assert.ok(!control.includes("'click'"), 'the control answers the press and the click as well');
+
+  // The chip that opened the panel closes it again.
+  assert.ok(
+    functionBody(source, 'paramChip').includes("chipPress(state.panel, node.id, 'params') === 'close'"),
+    'the parameter chip cannot close its own panel',
+  );
+  assert.ok(
+    functionBody(source, 'countChip').includes("chipPress(state.panel, node.id, 'count') === 'close'"),
+    'the count chip cannot close its own panel',
+  );
+});
+
+// ---------------------------------------------------------------- a run
+// that nobody watches
+//
+// A run the page started is polled by the page. When the page goes away —
+// the canvas was taken back from somewhere else and the run was forgotten
+// with it — the runtime has to ask the provider on its own, because the
+// money was already spent.
+
+async function waitForTask(base, predicate, tries = 200) {
+  let found = null;
+  for (let i = 0; i < tries; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const tasks = (await getJson(base, '/api/tasks')).body.tasks ?? [];
+    found = tasks.find(predicate) ?? null;
+    if (found) return found;
+  }
+  return found;
+}
+
+async function startVideoRun(base, nodeId) {
+  return getJson(base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId,
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      params: { ratio: '16:9', resolution: '768P', duration: 6 },
+    }),
+  });
+}
+
+test('the runtime asks the provider even when the page stopped looking', async (t) => {
+  const options = { videoState: 'running' };
+  const connector = createMockHostConnector(undefined, options);
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await startVideoRun(h.base, 'n_orphan');
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  // The provider finishes the video while the page is not there.
+  options.videoState = 'succeeded';
+
+  // The page never asks about the run. The runtime does, on its own clock.
+  const asked = await waitForCall(
+    connector.calls,
+    (call) => call.toolRef.endsWith('query-video-generation'),
+    200,
+  );
+  assert.ok(asked, 'nobody asked the provider about the run');
+
+  // And the result is there for the page that comes back.
+  const polled = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(polled.status, 'done');
+  assert.equal(polled.media[0].url, 'https://cdn.example.com/video-1.mp4');
+});
+
+test('a run that is over and that no page has read is still offered to the page', async (t) => {
+  const options = { videoState: 'succeeded' };
+  const connector = createMockHostConnector(undefined, options);
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await startVideoRun(h.base, 'n_unread');
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  // The runtime finishes it. The page has not read it: the page lost the
+  // run when the canvas was taken back from somewhere else.
+  const offered = await waitForTask(h.base, (task) => task.id === runId && task.status === 'done');
+  assert.ok(offered, 'the finished run is not on the list the page looks at');
+
+  // The page reads it, and the result is there.
+  const record = await getJson(h.base, '/api/runs/' + runId);
+  assert.equal(record.body.run.status, 'done');
+  assert.equal(record.body.run.media[0].url, 'https://cdn.example.com/video-1.mp4');
+
+  // A run that a page has read does not have to be offered again.
+  const after = (await getJson(h.base, '/api/tasks')).body.tasks ?? [];
+  assert.equal(
+    after.some((task) => task.id === runId),
+    false,
+    'a run that was read is still offered',
+  );
+});
+
+test('the strip says where its parts are', async () => {
+  const { stripAt, stripWidth } = await import('../miniapp/client/node-ui.mjs');
+
+  // A point of the strip: the two ends are held in by the handles' own
+  // inset, so the ends of the strip and the ends of the material are the
+  // same place.
+  assert.equal(stripAt(0), 'calc(6px + (100% - 12px) * 0)');
+  assert.equal(stripAt(50), 'calc(6px + (100% - 12px) * 0.5)');
+  assert.equal(stripAt(100), 'calc(6px + (100% - 12px) * 1)');
+  // A part of the strip is as wide as that part of the material.
+  assert.equal(stripWidth(0), 'calc((100% - 12px) * 0)');
+  assert.equal(stripWidth(25), 'calc((100% - 12px) * 0.25)');
+  assert.equal(stripWidth(100), 'calc((100% - 12px) * 1)');
+});
+
+test('the strip dims what is not kept, and the panel carries its buttons', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  const panel = functionBody(source, 'clipPanel');
+
+  // The two ends of the range dim what is outside it: the bright part of
+  // the strip is the part that is kept.
+  assert.ok(
+    panel.includes("el('div', 'nxc-clip__shade nxc-clip__shade--start')"),
+    'the strip dims nothing',
+  );
+  assert.ok(
+    panel.includes("el('div', 'nxc-clip__shade nxc-clip__shade--end')"),
+    'the strip dims nothing',
+  );
+  // And the dimming follows the range.
+  // The assertions are anchored to the line, so a line that is only
+  // commented out does not pass as if it were there.
+  assert.match(panel, /^\s*shadeStart\.style\.width = stripAt\(from\);$/m, 'the dimming does not follow the range');
+  assert.match(panel, /^\s*shadeEnd\.style\.left = stripAt\(to\);$/m, 'the dimming does not follow the range');
+  // The dimming lies over the material and under the mark.
+  assert.match(panel, /^\s*track\.appendChild\(shadeStart\);$/m, 'the dimming is not on the strip');
+  assert.match(panel, /^\s*track\.appendChild\(shadeEnd\);$/m, 'the dimming is not on the strip');
+
+  // The buttons of the panel belong on the transport row, next to the
+  // clock: without them there is no way to confirm the cut.
+  assert.match(panel, /^\s*transport\.appendChild\(actions\);$/m, 'the panel has no buttons');
+
+  // Esc closes the panel, because the panel says it can.
+  const tool = functionBody(source, 'openToolPanel');
+  assert.match(tool, /^\s*if \(event\.key !== 'Escape'\) return;$/m, 'Esc does not close the panel');
+  const close = functionBody(source, 'closePanel');
+  assert.match(
+    close,
+    /^\s*if \(state\.tool\?\.onKey\) window\.removeEventListener\('keydown', state\.tool\.onKey\);$/m,
+    'the panel keeps its key handler after it went',
+  );
+
+  // The dimming is a shadow over the material, and a handle is a thin line
+  // with three dots in it, not a blue block over the wave.
+  assert.match(css, /\.nxc-clip__shade\s*\{[^}]*background:/);
+  assert.match(css, /\.nxc-clip__handle\s*\{[^}]*background:\s*transparent;/);
+  assert.match(css, /\.nxc-clip__handle::after\s*\{[^}]*box-shadow:/);
+});
+
+test('an audio card shows the sound, not the browser player', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  // The browser's own player is a grey bar out of another product.
+  assert.doesNotMatch(source, /audio\.controls = true;/, 'the browser player is still on the card');
+
+  // The sound is drawn into the card, the way the reference product draws
+  // it: the wave is the picture of an audio.
+  assert.match(source, /^\s*const wave = el\('canvas', 'nxc-node__audio-wave'\);$/m, 'the card has no waveform');
+  assert.match(source, /^\s*void paintWaveform\(wave, item\.url, 120, \{ oversample: 2 \}\);$/m, 'the waveform is not painted');
+  assert.match(css, /\.nxc-node__audio-wave\s*\{[^}]*--nxc-wave-color:/);
+  // The element itself stays: it is the engine the clip panel drives.
+  assert.match(css, /\.nxc-node__media--audio\s*\{[^}]*display:\s*none;/);
+  // And the card plays the sound itself.
+  assert.match(
+    source,
+    /^\s*const play = el\('button', 'nxc-node__audio-play'\);$/m,
+    'the card cannot play the sound',
+  );
+});
+
+test('a sound that has run out is not playing', async () => {
+  const { isPlaying } = await import('../miniapp/client/node-ui.mjs');
+  // A file that has ended is not playing, even though the browser leaves
+  // `paused` false after the last moment. This is what left the card's
+  // button stuck on "pause" while nothing was playing.
+  assert.equal(isPlaying(null), false);
+  assert.equal(isPlaying(undefined), false);
+  assert.equal(isPlaying({ paused: true, ended: false }), false);
+  assert.equal(isPlaying({ paused: false, ended: true }), false);
+  assert.equal(isPlaying({ paused: true, ended: true }), false);
+  assert.equal(isPlaying({ paused: false, ended: false }), true);
+});
+
+test('the audio card says where the sound is, and the wave fills it', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  // The wave is the picture of the card, so it takes the whole box: the band
+  // of nothing under the wave was the emptiest thing on the board.
+  assert.match(
+    source,
+    /^\s*mediaWrap\.classList\.add\('nxc-node__media-wrap--audio'\);$/m,
+    'the audio box is not marked',
+  );
+  assert.match(css, /\.nxc-node__media-wrap--audio\s*\{[^}]*max-height:\s*none;/);
+
+  // Where the sound is, and how long it is.
+  assert.match(
+    source,
+    /^\s*const readout = el\('span', 'nxc-node__audio-time'\);$/m,
+    'the card has no readout',
+  );
+  assert.match(source, /^\s*readout\.textContent = /m, 'the readout is never written');
+  assert.match(
+    source,
+    /^\s*audio\.addEventListener\('timeupdate', showState\);$/m,
+    'the readout does not move',
+  );
+
+  // The button says what is true: a file that ran out is not playing.
+  assert.match(
+    source,
+    /^\s*audio\.addEventListener\('ended', showState\);$/m,
+    'the button does not hear the end',
+  );
+  assert.doesNotMatch(
+    source,
+    /const playing = !audio\.paused;/,
+    'the button still believes a finished file plays',
+  );
+  assert.match(source, /^\s*if \(isPlaying\(audio\)\) \{$/m, 'the button does not ask whether it plays');
+
+  // The clip panel asks the same question of the same element, so the card
+  // and the panel cannot disagree about whether the sound plays.
+  assert.match(
+    source,
+    /^\s*const playing = isPlaying\(engine\);$/m,
+    'the panel asks another question',
+  );
+  assert.doesNotMatch(
+    source,
+    /!engine\.paused/,
+    'the panel still believes a finished file plays',
+  );
+});
+
+test('the handle has dots that can be seen', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+  // The dots sit on a brand-coloured line, so they are light: in the colour
+  // of the strip they vanished into the track.
+  const dots = /\.nxc-clip__handle::after\s*\{([^}]*)\}/.exec(css);
+  assert.ok(dots, 'the handle has no dots');
+  assert.ok(
+    /background:\s*var\(--mcode-text\)/.test(dots[1]),
+    'the dots are in the colour of the strip',
+  );
+  assert.ok(/box-shadow:[^;]*0 -6px/.test(dots[1]), 'the three dots are not three');
+});
+
+test('the panel lets go of the preview when it goes', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+
+  // The preview stops when the panel goes: the state is cleared inside
+  // closePanel, after the preview is let go of. Cleared first, the panel
+  // lets go of nothing, and the sound goes on behind a closed panel.
+  assert.doesNotMatch(
+    source,
+    /state\.tool = null;\s*\n\s*closePanel\(\);/,
+    'the panel is emptied before it lets go of the preview',
+  );
+  const close = functionBody(source, 'closePanel');
+  assert.match(
+    close,
+    /^\s*state\.tool\?\.dispose\?\.\(\);$/m,
+    'the panel does not let go of the preview',
+  );
+  assert.match(close, /^\s*state\.tool = null;$/m, 'the panel does not clear itself');
+  // And the key handler goes with it, so a panel that has gone cannot
+  // answer the next Escape.
+  assert.match(
+    close,
+    /^\s*if \(state\.tool\?\.onKey\) window\.removeEventListener\('keydown', state\.tool\.onKey\);$/m,
+    'the panel keeps its key handler',
+  );
+});
+
+test('an audio card is a wave and a row, the way the reference card is', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  // The wave is a band of its own: the card is as tall as the sound needs
+  // it, and the row under the wave is what may be done with the sound.
+  assert.match(css, /\.nxc-node__media-wrap--audio\s*\{[^}]*flex:\s*none;/, 'the wave is not a band of its own');
+  assert.match(css, /\.nxc-node__media-wrap--audio\s*\{[^}]*height:\s*\d+px;/, 'the band has no height');
+  // The band is a band: it is not allowed to become the whole card again, and
+  // it does not take the floor every media box has.
+  const bandBlock = /\.nxc-node__media-wrap--audio\s*\{([^}]*)\}/.exec(css);
+  assert.ok(bandBlock, 'the audio band has no box of its own');
+  const bandHeight = Number(/(^|[\s;{])height:\s*(\d+)px/m.exec(bandBlock[1])?.[2] ?? 999);
+  const bandFloor = Number(/min-height:\s*(\d+)/.exec(bandBlock[1])?.[1] ?? 999);
+  assert.ok(bandHeight <= 100, 'the band is the whole card again');
+  assert.ok(bandFloor <= 100, 'the floor of every media box comes back to the band');
+  // The audio card is the flattest of the four: it hugs its sound instead of
+  // taking the floor every other card takes, and the floor it sets is honoured.
+  assert.match(
+    source,
+    /^\s*if \(card\) fitCardHeight\(node, card, \{ dirty: true, min: (\d+) \}\);$/m,
+    'the audio card does not hug its sound',
+  );
+  const floor = Number(source.match(/fitCardHeight\(node, card, \{ dirty: true, min: (\d+) \}\)/)?.[1] ?? 999);
+  assert.ok(floor < 200, 'the audio card takes the floor of the other cards');
+  assert.match(
+    source,
+    /Math\.max\(min, Math\.min\(2000, Math\.round\(natural\)\)/,
+    'the floor the caller sets is not honoured',
+  );
+  assert.match(
+    source,
+    /^\s*const bar = el\('div', 'nxc-node__audio-bar'\);$/m,
+    'the card has no row under the wave',
+  );
+  assert.match(source, /^\s*bar\.appendChild\(readout\);$/m, 'the row does not say where the sound is');
+  assert.match(source, /^\s*bar\.appendChild\(play\);$/m, 'the row cannot play the sound');
+  assert.match(source, /^\s*bar\.appendChild\(download\);$/m, 'the row cannot let the file out');
+  // The row has to land on the card, not just be built and thrown away.
+  assert.match(source, /^\s*below = bar;$/m, 'the row is not put under the wave');
+  assert.match(source, /^\s*if \(below\) box\.appendChild\(below\);$/m, 'the row never lands on the card');
+  assert.match(
+    source,
+    /const download = el\('button', 'nxc-node__audio-download'\);[\s\S]*?void saveMedia\(node, item\);/,
+    'the file does not leave the app',
+  );
+
+  // The wave says where the sound is: the mark is blue, what is left of the
+  // wave is dimmed.
+  assert.match(
+    source,
+    /^\s*const head = el\('div', 'nxc-node__audio-head'\);$/m,
+    'the wave has no mark',
+  );
+  assert.match(
+    source,
+    /^\s*const ahead = el\('div', 'nxc-node__audio-ahead'\);$/m,
+    'the wave does not dim',
+  );
+  assert.match(css, /\.nxc-node__audio-head\s*\{[^}]*background:\s*var\(--brand\);/, 'the mark is not the brand colour');
+  assert.match(css, /\.nxc-node__audio-ahead\s*\{[^}]*background:/, 'what is left of the wave is not dimmed');
+  assert.match(source, /^\s*head\.style\.left = at;$/m, 'the mark does not follow the sound');
+  assert.match(source, /^\s*ahead\.style\.left = at;$/m, 'the dimming does not follow the mark');
+  assert.match(source, /^\s*paintHead\(\);$/m, 'the mark is not painted');
+
+  // The wave is the sound, not a colour of the product: the blue is kept
+  // for the mark.
+  assert.match(
+    css,
+    /\.nxc-node__audio-wave\s*\{[^}]*--nxc-wave-color:\s*var\(--mcode-text\);/,
+    'the wave is the colour of the product',
+  );
+
+  // The file leaves the app from the card itself, so the rail does not offer
+  // a second way out.
+  const { cardLayers } = await import('../miniapp/client/node-ui.mjs');
+  const audio = {
+    type: 'result',
+    metadata: { kind: 'audio', output: { media: [{ url: '/assets/a.m4a', kind: 'audio' }] } },
+  };
+  assert.ok(
+    !cardLayers(audio, { tools: [] }).above.includes('save'),
+    'the file has two ways out of the app',
+  );
+  const picture = {
+    type: 'result',
+    metadata: { kind: 'image', output: { media: [{ url: '/assets/a.png', kind: 'image' }] } },
+  };
+  assert.ok(
+    cardLayers(picture, { tools: [] }).above.includes('save'),
+    'the picture lost its way out of the app',
+  );
+});
+
+test('a card carries no name above itself', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const source = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+  const ui = await readFile(fileURLToPath(new URL('../miniapp/client/node-ui.mjs', import.meta.url)), 'utf8');
+
+  // The name that used to float above the card is gone: the card is the
+  // work, and the name of the file is the card's own business.
+  const mod = await import('../miniapp/client/node-ui.mjs');
+  assert.equal('floatsTitle' in mod, false, 'the rule that floats the name is still there');
+  assert.doesNotMatch(ui, /floatsTitle/, 'the rule that floats the name is still there');
+  assert.doesNotMatch(source, /nxc-node__label/, 'the name is drawn on the card again');
+  assert.doesNotMatch(source, /nxc-node--labelled/, 'the card is marked as carrying a name again');
+  assert.doesNotMatch(css, /nxc-node__label/, 'the name still has a style');
+  assert.doesNotMatch(css, /nxc-node--labelled/, 'the rail still steps over a name');
+
+  // The rail floats at its own place, and at that place only: one rule says
+  // where it sits, and it says 10px. A second rule would be a second truth.
+  const railRules = [...css.matchAll(/([^{}]*\.nxc-node__rail[^{}]*)\{([^}]*)\}/g)]
+    .filter((hit) => hit[2].includes('bottom:'));
+  assert.equal(railRules.length, 1, 'the rail sits in more than one place');
+  const gap = Number(/bottom:\s*calc\(100% \+ (\d+)px/.exec(railRules[0][2])?.[1] ?? 999);
+  assert.equal(gap, 10, 'the rail does not sit where it always sat');
+});
+
+test('a canvas is drawn again when the theme changes', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const app = await readFile(fileURLToPath(new URL('../miniapp/client/app.js', import.meta.url)), 'utf8');
+  const strip = await readFile(fileURLToPath(new URL('../miniapp/client/strip.mjs', import.meta.url)), 'utf8');
+
+  // A canvas keeps the pixels it was given. The colours of a wave are read
+  // from the stylesheet once, when it is drawn, so a wave drawn in the dark
+  // stays dark after the page turns light — the card shows a black block.
+  // Every strip therefore remembers how to draw itself.
+  assert.match(
+    strip,
+    /^\s*remember\(canvas, \(\) => paintWaveform\(canvas, url, buckets, options\)\);$/m,
+    'the wave does not remember how to draw itself',
+  );
+  assert.match(
+    strip,
+    /^\s*remember\(canvas, \(\) => paintFilmstrip\(canvas, url, stops\)\);$/m,
+    'the strip does not remember how to draw itself',
+  );
+  // And the strips that are gone are dropped, so a deleted card does not
+  // keep its strip alive.
+  assert.match(strip, /^\s*if \(!canvas\.isConnected\) \{$/m, 'a gone strip is kept alive');
+  assert.match(
+    strip,
+    /^\s*redraws\.delete\(entry\);$/m,
+    'a gone strip is not dropped',
+  );
+  // The theme asks for the redraw: the user picking a colour and the system
+  // changing its own both leave the page with the same colours on the
+  // canvas and on the rest of it.
+  const cycle = functionBody(app, 'cycleTheme');
+  assert.match(cycle, /^\s*redrawStrips\(\);$/m, 'the theme does not draw the strips again');
+  const watch = functionBody(app, 'watchSystemTheme');
+  assert.match(
+    watch,
+    /^\s*const query = window\.matchMedia\?\.\('\(prefers-color-scheme: dark\)'\);$/m,
+    'the system palette is not watched',
+  );
+  // The line has to stand on its own: a commented-out listener still carries
+  // the word, and the palette would go unheard while the test says it does
+  // not.
+  assert.match(
+    watch,
+    /^\s*query\.addEventListener\('change', \(\) => \{$/m,
+    'the system palette change is not heard',
+  );
+  assert.match(watch, /^\s*if \(state\.theme !== 'system'\) return;$/m, 'the strips are drawn again for a theme the user picked');
+  assert.match(watch, /^\s*redrawStrips\(\);$/m, 'the system palette does not draw the strips again');
+  // And the watcher is put to work: a watcher that is written and never
+  // called watches nothing.
+  assert.match(app, /^\s*watchSystemTheme\(\);$/m, 'the system palette is watched by nobody');
+});
+
+test('a veil over a wave is the colour of the page, not black', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const css = await readFile(fileURLToPath(new URL('../miniapp/client/styles.css', import.meta.url)), 'utf8');
+
+  // What has not been heard yet is dimmed. A black veil would paint the
+  // wave out in the light theme, where the wave is dark itself: the veil
+  // is the colour of the page, so the dimming works in both themes.
+  assert.match(
+    css,
+    /\.nxc-node__audio-ahead\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--mcode-bg\)/,
+    'the veil over the wave is not the colour of the page',
+  );
+  assert.match(
+    css,
+    /\.nxc-clip__shade\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--mcode-bg\)/,
+    'the veil over the clip is not the colour of the page',
+  );
+});
+
+test('the README counts the tools the machine really has', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const { TOOLS } = await import('../miniapp/node/capabilities.mjs');
+
+  // The README tells the reader how many media tools run on this machine,
+  // and names them. A number that drifts away from the tool table is a
+  // number nobody can trust, so the two are checked against each other
+  // here: the count and the names both come from the table.
+  const local = TOOLS.filter((tool) => tool.run === 'ffmpeg');
+  const readme = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8');
+  const zh = await readFile(fileURLToPath(new URL('../README.zh-CN.md', import.meta.url)), 'utf8');
+
+  assert.ok(
+    readme.includes('The ' + local.length + ' media tools are local transformations'),
+    'the English README does not say how many local media tools there are',
+  );
+  assert.ok(
+    zh.includes(local.length + ' 个媒体工具都是本机变换'),
+    'the Chinese README does not say how many local media tools there are',
+  );
+
+  // And every one of them is named, in both READMEs.
+  for (const tool of local) {
+    assert.ok(readme.includes(tool.label), tool.label + ' is not named in the English README');
+    assert.ok(zh.includes(tool.label), tool.label + ' is not named in the Chinese README');
+  }
+});
+
+test('an upload the provider never answers ends the run instead of waiting for good', async (t) => {
+  // The bytes are posted to the provider's own signed form. A host that
+  // never answers must not leave the run waiting for good: the run says
+  // what went wrong instead.
+  const { createProviderUploader } = await import('../miniapp/node/provider-upload.mjs');
+  const uploadServer = createHttpServer(() => {
+    // The request arrives and the answer never does.
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const dir = await mkdtemp(join(tmpdir(), 'nxc-upload-'));
+  t.after(() => removeDir(dir));
+  const file = join(dir, 'sample.png');
+  await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]));
+
+  const connector = {
+    async list() {
+      return { tools: [{ name: 'upload_temp_url', toolRef: 'ref-upload' }], partial: false };
+    },
+    async call() {
+      return {
+        invocationId: 'invocation-test',
+        value: [{ type: 'text', text: JSON.stringify({
+          code: 0,
+          message: 'ok',
+          upload_host: `http://127.0.0.1:${uploadServer.address().port}/upload`,
+          fields: { key: 'value', policy: 'strict' },
+          file_field_name: 'file',
+          temp_url: 'https://cdn.example.com/temp/sample.png',
+          max_bytes: 10 * 1024 * 1024,
+          expires_in_seconds: 600,
+        }) }],
+      };
+    },
+  };
+
+  const uploader = createProviderUploader(
+    { hostConnector: connector, signal: new AbortController().signal },
+    { timeoutMs: 400 },
+  );
+  await assert.rejects(() => uploader.upload(file), /没有回应/);
+});
+
+// -------------------------------------------------- a run that produced
+// nothing. The file is not there, so the run is not a success: the node
+// would show an empty card and say it is done.
+
+test('a media run that left no file behind is not a success', async () => {
+  const { mediaOutcome } = await import('../miniapp/node/media-outcome.mjs');
+
+  // A run that left a file behind is a success.
+  assert.equal(mediaOutcome({ mode: 'image', media: [{ url: 'https://cdn.example.com/a.png' }] }).ok, true);
+  // A text run leaves no file, and that is what a text run does.
+  assert.equal(mediaOutcome({ mode: 'text', media: [] }).ok, true);
+
+  // A picture run that left nothing is a failure, and it says what it was
+  // looking at.
+  const empty = mediaOutcome({ mode: 'image', media: [], subject: '直连通道' });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.code, 'MEDIA_MISSING');
+  assert.match(empty.message, /图片/);
+  assert.match(empty.message, /直连通道/);
+
+  // What the run lost is the reason, so the reason is in the message.
+  const lost = mediaOutcome({ mode: 'video', media: [], warnings: ['第 1 个没有生成出来：额度用完了'] });
+  assert.equal(lost.ok, false);
+  assert.match(lost.message, /额度用完了/);
+});
+
+test('a picture the provider made but whose link cannot be fetched is not a success', async (t) => {
+  // The provider made the file and the Host stopped the call that was
+  // asking for its link. The file is still on the provider, so the run must
+  // not say it is done and leave an empty card behind.
+  const connector = createMockHostConnector(undefined, { assetUrlFails: true });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  const run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error', 400);
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  // The file is named, so it can still be found on the provider.
+  assert.match(run.error, /node-/);
+  assert.match(run.error, /没能取回下载链接/);
+  // And the run never said it was done.
+  assert.ok(!(run.log ?? []).some((line) => line.startsWith('完成')), 'the run must not say it is done');
+
+  // The link was asked again before the file was given up on: the provider's
+  // own rule is to ask twice for the same node.
+  const assetCalls = connector.calls.filter((call) => call.toolRef.endsWith('get-asset-url'));
+  assert.equal(assetCalls.length, 2);
+});
+
+test('a provider that says ok and hands nothing back is not a success', async (t) => {
+  const connector = createMockHostConnector(undefined, { imageReturnsNothing: true });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  const run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  assert.match(run.error, /图片/);
+});
+
+test('an Agent turn that ends without a picture is not a success', async (t) => {
+  // Without the connector there is only the Agent road. The turn ends with
+  // words and no picture, and words are not a picture.
+  const agent = createMockAgent({ textOnly: true });
+  const h = await createHarness({ hostConnector: null, agent });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const runId = started.body.run.id;
+
+  let run = null;
+  for (let i = 0; i < 40 && !run?.pendingPermission; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    run = (await getJson(h.base, `/api/runs/${runId}`)).body.run;
+  }
+  assert.ok(run.pendingPermission, 'the run should wait for the tool call to be approved');
+  await getJson(h.base, `/api/runs/${runId}/permission`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'allowOnce' }),
+  });
+
+  run = await waitFor(h.base, runId, (item) => item.status === 'done' || item.status === 'error');
+  assert.equal(run.status, 'error');
+  assert.equal((run.media ?? []).length, 0);
+  assert.match(run.error, /图片/);
+  assert.ok(!(run.log ?? []).some((line) => line.startsWith('完成')), 'the run must not say it is done');
+});
+
+// ── the product of a run lives on the card that made it ──
+test('a node that holds a product is not owed one', async () => {
+  const image = { id: 'n1', type: 'image', metadata: { output: { status: 'success', media: [{ url: '/assets/m1.jpg' }] } } };
+  const text = { id: 'n2', type: 'text', metadata: { output: { status: 'success', text: '写好的提示词' } } };
+  const canvas = { nodes: [image, text], connections: [] };
+  assert.equal(nodeHasProduct(canvas, image), true);
+  assert.equal(nodeHasProduct(canvas, text), true);
+});
+
+test('a node whose run produced nothing still owes a product', async () => {
+  const node = { id: 'n1', type: 'image', metadata: { output: { status: 'error', error: '没有取回来', media: [] } } };
+  assert.equal(nodeHasProduct({ nodes: [node], connections: [] }, node), false);
+});
+
+test('a result card from the old canvas counts, and a lost one does not', async () => {
+  const node = { id: 'n1', type: 'image', metadata: { output: { status: 'success', media: [] } } };
+  const card = { id: 'r1', type: 'result', metadata: { output: { status: 'success', media: [{ url: '/assets/m2.jpg' }] } } };
+  const connections = [{ fromNodeId: 'n1', toNodeId: 'r1', kind: 'image' }];
+  assert.equal(nodeHasProduct({ nodes: [node, card], connections }, node), true);
+  const gone = { ...card, metadata: { output: { status: 'success', missing: true, media: [{ url: '/assets/m2.jpg' }] } } };
+  assert.equal(nodeHasProduct({ nodes: [node, gone], connections }, node), false);
+});
+
+// ── the provider's refusal has to reach the user ──
+test('the provider refuses with code 0, and the reason comes out', async () => {
+  const reason = 'requests[0].reference_images[0].url could not be read or decoded';
+  const failure = providerFailure({
+    code: 0,
+    message: 'all 1 failed: ' + reason,
+    total_requested: 1,
+    total_success: 0,
+    total_failed: 1,
+    success_items: [],
+    failed_items: [{ index: 0, err_code: 400, error_msg: reason }],
+  });
+  assert.ok(failure, 'a refusal is a failure');
+  assert.equal(failure.code, 'CONNECTOR_PROVIDER_ERROR');
+  assert.equal(failure.errCode, 400);
+  assert.match(failure.message, /err_code 400/);
+  assert.match(failure.message, /could not be read or decoded/);
+  assert.doesNotMatch(failure.message, /^all 1 failed/);
+});
+
+test('a call that produced something is not a failure', async () => {
+  assert.equal(providerFailure({ code: 0, success_items: [{ node_id: '1' }], total_success: 1 }), null);
+  assert.equal(providerFailure({ node_id: '1' }), null);
+  assert.equal(providerFailure(null), null);
+  // A batch where one item came back is not a refusal either.
+  assert.equal(providerFailure({ code: 0, success_items: [{ node_id: '1' }], failed_items: [{ err_code: 400 }] }), null);
+});
+
+test('a refused picture says what the provider said', async (t) => {
+  const connector = createMockHostConnector(undefined, {
+    imageRefused: 'requests[0].reference_images[0].url could not be read or decoded',
+  });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const run = await waitFor(h.base, started.body.run.id, (item) => item.status === 'done' || item.status === 'error', 400);
+  assert.equal(run.status, 'error');
+  assert.match(run.error, /err_code 400/);
+  assert.match(run.error, /could not be read or decoded/);
+  assert.doesNotMatch(run.error, /没有取回来/, 'the provider reason must not be replaced by a generic sentence');
+});
+
+test('a run does not take away the product the last run left', async () => {
+  const before = { status: 'success', text: '', media: [{ url: '/assets/m1.jpg' }], error: '' };
+  const during = outputForRun(before, '2026-01-01T00:00:00.000Z');
+  assert.equal(during.status, 'loading');
+  assert.equal(during.error, '');
+  assert.equal(during.media.length, 1, 'the product of the last run stays on the card');
+  assert.equal(during.media[0].url, '/assets/m1.jpg');
+  assert.equal(during.updatedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('the chain does not run an upstream that already holds its product', async () => {
+  const text = { id: 'n_text', type: 'text', metadata: { output: { status: 'success', text: '写好的提示词' } } };
+  const image = { id: 'n_img', type: 'image', metadata: { output: { status: 'success', media: [{ url: '/assets/m1.jpg' }] } } };
+  const child = { id: 'n_child', type: 'image', metadata: { output: { status: 'idle' } } };
+  const canvas = {
+    nodes: [text, image, child],
+    connections: [
+      { fromNodeId: 'n_text', toNodeId: 'n_img', kind: 'text' },
+      { fromNodeId: 'n_img', toNodeId: 'n_child', kind: 'image' },
+    ],
+  };
+  // The prompt node holds its text and the picture node holds its picture:
+  // the chain has nothing to do.
+  assert.deepEqual(pendingAncestors(canvas, image), [], 'the prompt node is not run again');
+  assert.deepEqual(pendingAncestors(canvas, child), [], 'the picture node is not run again');
+  // A node that owes a product is run first, and only that one.
+  image.metadata.output = { status: 'error', media: [] };
+  assert.deepEqual(pendingAncestors(canvas, child).map((item) => item.id), ['n_img']);
+  // When the prompt is missing too, the prompt runs before the picture.
+  text.metadata.output = { status: 'idle', text: '' };
+  assert.deepEqual(pendingAncestors(canvas, child).map((item) => item.id), ['n_text', 'n_img']);
+});
+
+test('an Agent turn that does not end in time is given up on, and the run says so', async () => {
+  const { createAgentRunner, agentTurnLimitMs, agentTurnTimeoutMessage, AGENT_TURN_LIMIT_MS } =
+    await import('../miniapp/node/agent-runner.mjs');
+
+  // The bound is ten minutes, and nothing may lengthen it past that.
+  assert.equal(AGENT_TURN_LIMIT_MS, 600000);
+  assert.equal(agentTurnLimitMs({}), AGENT_TURN_LIMIT_MS);
+  assert.equal(agentTurnLimitMs({ agentTurnLimitMs: 120 }), 120);
+  assert.equal(agentTurnLimitMs({ agentTurnLimitMs: 10 ** 9 }), AGENT_TURN_LIMIT_MS);
+  assert.match(agentTurnTimeoutMessage(AGENT_TURN_LIMIT_MS), /10 分钟/);
+
+  // A Host that never answers must not leave the card turning for ever.
+  const dataDir = await mkdtemp(join(tmpdir(), 'nxc-agent-turn-'));
+  let hostSignal = null;
+  const runner = createAgentRunner({
+    dataDir,
+    agent: {
+      async run(_input, options) {
+        hostSignal = options?.signal ?? null;
+        return new Promise(() => {});
+      },
+      async models() { return { models: [] }; },
+      async agents() { return { agents: [] }; },
+    },
+    hostConnector: {
+      async list() { return { tools: [] }; },
+      async call() { return { value: null }; },
+    },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    agentTurnLimitMs: 80,
+  });
+  const task = await runner.startRun({ mode: 'text', nodeId: 'n_slow', prompt: '写一段提示词' });
+  // The test waits with its own clock, so a run that never gives up fails
+  // here in seconds instead of hanging the whole suite.
+  const settled = await settleWithin(runner, task.id, 3000);
+  assert.equal(settled.status, 'error', 'the run gives up on a turn that does not end');
+  assert.match(settled.error, /没有结束/);
+  // And the run says why, in the log the panel reads.
+  assert.ok(settled.log.some((line) => /没有结束/.test(line)), 'the run log says the turn did not end');
+  // The turn is given up on, so the Host is told to stop it as well.
+  assert.ok(hostSignal?.aborted, 'the Host is told to stop the turn that was given up on');
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
+});
+
+// Wait for a run to settle, with a clock of one's own.
+async function settleWithin(runner, runId, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const task = runner.get(runId);
+    if (!task || task.status !== 'running') return task;
+    if (Date.now() > deadline) return task;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+
+/**
+ * A real one-second track in the format the provider refuses: an m4a.
+ *
+ * It is made by the local ffmpeg: the runtime has to read the file to
+ * convert it, and a file that is not a track cannot be read. A machine
+ * without ffmpeg skips the test that needs one.
+ */
+async function makeTestTrack(path) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+        '-c:a', 'aac', '-b:a', '192k',
+        path,
+      ],
+      { shell: false, windowsHide: true },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+test('the provider takes wav and mp3, and the app writes mp3', async () => {
+  // The provider reads an audio reference as a file it can decode, and it
+  // takes wav and mp3 only: an m4a is refused with an error that names the
+  // two formats it does take. The rule lives in one place, and both sides
+  // of it read it from there: the tools that make an audio and the code
+  // that converts one on the way out.
+  const {
+    PROVIDER_AUDIO_EXTS,
+    AUDIO_TARGET_EXT,
+    AUDIO_TARGET_MIME,
+    AUDIO_ENCODE_ARGS,
+    isProviderAudio,
+    toProviderAudio,
+  } = await import('../miniapp/node/provider-audio.mjs');
+
+  // What the provider takes.
+  assert.deepEqual(PROVIDER_AUDIO_EXTS, ['.wav', '.mp3']);
+  assert.equal(isProviderAudio('track.mp3'), true);
+  assert.equal(isProviderAudio('track.wav'), true);
+  assert.equal(isProviderAudio('track.m4a'), false, 'an m4a is one the provider refuses');
+  assert.equal(isProviderAudio('track.aac'), false);
+  assert.equal(isProviderAudio('track.flac'), false);
+  assert.equal(isProviderAudio('track'), false, 'a file with no name has no format');
+
+  // What the app writes.
+  assert.equal(AUDIO_TARGET_EXT, '.mp3');
+  assert.equal(AUDIO_TARGET_MIME, 'audio/mpeg');
+  assert.deepEqual(AUDIO_ENCODE_ARGS, ['-c:a', 'libmp3lame', '-b:a', '192k']);
+
+  // The conversion runs ffmpeg on the source and writes an mp3.
+  const calls = [];
+  const ffmpeg = {
+    async run(args) { calls.push(args); },
+  };
+  const target = await toProviderAudio({ ffmpeg, source: '/tmp/track.m4a', target: '/tmp/out.mp3' });
+  assert.equal(target, '/tmp/out.mp3');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], [
+    '-i', '/tmp/track.m4a', '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '/tmp/out.mp3',
+  ]);
+
+  // A tool that cuts a piece out of a track says where the cut is, and the
+  // cut is said in front of the input so ffmpeg seeks there.
+  const cut = [];
+  await toProviderAudio({
+    ffmpeg: { async run(args) { cut.push(args); } },
+    source: '/tmp/track.m4a',
+    target: '/tmp/cut.mp3',
+    args: ['-ss', '1.500', '-to', '4.000'],
+  });
+  assert.deepEqual(cut[0].slice(0, 4), ['-ss', '1.500', '-to', '4.000']);
+  assert.equal(cut[0].indexOf('-i'), 4, 'the cut is said before the input');
+});
+test('the tools that make an audio leave an mp3 behind', async () => {
+  // The sound a video leaves behind has to be one the provider reads, so
+  // the tools write an mp3 and say so. A tool that leaves an m4a behind is
+  // a tool whose result the provider refuses.
+  const { MEDIA_TOOLS } = await import('../miniapp/node/media-tools.mjs');
+  const { AUDIO_TARGET_EXT, AUDIO_TARGET_MIME } = await import('../miniapp/node/provider-audio.mjs');
+
+  for (const key of ['splitAv', 'extractAudio', 'trimAudio']) {
+    const spec = MEDIA_TOOLS[key];
+    assert.ok(spec, `${key} 不在工具表里`);
+    assert.equal(spec.ext, AUDIO_TARGET_EXT, `${key} 产出的不是 mp3`);
+    assert.equal(spec.mimeType, AUDIO_TARGET_MIME, `${key} 产出的类型不是 audio/mpeg`);
+  }
+
+  // And the tools really ask ffmpeg for an mp3. A tool that says mp3 and
+  // writes an m4a is the failure this catches.
+  const commands = [];
+  const ffmpeg = {
+    async probe() { return { hasAudio: true, duration: 10, width: 0, height: 0, fps: 0 }; },
+    async run(args) { commands.push(args); },
+  };
+  const out = (ext) => `/tmp/work/file${ext}`;
+
+  // 分离音频: the sound of a clip, on its own.
+  const taken = await MEDIA_TOOLS.extractAudio.run({ ffmpeg, source: '/tmp/clip.mp4', out });
+  assert.equal(taken.length, 1);
+  assert.equal(taken[0].kind, 'audio');
+  assert.equal(taken[0].mimeType, AUDIO_TARGET_MIME);
+  assert.match(taken[0].path, /\.mp3$/, '分离音频产出的不是 mp3');
+  const command = commands[commands.length - 1];
+  assert.ok(command.includes('libmp3lame'), '分离音频没有用 mp3 编码');
+  assert.ok(!command.includes('aac'), '分离音频还在用 aac');
+  assert.match(command[command.length - 1], /\.mp3$/, '分离音频写的不是 mp3');
+
+  // 音画分离: the picture and the sound, each on its own.
+  commands.length = 0;
+  const split = await MEDIA_TOOLS.splitAv.run({ ffmpeg, source: '/tmp/clip.mp4', out });
+  const sound = split.find((item) => item.kind === 'audio');
+  assert.ok(sound, '音画分离没有留下音轨');
+  assert.equal(sound.mimeType, AUDIO_TARGET_MIME, '音画分离的音轨类型不对');
+  assert.match(sound.path, /\.mp3$/, '音画分离的音轨不是 mp3');
+  const splitCommand = commands[commands.length - 1];
+  assert.ok(splitCommand.includes('libmp3lame'), '音画分离没有用 mp3 编码');
+  assert.match(splitCommand[splitCommand.length - 1], /\.mp3$/, '音画分离写的不是 mp3');
+
+  // 剪辑: a piece of a track, and it says where the cut is.
+  commands.length = 0;
+  const cut = await MEDIA_TOOLS.trimAudio.run({
+    ffmpeg,
+    source: '/tmp/track.mp3',
+    out,
+    params: { start: 1, end: 4 },
+  });
+  assert.equal(cut[0].mimeType, AUDIO_TARGET_MIME);
+  assert.match(cut[0].path, /\.mp3$/, '音频剪辑产出的不是 mp3');
+  const cutCommand = commands[commands.length - 1];
+  assert.ok(cutCommand.includes('libmp3lame'), '音频剪辑没有用 mp3 编码');
+  assert.equal(cutCommand.indexOf('-ss'), 0, '剪辑的位置没有写在输入前面');
+});
+test('an audio the provider would refuse is converted before it goes up', async (t) => {
+  // The rule is about the file that reaches the provider, not only about the
+  // files this app makes. A track made before the rule existed is an m4a,
+  // and a track the user brought in may be one too, so the audio is
+  // converted on the way out and what goes up is an mp3.
+  //
+  // The shape is the one the provider refused: a reference set of a picture
+  // and a sound, asked for as a collection.
+  const received = [];
+  const uploadServer = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push({ url: req.url, body: Buffer.concat(chunks) });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const uploadHost = `http://127.0.0.1:${uploadServer.address().port}/upload`;
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const h = await createHarness({
+    hostConnector: createMockHostConnector(undefined, { uploadHost }),
+  });
+  t.after(() => h.cleanup());
+
+  const state = (await getJson(h.base, '/api/media/status')).body.media;
+  if (!state.available) {
+    // No ffmpeg here: the audio cannot be converted, and the run says so
+    // rather than pretending. This contract needs a machine with ffmpeg.
+    assert.equal(state.available, false);
+    return;
+  }
+
+  // A real track in the format the provider refuses: an m4a.
+  const assetsDir = join(h.dataDir, 'assets');
+  await mkdir(assetsDir, { recursive: true });
+  const track = join(assetsDir, 'old_track.m4a');
+  const made = await makeTestTrack(track);
+  if (!made) {
+    t.skip('本机没有 ffmpeg，这条合同要在一台装了 ffmpeg 的机器上验');
+    return;
+  }
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_audio',
+      mode: 'video',
+      path: 'collection',
+      modelKey: 'MiniMax-H3',
+      prompt: '跟着这段声音走',
+      params: { ratio: '16:9', resolution: '768P', duration: 6 },
+      references: [
+        {
+          id: 'n_pic',
+          title: '画面',
+          kind: 'image',
+          role: 'result',
+          text: '',
+          media: [{ url: 'https://cdn.example.com/ref.png', kind: 'image' }],
+        },
+        {
+          id: 'n_0',
+          title: '音轨',
+          kind: 'audio',
+          role: 'result',
+          text: '',
+          media: [{ url: '/assets/old_track.m4a', kind: 'audio' }],
+        },
+      ],
+    }),
+  });
+  assert.equal(started.status, 202, `这次跑没起来：${started.body?.message ?? ''}`);
+
+  // What went up is an mp3, under the name the provider reads.
+  assert.equal(received.length, 1, 'the file was not uploaded');
+  const body = received[0].body.toString('latin1');
+  assert.match(body, /name="file"; filename="[^"]*\.mp3"/, 'an m4a went up as it is');
+  assert.match(body, /Content-Type: audio\/mpeg/);
+
+  // And the canvas keeps the file it points at: the converted copy is
+  // scratch, so the working folder does not grow without bound.
+  const workDir = join(h.dataDir, 'work');
+  const leftovers = await readdir(workDir).catch(() => []);
+  assert.deepEqual(leftovers.filter((name) => name.endsWith('.mp3')), [], 'the converted copy was left behind');
 });

@@ -11,6 +11,7 @@
 // Four of the reference implementation's image tools are deliberately not
 // here: see RETIRED_TOOLS at the bottom of this file.
 
+import { AUDIO_TARGET_EXT, AUDIO_TARGET_MIME, toProviderAudio } from './provider-audio.mjs';
 
 const NAMED_COLORS = {
   white: 'ffffff',
@@ -42,17 +43,6 @@ const ASPECT_TARGETS = {
   '1:1': [1, 1],
   '4:3': [4, 3],
   '3:4': [3, 4],
-};
-
-const ID_PHOTO_SIZES = {
-  一寸: [295, 413],
-  小一寸: [260, 378],
-  大一寸: [390, 567],
-  二寸: [413, 579],
-  小二寸: [413, 531],
-  大二寸: [626, 826],
-  签证: [390, 567],
-  护照: [390, 567],
 };
 
 export class MediaToolError extends Error {
@@ -179,7 +169,7 @@ export const MEDIA_TOOLS = {
   },
 
   trim: {
-    label: '片段剪辑',
+    label: '剪辑',
     kind: 'video',
     ext: '.mp4',
     mimeType: 'video/mp4',
@@ -281,8 +271,8 @@ export const MEDIA_TOOLS = {
   splitAv: {
     label: '音画分离',
     kind: 'audio',
-    ext: '.m4a',
-    mimeType: 'audio/mp4',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
     params: [],
     async run({ ffmpeg, source, out }) {
       const info = await ffmpeg.probe(source);
@@ -291,12 +281,29 @@ export const MEDIA_TOOLS = {
       if (!info.hasAudio) {
         return [{ path: video, kind: 'video', mimeType: 'video/mp4' }];
       }
-      const audio = out('.m4a');
-      await ffmpeg.run(['-i', source, '-vn', '-c:a', 'aac', '-b:a', '192k', audio]);
+      const audio = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({ ffmpeg, source, target: audio });
       return [
         { path: video, kind: 'video', mimeType: 'video/mp4' },
-        { path: audio, kind: 'audio', mimeType: 'audio/mp4' },
+        { path: audio, kind: 'audio', mimeType: AUDIO_TARGET_MIME },
       ];
+    },
+  },
+
+  extractAudio: {
+    label: '分离音频',
+    kind: 'audio',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
+    params: [],
+    async run({ ffmpeg, source, out }) {
+      const info = await ffmpeg.probe(source);
+      if (!info.hasAudio) {
+        throw new MediaToolError('这段视频没有声音，分不出音轨', 'MEDIA_TOOL_FAILED');
+      }
+      const audio = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({ ffmpeg, source, target: audio });
+      return [{ path: audio, kind: 'audio', mimeType: AUDIO_TARGET_MIME }];
     },
   },
 
@@ -445,52 +452,29 @@ export const MEDIA_TOOLS = {
     },
   },
 
-  resize: {
-    label: '无损改尺寸',
-    kind: 'image',
-    ext: '.png',
-    mimeType: 'image/png',
+  // ---------------- audio ----------------
+  trimAudio: {
+    label: '剪辑',
+    kind: 'audio',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
     params: [
-      { key: 'width', label: '宽', type: 'number', default: 1080, min: 16, max: 8192 },
-      { key: 'height', label: '高', type: 'number', default: 1080, min: 16, max: 8192 },
-      { key: 'mode', label: '方式', type: 'select', options: ['fit', 'fill', 'stretch'], default: 'fit' },
+      { key: 'start', label: '起点（秒）', type: 'number', default: 0, min: 0 },
+      { key: 'end', label: '终点（秒）', type: 'number', default: 5, min: 0.2 },
     ],
     async run({ ffmpeg, params, source, out }) {
-      const width = Math.round(num(params.width, 1080, { min: 16, max: 8192 }));
-      const height = Math.round(num(params.height, 1080, { min: 16, max: 8192 }));
-      const mode = oneOf(params.mode, ['fit', 'fill', 'stretch'], 'fit');
-      const target = out('.png');
-      const vf =
-        mode === 'stretch'
-          ? `scale=${width}:${height}`
-          : mode === 'fill'
-            ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`
-            : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=white`;
-      await ffmpeg.run(['-i', source, '-vf', vf, '-frames:v', '1', target]);
-      return [{ path: target, kind: 'image', mimeType: 'image/png' }];
-    },
-  },
-
-  idPhoto: {
-    label: '证件照',
-    kind: 'image',
-    ext: '.jpg',
-    mimeType: 'image/jpeg',
-    params: [
-      { key: 'preset', label: '规格', type: 'select', options: Object.keys(ID_PHOTO_SIZES), default: '一寸' },
-    ],
-    async run({ ffmpeg, params, source, out }) {
-      const preset = oneOf(params.preset, Object.keys(ID_PHOTO_SIZES), '一寸');
-      const [w, h] = ID_PHOTO_SIZES[preset];
-      const target = out('.jpg');
-      await ffmpeg.run([
-        '-i', source,
-        '-vf',
-        `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},` +
-          `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=white`,
-        '-frames:v', '1', target,
-      ]);
-      return [{ path: target, kind: 'image', mimeType: 'image/jpeg' }];
+      const start = num(params.start, 0, { min: 0 });
+      const end = Math.max(start + 0.2, num(params.end, start + 5, { min: 0.2 }));
+      const target = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({
+        ffmpeg,
+        source,
+        target,
+        // The cut is said in front of the input, so ffmpeg seeks there
+        // instead of reading the whole track first.
+        args: ['-ss', start.toFixed(3), '-to', end.toFixed(3)],
+      });
+      return [{ path: target, kind: 'audio', mimeType: AUDIO_TARGET_MIME }];
     },
   },
 };
@@ -528,10 +512,10 @@ export const TOOL_ACCEPTS = {
   eraseSubtitle: 'video',
   removeWatermark: 'video',
   removeBg: 'video',
+  extractAudio: 'video',
   cutout: 'image',
   enhance: 'image',
-  resize: 'image',
-  idPhoto: 'image',
+  trimAudio: 'audio',
 };
 
 // What each tool leaves behind, in order. The page creates one node per
@@ -547,10 +531,10 @@ export const TOOL_PRODUCES = {
   eraseSubtitle: ['video'],
   removeWatermark: ['video'],
   removeBg: ['video'],
+  extractAudio: ['audio'],
   cutout: ['image'],
   enhance: ['image'],
-  resize: ['image'],
-  idPhoto: ['image'],
+  trimAudio: ['audio'],
 };
 
 export function findMediaTool(key) {
@@ -576,4 +560,6 @@ export const RETIRED_TOOLS = {
   poster: '排版太粗，出来的海报不能用',
   deWatermark: '必须先框出要去掉的矩形，多一步交互就不算快捷方式',
   recolor: '整图色相偏移，背景跟着一起变，效果太差',
+  resize: '改尺寸要填宽高数字，不是看图就能决定的；用「剪裁」在图上拖更直接',
+  idPhoto: '证件照只对证件规格有用，画布上这张图多半不是要办证',
 };

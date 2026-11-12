@@ -232,6 +232,25 @@ export function fitMediaBox(aspect, availWidth, limits = MEDIA_BOX) {
   return { width: Math.round(width), height: Math.round(height) };
 }
 
+/**
+ * The box a media takes inside a card.
+ *
+ * A card nobody resized is sized around the media: the box takes the
+ * media's own ratio and stays inside the bounds, so a huge asset cannot
+ * blow the card up. A card the user sized by hand is the frame they asked
+ * for: the media takes the whole width of it and keeps its own ratio, and
+ * the card grows to fit it — so a bigger card shows a bigger picture and
+ * no grey is left over around the work.
+ */
+export function mediaBoxFor(aspect, cardWidth, userSized = false, limits = MEDIA_BOX) {
+  const ratio = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const avail = Math.max(Number(cardWidth) || 0, 0);
+  if (!userSized) return fitMediaBox(ratio, avail, limits);
+  // The frame the user drew: the media takes its width and keeps its ratio.
+  const width = Math.max(1, Math.round(avail));
+  return { width, height: Math.round(width / ratio) };
+}
+
 // The input kinds a generating node takes, from what its model accepts.
 //
 // The text input is always there — the prompt is what goes in. A media input
@@ -666,11 +685,34 @@ export function resolveEventTarget(event) {
 // suppresses the compatibility mouse events, so a control that listens for
 // click would never be reached. The task panel and the minimap are the two
 // that are not inside a node, so nothing else stops the press for them.
-const CONTROL_SELECTOR = 'button, select, input, textarea, .nxc-composer, .nxc-minimap';
+//
+// The operation surface is one of them: a press on its bare background must
+// not start a drag of the card it hangs below.
+const CONTROL_SELECTOR = 'button, select, input, textarea, .nxc-composer, .nxc-node__ops, .nxc-minimap';
 
 export function isControlTarget(target) {
   if (typeof target?.closest !== 'function') return false;
   return Boolean(target.closest(CONTROL_SELECTOR));
+}
+
+// What floats over the canvas.
+//
+// A menu and a panel are the two things the page puts on top of the board,
+// and they are the two things a press elsewhere has to take away.
+const OVERLAY_SELECTOR = '.nxc-menu,.nxc-panel';
+
+/**
+ * What a press takes away.
+ *
+ * A press that lands on a menu or on a panel is that overlay's own business,
+ * so nothing goes. A press anywhere else asks for all of them to go: a menu
+ * that can only be closed by the key that opened it is a menu the user has
+ * to escape, and a panel that cannot be taken away is a panel that stays in
+ * the way of the card it was opened for.
+ */
+export function overlaysDismissedBy(target) {
+  const inside = typeof target?.closest === 'function' ? target.closest(OVERLAY_SELECTOR) : null;
+  return inside ? [] : ['menu', 'panel'];
 }
 
 /**
@@ -744,4 +786,136 @@ export function placeOverlay(anchor, size, viewport) {
     left: clamp(anchor.left, viewport.width - size.width - margin),
     top: clamp(anchor.top, viewport.height - size.height - margin),
   };
+}
+
+/**
+ * The side the panels of the bar open on.
+ *
+ * The model and the parameters sit in the bar under the card, and their
+ * panels open upward: the bar is at the bottom of the card, so a panel over
+ * it covers the card instead of the board below — and the board below is
+ * where the next card is. The rule lives here so the page and the tests
+ * read the same one.
+ */
+export const BAR_PANEL_SIDE = 'above';
+
+/**
+ * Where a panel goes when it belongs to a chip.
+ *
+ * The panel opens above the chip it belongs to, and below it when there is no
+ * room above. The rule is written once because it used to be written in every
+ * panel, and one of those copies put the panel on top of the control it
+ * belonged to.
+ */
+export function placePanel(anchorRect, size, viewport, prefer = 'below') {
+  const gap = 8;
+  const above = anchorRect.top - size.height - gap;
+  const below = anchorRect.bottom + gap;
+  const fitsAbove = above >= 8;
+  const fitsBelow = below + size.height <= viewport.height - 8;
+  let side = prefer;
+  if (prefer === 'below' && !fitsBelow) side = 'above';
+  if (prefer === 'above' && !fitsAbove) side = 'below';
+  const anchor = side === 'above'
+    ? { left: anchorRect.left, top: above }
+    : { left: anchorRect.left, top: below };
+  return { ...placeOverlay(anchor, size, viewport), side };
+}
+
+/**
+ * Why a picture cannot go through a tool, in words.
+ *
+ * The provider's picture tools have size limits of their own, and a picture
+ * that breaks one is refused. The limits live in the tool's own entry, so the
+ * page and the runtime read the same numbers.
+ *
+ * A picture whose size is not known is not refused here: the provider is the
+ * authority on what it takes, and it says so when it refuses.
+ *
+ * @param {object} tool the tool, with its limits
+ * @param {object} size the picture's width, height and bytes
+ * @returns {string|null} the reason, or null when the picture fits
+ */
+export function toolSizeReason(tool, size = {}) {
+  const limits = tool?.limits;
+  if (!limits) return null;
+  const width = Number(size?.width ?? 0) || 0;
+  const height = Number(size?.height ?? 0) || 0;
+  const bytes = Number(size?.bytes ?? 0) || 0;
+  const label = tool?.label ?? '这个工具';
+  if (width > 0 && height > 0) {
+    const long = Math.max(width, height);
+    const short = Math.min(width, height);
+    if (limits.maxLongSide && long > limits.maxLongSide) {
+      return `这张图 ${width}×${height}，${label}只收长边 ≤${limits.maxLongSide} 的图`;
+    }
+    if (limits.minShortSide && short < limits.minShortSide) {
+      return `这张图 ${width}×${height}，${label}只收短边 ≥${limits.minShortSide} 的图`;
+    }
+    if (limits.maxMegapixels) {
+      const megapixels = (width * height) / 1_000_000;
+      if (megapixels > limits.maxMegapixels) {
+        return `这张图 ${width}×${height}（${megapixels.toFixed(1)} 百万像素），${label}只收 ≤${limits.maxMegapixels} 百万像素的图`;
+      }
+    }
+  }
+  if (limits.maxBytes && bytes > limits.maxBytes) {
+    const megabytes = (bytes / 1024 / 1024).toFixed(1);
+    const limit = Math.round(limits.maxBytes / 1024 / 1024);
+    return `这张图 ${megabytes}MB，${label}只收 ≤${limit}MB 的图`;
+  }
+  return null;
+}
+
+/**
+ * The result cards a generating node produced.
+ *
+ * A canvas from before the three roles kept the product of a run on a card of
+ * its own. Those cards are still here, and a node that has one has a product.
+ */
+export function resultNodesOf(canvas, node) {
+  const ids = new Set();
+  for (const conn of canvas?.connections ?? []) {
+    if (conn.fromNodeId !== node?.id) continue;
+    const target = (canvas?.nodes ?? []).find((item) => item.id === conn.toNodeId);
+    if (target && target.type === 'result') ids.add(target.id);
+  }
+  return (canvas?.nodes ?? []).filter((item) => ids.has(item.id));
+}
+
+/**
+ * Whether one output holds a product.
+ *
+ * A product whose file is gone does not count: the chain would reuse a dead
+ * reference instead of running that step again, and the step is cheap
+ * compared to a broken picture further down.
+ *
+ * The state of the last run is not asked about here. A run that failed still
+ * leaves the product of the run before it where it was, and that product is
+ * good enough to hand on.
+ */
+export function outputHasProduct(output) {
+  if (!output) return false;
+  if (output.missing) return false;
+  if ((output.media?.length ?? 0) > 0) return true;
+  return String(output.text ?? '').trim() !== '';
+}
+
+/**
+ * Whether the node already holds a product.
+ *
+ * The product of a run lands on the card that made it, so that is the first
+ * place to look. A canvas from before that also keeps it on a result card of
+ * its own, and those count too.
+ *
+ * The rule is in one place, because the page and the runtime must agree on
+ * it: a node that holds a product is not run again, and a node without one is.
+ * Reading only the result cards would say that every generating node is still
+ * owed a product — the product sits on the card itself — and the chain would
+ * run the whole upstream again on every single run.
+ */
+export function nodeHasProduct(canvas, node) {
+  if (!node) return false;
+  if (outputHasProduct(node.metadata?.output)) return true;
+  return resultNodesOf(canvas, node).some((item) => outputHasProduct(item.metadata?.output));
 }

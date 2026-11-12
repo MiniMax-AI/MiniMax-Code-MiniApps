@@ -20,8 +20,11 @@ import { pipeline } from 'node:stream/promises';
 
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
 import { createProviderUploader } from './provider-upload.mjs';
+import { imageSize } from './image-size.mjs';
 
 const ASSET_URL_PREFIX = '/assets/';
+// A file the user picked from their own machine is served from here.
+const UPLOAD_URL_PREFIX = '/uploads/';
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const MAX_MEDIA_BYTES = 512 * 1024 * 1024;
 
@@ -584,6 +587,23 @@ export function createMediaStore(context) {
       }
     }
 
+    if (url.startsWith(UPLOAD_URL_PREFIX)) {
+      // A file the user brought in is a local file too: it is served from
+      // this runtime's own upload folder, so the provider can be given it
+      // without a download.
+      const name = url.slice(UPLOAD_URL_PREFIX.length).replace(/[^\w.\-]/g, '');
+      const path = join(uploadsDir, name);
+      try {
+        await stat(path);
+        return { path, ext: extensionOf(name, fallbackExt) };
+      } catch {
+        throw Object.assign(
+          new Error(`上传的素材已经不在了（${name}），重新放一次文件`),
+          { code: 'MEDIA_MISSING' },
+        );
+      }
+    }
+
     if (url.startsWith('data:')) {
       const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(url);
       if (!match) {
@@ -744,6 +764,10 @@ export function createMediaStore(context) {
     const fileName = `up_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}${ext}`;
     const path = join(uploadsDir, fileName);
     await writeFile(path, bytes);
+    // A picture knows its own size, and the provider's image tools have size
+    // limits of their own: the canvas has to be able to say "this picture is
+    // too big for that tool" before the user spends anything on it.
+    const size = kind === 'image' ? imageSize(bytes) : null;
     return {
       url: `/uploads/${fileName}`,
       name: fileName,
@@ -751,6 +775,8 @@ export function createMediaStore(context) {
       kind,
       bytes: bytes.length,
       mimeType: mimeForExt(ext),
+      width: size?.width ?? 0,
+      height: size?.height ?? 0,
       path,
     };
   }
@@ -762,8 +788,8 @@ export function createMediaStore(context) {
   // the folder is decided by the prefix.
   function localPathOf(url) {
     const text = String(url ?? '');
-    const folder = text.startsWith('/uploads/') ? uploadsDir
-      : text.startsWith('/assets/') ? assetsDir
+    const folder = text.startsWith(UPLOAD_URL_PREFIX) ? uploadsDir
+      : text.startsWith(ASSET_URL_PREFIX) ? assetsDir
       : null;
     if (!folder) return null;
     const name = text.slice(text.lastIndexOf('/') + 1).replace(/[^\w.\-]/g, '');

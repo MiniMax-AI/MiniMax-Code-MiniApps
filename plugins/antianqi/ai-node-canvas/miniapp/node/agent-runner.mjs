@@ -28,11 +28,13 @@ import {
 import { createProviderUploader } from './provider-upload.mjs';
 import { createMediaStore } from './media-store.mjs';
 import { createFfmpeg } from './ffmpeg.mjs';
+import { AUDIO_TARGET_EXT, isProviderAudio, toProviderAudio } from './provider-audio.mjs';
 import { buildMentionMap, compilePrompt, providerFamily, referencePattern, referenceSlots, tokenize } from './prompt.mjs';
 import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex, referenceSetError } from './video-request.mjs';
 import { compressionArgs, isUnderstandTimeout, understandingPlan } from './understand-media.mjs';
 import { materialToRead } from '../client/forms.mjs';
 import { createConnectorRunner, queueWaitText } from './connector-runner.mjs';
+import { mediaOutcome } from './media-outcome.mjs';
 import { batchCount } from '../client/tools.mjs';
 
 const MAX_RUNS = 64;
@@ -41,6 +43,40 @@ const MODES = new Set(['image', 'video', 'audio', 'music', 'text']);
 // The modes the connector can produce on its own. Text has no connector tool,
 // so it keeps the Agent turn.
 const DIRECT_MODES = new Set(['image', 'video', 'audio', 'music']);
+// How often the runtime looks at the runs that are still waiting.
+//
+// The clock is not the pace of the provider: the throttle inside
+// `pollConnectorTask` keeps the request rate right. This is only how often
+// the runtime looks, so a run that nobody is watching is still asked about.
+const RUNTIME_POLL_MS = 1_000;
+
+// How long one Agent turn may take before the run gives up on it.
+//
+// The Host does not time an Agent turn out: a turn can wait for a long
+// thinking pass, for a tool, or for the user. A card that turns for ever
+// tells the user nothing, so the run bounds the wait itself — and says what
+// happened instead of turning for ever.
+export const AGENT_TURN_LIMIT_MS = 600_000;
+
+/**
+ * The limit of one Agent turn, in milliseconds.
+ *
+ * The context may shorten it (the tests do); nothing may lengthen it past
+ * the bound.
+ */
+export function agentTurnLimitMs(context = {}) {
+  const raw = Number(context.agentTurnLimitMs);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(raw, AGENT_TURN_LIMIT_MS);
+  return AGENT_TURN_LIMIT_MS;
+}
+
+/**
+ * What a run says when the turn it waits for did not end in time.
+ */
+export function agentTurnTimeoutMessage(limitMs = AGENT_TURN_LIMIT_MS) {
+  const minutes = Math.max(1, Math.round(limitMs / 60000));
+  return `这次 Agent 回合超过 ${minutes} 分钟没有结束：模型可能在长时间思考，或卡在某个工具上。可以重试，或先取消当前会话。`;
+}
 
 // The codes that mean the Host stopped a connector call it had already sent:
 // the provider may still be working on it, and a picture has no task number
@@ -71,7 +107,7 @@ function describeError(code, message) {
   // message that comes with it says which call it was, how long the call ran
   // and how long it waited for the machine — that detail is the answer, so
   // it is not replaced by a generic sentence.
-  if (code === 'CONNECTOR_OUTCOME_UNKNOWN' || code === 'CONNECTOR_ERROR' || code === 'CONNECTOR_PROVIDER_ERROR' || code === 'CONNECTOR_TIMEOUT') {
+  if (code === 'CONNECTOR_OUTCOME_UNKNOWN' || code === 'CONNECTOR_ERROR' || code === 'CONNECTOR_PROVIDER_ERROR' || code === 'CONNECTOR_TIMEOUT' || code === 'MEDIA_MISSING') {
     return text.slice(0, 300) || '生成失败：连接器调用没有成功。';
   }
   if (/timeout|超时/i.test(text)) {
@@ -346,6 +382,17 @@ function buildPrompt({ mode, segments, prompt, references, params, model, path =
     .filter((part) => String(part ?? '').trim())
     .join('\n\n');
 
+  // A provider that needs words says so in one sentence, but ours answers
+  // "the request parameters are invalid", which tells the user nothing they
+  // can act on. So the empty prompt is refused here, and the node says what
+  // is missing.
+  if (DIRECT_MODES.has(mode) && !String(body ?? '').trim()) {
+    throw Object.assign(
+      new Error('提示词是空的：先写一句要生成什么，再点生成。'),
+      { code: 'INVALID_ARGUMENTS' },
+    );
+  }
+
   // The alignment line belongs to a frame request and to nothing else: it
   // tells the model which picture is the first frame and which is the last
   // one. MiniMax's H3 guide puts it on the first line of the final prompt,
@@ -399,11 +446,14 @@ function buildPrompt({ mode, segments, prompt, references, params, model, path =
 function agentImageInstruction({ prompt, params, assets, count = 1 }) {
   const request = { prompt: String(prompt ?? '') };
   if (params?.ratio) request.aspect_ratio = params.ratio;
-  if (params?.resolution) request.resolution = params.resolution;
+  // The same request the direct path would have sent: the size tier is
+  // `area`, and the pictures it works from are `reference_images`, one
+  // object per picture.
+  if (params?.resolution) request.area = params.resolution;
   const urls = (assets?.images ?? [])
     .map((item) => String(item?.url ?? item ?? ''))
     .filter(Boolean);
-  if (urls.length) request.input_urls = urls;
+  if (urls.length) request.reference_images = urls.map((url) => ({ url }));
   // A batch is one call with one request per asset: the direct path gives
   // every asset a window of its own, but a turn has no such window.
   const total = Math.max(1, Number(count) || 1);
@@ -476,7 +526,19 @@ export function createAgentRunner(context) {
           const seconds = await durationOf(localPath);
           if (seconds) next = { ...item, durationSeconds: seconds };
         }
-        const uploaded = await uploader.upload(localPath);
+        // The provider reads an audio reference as a wav or an mp3 and
+        // refuses every other format, so an audio that is not one of the
+        // two is converted before it goes up.
+        const uploadPath = await audioForProvider(localPath, item?.kind);
+        let uploaded = null;
+        try {
+          uploaded = await uploader.upload(uploadPath);
+        } finally {
+          // The converted copy is scratch: the provider has it, and the
+          // canvas keeps the file it points at. The working folder does
+          // not grow without bound.
+          if (uploadPath !== localPath) await store.discard(uploadPath);
+        }
         media.push(uploaded ? { ...next, url: uploaded.url } : next);
       }
       if (gone) {
@@ -492,6 +554,36 @@ export function createAgentRunner(context) {
       out.push({ ...ref, media });
     }
     return { references: out, warnings };
+  }
+
+  /**
+   * The file to upload for an audio reference.
+   *
+   * The provider reads an audio as a wav or an mp3 and refuses every
+   * other format, so an audio that is not one of the two is converted on
+   * the way out. The converted copy is scratch: it goes up and is thrown
+   * away, and the file the canvas points at is left as it is.
+   *
+   * An audio that cannot be converted is not sent as it is: the provider
+   * would refuse it, and that refusal arrives as a wall of English in the
+   * middle of a run. The reason is said here instead, where it can be
+   * read.
+   */
+  async function audioForProvider(localPath, kind) {
+    if (kind !== 'audio' || isProviderAudio(localPath)) return localPath;
+    const target = store.out(AUDIO_TARGET_EXT);
+    try {
+      await toProviderAudio({ ffmpeg, source: localPath, target });
+      return target;
+    } catch (error) {
+      await store.discard(target);
+      throw Object.assign(
+        new Error(
+          `这段音频的格式 provider 不收（只收 wav 和 mp3），本机也转不了：${error?.message ?? error}`,
+        ),
+        { code: 'PROVIDER_AUDIO_UNCONVERTIBLE' },
+      );
+    }
   }
 
   /** Whether a file is on this machine. */
@@ -737,6 +829,10 @@ export function createAgentRunner(context) {
       providerModel: null,
       providerStatus: null,
       providerPolledAt: 0,
+      // Whether a page has read this run. A run that is over and that no
+      // page has read is still offered to the page, so a page that lost the
+      // run can find the result it paid for.
+      reported: false,
       startedAt: Date.now(),
       startedAtIso: new Date().toISOString(),
     };
@@ -843,14 +939,36 @@ export function createAgentRunner(context) {
     }
     const signal = armController(task);
     const onEvent = makeEventHandler(task);
+    const limitMs = agentTurnLimitMs(context);
+    let deadline = null;
     try {
-      const result = await api.run({ text, sessionId, model }, { signal, onEvent });
+      const call = api.run({ text, sessionId, model }, { signal, onEvent });
+      // The Host may drop a turn without a word. The run does not wait for
+      // ever: the turn gets a deadline, and the deadline is the answer.
+      // A turn that is given up on must not become an unhandled rejection.
+      call.catch(() => {});
+      const result = await Promise.race([
+        call,
+        new Promise((_, reject) => {
+          deadline = setTimeout(() => {
+            reject(Object.assign(new Error('AGENT_TURN_TIMEOUT'), { code: 'AGENT_TURN_TIMEOUT' }));
+          }, limitMs);
+          deadline.unref?.();
+        }),
+      ]);
       applyResult(task, result);
       if (task.status === 'running') task.status = 'done';
       if (task.status === 'error' && !task.error) task.error = '未知错误';
     } catch (error) {
       const code = error?.code ?? 'UNKNOWN';
-      if (task.cancelled) {
+      if (code === 'AGENT_TURN_TIMEOUT') {
+        // The turn is given up on, and the Host is told to stop it: a turn
+        // that keeps going costs tokens and nobody is waiting for it.
+        const record = controllers.get(task.id);
+        if (record) record.controller.abort(new Error('agent turn deadline'));
+        task.status = 'error';
+        task.error = agentTurnTimeoutMessage(limitMs);
+      } else if (task.cancelled) {
         // The user asked for this run to stop; whatever the Host says about
         // the torn-down call does not change that.
         task.status = 'aborted';
@@ -860,7 +978,17 @@ export function createAgentRunner(context) {
         task.error = describeError(code, error?.message);
       }
     } finally {
+      if (deadline) clearTimeout(deadline);
       releaseController(task);
+    }
+    // A turn that ends without a file is not a file: the run says so,
+    // instead of finishing with nothing to show.
+    if (task.status === 'done') {
+      const outcome = mediaOutcome({ mode: task.mode, media: task.media, subject: 'Agent 通道' });
+      if (!outcome.ok) {
+        task.status = 'error';
+        task.error = outcome.message;
+      }
     }
     if (task.status === 'done') task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
     else if (task.status === 'error') task.log.push(`失败：${task.error}`);
@@ -898,8 +1026,23 @@ export function createAgentRunner(context) {
         if ((result.waitedMs ?? 0) >= 20) {
           task.log.push(`前面有别的生成在跑，这次排队等了 ${queueWaitText(result.waitedMs)} 才轮到`);
         }
-        task.status = 'done';
-        task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
+        // The provider can say "ok" and still leave nothing behind. A run
+        // that ends without a file is not a success: the node would show an
+        // empty card and say "完成".
+        const outcome = mediaOutcome({
+          mode,
+          media: task.media,
+          warnings: result.warnings,
+          subject: '直连通道',
+        });
+        if (outcome.ok) {
+          task.status = 'done';
+          task.log.push(`完成，用时 ${((Date.now() - task.startedAt) / 1000).toFixed(1)}s`);
+        } else {
+          task.status = 'error';
+          task.error = outcome.message;
+          task.log.push(`失败：${task.error}`);
+        }
       } else {
         task.providerTaskId = result.providerTaskId;
         task.providerModel = result.providerModel;
@@ -945,13 +1088,6 @@ export function createAgentRunner(context) {
           const local = await store.publishRemote(item.url, item.kind).catch(() => null);
           return local ? { ...item, url: local } : item;
         }));
-      }
-      // A turn that ended without a picture is not a picture: the run says
-      // so, instead of finishing with nothing to show.
-      if (task.status === 'done' && !(task.media ?? []).length) {
-        task.status = 'error';
-        task.error = 'Agent 通道没有返回图片，请再试一次';
-        task.log.push(`失败：${task.error}`);
       }
     }
     return task;
@@ -1020,11 +1156,52 @@ export function createAgentRunner(context) {
         providerModel: entry.providerModel ?? null,
         providerStatus: 'submitted',
         providerPolledAt: 0,
+        reported: false,
         startedAt: entry.startedAt ?? Date.now(),
         startedAtIso: new Date().toISOString(),
       };
       tasks.set(task.id, task);
       if (task.nodeId) nodeTasks.set(task.nodeId, task.id);
+    }
+    // The runs that came back are asked about at once: they have been
+    // waiting longer than one tick.
+    void pollRunningTasks();
+  }
+
+  // The provider is asked on the runtime's own clock, not on the page's.
+  //
+  // A run that the page started is polled by the page — and by the page
+  // only. If the page goes away, or takes the canvas back from somewhere
+  // else and forgets the run, nobody asks the provider any more: the money
+  // is spent and the film is never made. So the runtime asks, and the page
+  // only ever reads the answer.
+  let pollTimer = null;
+
+  function ensurePollTimer() {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => {
+      void pollRunningTasks();
+    }, RUNTIME_POLL_MS);
+    // The timer is not a reason to keep the process alive: the runtime may
+    // stop while a run is still settling.
+    pollTimer.unref?.();
+    const stop = () => {
+      if (!pollTimer) return;
+      clearInterval(pollTimer);
+      pollTimer = null;
+    };
+    if (context.signal) {
+      if (context.signal.aborted) stop();
+      else context.signal.addEventListener('abort', stop, { once: true });
+    }
+  }
+
+  /** Ask the provider about every run that is still waiting for an answer. */
+  async function pollRunningTasks() {
+    for (const task of tasks.values()) {
+      // The throttle inside the poll keeps the provider's own pace, so a
+      // task that was asked a moment ago is left alone.
+      await pollConnectorTask(task).catch(() => {});
     }
   }
 
@@ -1212,6 +1389,10 @@ export function createAgentRunner(context) {
     }
   }
 
+  // The runtime looks at the runs that are waiting from the moment it
+  // exists, not from the moment a page happens to look.
+  ensurePollTimer();
+
   return {
     modelCatalog,
     restore: restorePending,
@@ -1241,6 +1422,13 @@ export function createAgentRunner(context) {
     // itself, so this is a direct connector call rather than an Agent turn.
     async understand(input) {
       return connector.understand(input);
+    },
+
+    // Let the provider change one picture: it sharpens a blurry picture, or
+    // it takes a subject away from its background. The tool is named by the
+    // capability table, so the provider's own name is written down once.
+    async transformImage(input) {
+      return connector.transformImage(input);
     },
 
     /** The capability surface of one mode, with the model's limits folded in. */
@@ -1390,21 +1578,32 @@ export function createAgentRunner(context) {
       const task = tasks.get(runId);
       if (!task) return null;
       void pollConnectorTask(task);
+      // A page has read this run. A run that is over does not have to be
+      // offered again, so it leaves the list the page looks for.
+      if (!['running', 'waiting-question'].includes(task.status)) task.reported = true;
       return { ...task, elapsedMs: Date.now() - task.startedAt };
     },
 
-    listActive() {
+    /**
+     * The runs the page may still have to see.
+     *
+     * A run that is still going is always on the list. A run that is over
+     * is on it until a page has read it: a page that lost the run — the
+     * canvas was taken back from somewhere else — has to be able to find
+     * the result it paid for.
+     */
+    listForPage() {
       const result = [];
       for (const task of tasks.values()) {
-        if (task.status === 'running' || task.status === 'waiting-question') {
-          result.push({
-            id: task.id,
-            nodeId: task.nodeId,
-            mode: task.mode,
-            status: task.status,
-            elapsedMs: Date.now() - task.startedAt,
-          });
-        }
+        const live = task.status === 'running' || task.status === 'waiting-question';
+        if (!live && task.reported) continue;
+        result.push({
+          id: task.id,
+          nodeId: task.nodeId,
+          mode: task.mode,
+          status: task.status,
+          elapsedMs: Date.now() - task.startedAt,
+        });
       }
       return result;
     },

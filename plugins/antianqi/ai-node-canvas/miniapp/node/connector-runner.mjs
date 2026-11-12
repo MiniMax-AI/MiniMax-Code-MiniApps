@@ -13,7 +13,11 @@
 // Every parameter below is taken from the connector's own input schema; the
 // field names are never guessed.
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
+// The capability table's own lookup. It is not the same thing as the
+// Host inventory lookup below, so it carries its own name.
+import { findTool as findCapabilityTool } from './capabilities.mjs';
 import { COLLECTION_PATHS, frameRequestShape } from './video-request.mjs';
+import { mediaOutcome } from './media-outcome.mjs';
 import { batchCount } from '../client/tools.mjs';
 
 const INVENTORY_TTL_MS = 60_000;
@@ -31,6 +35,19 @@ const TOOL = {
   music: 'batch_text_to_music',
   assetUrl: 'get_asset_url',
 };
+
+// How often a produced file's link is asked for.
+//
+// The provider keeps the file and hands out the link when it is asked. The
+// Host gives every connector call a window of its own — about thirty
+// seconds — and a call that runs over it is stopped. A link that is asked
+// for too early can therefore come back as nothing at all: the file is
+// there, the answer is not. The provider's own rule is to ask again for the
+// same node, so the question is asked twice before the file is given up on.
+const ASSET_URL_ATTEMPTS = 2;
+// The gap between the two asks: the file may still be settling right after
+// the provider made it.
+const ASSET_URL_RETRY_MS = 2_000;
 
 /**
  * What a connector call that the Host stopped says.
@@ -73,6 +90,52 @@ export function connectorStopNote(suffix, code) {
 // a video has no drive asset, so its link travels with the task.
 function mediaUrl(item) {
   return item?.url ?? item?.link ?? item?.download_url ?? item?.video_url ?? null;
+}
+
+/**
+ * What the provider's answer says when it produced nothing.
+ *
+ * The provider reports a failed request with `code: 0` — the code says the
+ * call went through — and puts the reason in `failed_items` and in the
+ * message. A runner that only reads the code throws that reason away, and the
+ * user is left with "nothing came back" and no idea why.
+ *
+ * The rule is pure, so the picture path and the picture-tool path read the
+ * same one.
+ *
+ * @param {object} value what the provider answered
+ * @param {string} label what the call was doing, in the user's words
+ * @returns {{code: string, message: string, errCode: number|string|null}|null}
+ *   the failure, or null when the call produced something
+ */
+export function providerFailure(value, label = '生成失败') {
+  if (!value || typeof value !== 'object') return null;
+  const produced = (Array.isArray(value.success_items) ? value.success_items.length : 0)
+    + (value.node_id ? 1 : 0);
+  if (produced > 0) return null;
+  const failed = Array.isArray(value.failed_items) ? value.failed_items : [];
+  const raw = String(failed[0]?.error_msg ?? '').trim() || String(value.message ?? '').trim();
+  const reason = raw.replace(/^all\s+\d+\s+failed:\s*/i, '');
+  const errCode = failed[0]?.err_code ?? value.err_code ?? null;
+  const none = value.total_success !== undefined && Number(value.total_success) === 0;
+  if (failed.length || none) {
+    const detail = reason || '厂商没有给出失败原因';
+    return {
+      code: 'CONNECTOR_PROVIDER_ERROR',
+      message: errCode === null || errCode === undefined
+        ? `${label}：${detail}`
+        : `${label}（厂商 err_code ${errCode}）：${detail}`,
+      errCode: errCode ?? null,
+    };
+  }
+  if (value.code && value.code !== 0) {
+    return {
+      code: 'CONNECTOR_PROVIDER_ERROR',
+      message: `${label}：${value.message || '厂商没有给出失败原因'}`,
+      errCode: value.code ?? null,
+    };
+  }
+  return null;
 }
 
 // The note that goes with a batch: what did not come out of it.
@@ -123,6 +186,14 @@ function videoReferences(videos) {
       });
     }
     return { url: item.url, duration_seconds: seconds };
+  });
+}
+
+// A short wait, so the second try does not land in the same breath as the
+// first one.
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
@@ -189,7 +260,18 @@ export function createConnectorRunner(context, options = {}) {
    * are not queued: they are quick, and a video waiting for its result must
    * not stand behind a slow picture.
    */
-  const SLOW_CALLS = new Set([TOOL.image, TOOL.audio, TOOL.music, TOOL.videoSubmit]);
+  // The picture tools are slow calls too: they work on a picture and the
+  // Host gives one call its own window, so they stand behind each other
+  // rather than side by side. The names come from the tool table, so the
+  // provider's own picture tools are named in one place.
+  const SLOW_CALLS = new Set([
+    TOOL.image,
+    TOOL.audio,
+    TOOL.music,
+    TOOL.videoSubmit,
+    findCapabilityTool('aiUpscale')?.providerTool,
+    findCapabilityTool('aiCutout')?.providerTool,
+  ].filter(Boolean));
   let callChain = Promise.resolve();
 
   function inCallQueue(suffix, task) {
@@ -267,19 +349,33 @@ export function createConnectorRunner(context, options = {}) {
   }
 
   // A short-lived display URL for a produced asset.
+  //
+  // The provider hands out the link when it is asked, and the Host stops a
+  // connector call that runs past its window. A link that is asked for too
+  // early can therefore come back as nothing at all: the file is still on
+  // the provider, the answer is not. The provider's own rule is to ask again
+  // for the same node, so the question is asked twice before the file is
+  // given up on.
   async function assetUrl(nodeId) {
     if (!nodeId) return null;
-    try {
-      const value = await callTool(TOOL.assetUrl, { node_id: nodeId });
-      return mediaUrl(value) ?? null;
-    } catch {
-      return null;
+    let failure = null;
+    for (let attempt = 0; attempt < ASSET_URL_ATTEMPTS; attempt += 1) {
+      try {
+        const value = await callTool(TOOL.assetUrl, { node_id: nodeId });
+        const url = mediaUrl(value);
+        if (url) return url;
+        failure = Object.assign(new Error('连接器没有给出下载链接'), { code: 'CONNECTOR_NO_ASSET_URL' });
+      } catch (error) {
+        failure = error;
+      }
+      if (attempt < ASSET_URL_ATTEMPTS - 1) await wait(ASSET_URL_RETRY_MS);
     }
+    throw failure ?? Object.assign(new Error('没有拿到下载链接'), { code: 'CONNECTOR_NO_ASSET_URL' });
   }
 
   // The upstream assets a node references. The order comes from the compiled
-  // prompt, so the `@图片1` numbering in the prompt and the URLs sent to the
-  // provider always line up.
+  // prompt, so the numbering in the prompt and the URLs sent to the provider
+  // always line up.
   function referenceAssets(assets) {
     const list = (urls) => (urls ?? []).map((url) => ({ url })).filter((item) => item.url);
     // A reference video carries its length: the provider wants to know how
@@ -294,16 +390,34 @@ export function createConnectorRunner(context, options = {}) {
     };
   }
 
+  // The files one provider call made.
+  //
+  // The provider answers with the id of the file it made, and the link comes
+  // from a second call. A file whose link cannot be fetched is not thrown
+  // away: its id travels with the failure, so the run can say that the file
+  // exists and where to find it.
   async function collectMedia(items, kind) {
     const media = [];
+    const missing = [];
     for (const item of items ?? []) {
       const nodeId = item?.node_id ?? item?.file_id ?? null;
-      const url = (await assetUrl(nodeId)) ?? mediaUrl(item);
-      if (!url) continue;
+      let url = mediaUrl(item);
+      if (!url && nodeId) {
+        try {
+          url = await assetUrl(nodeId);
+        } catch (error) {
+          missing.push({ nodeId, reason: error?.message ?? String(error) });
+          continue;
+        }
+      }
+      if (!url) {
+        missing.push({ nodeId, reason: '连接器没有给出下载链接' });
+        continue;
+      }
       const local = await publishSafely(url, kind);
       media.push({ url: local, kind, nodeId, providerUrl: url });
     }
-    return media;
+    return { media, missing };
   }
 
   /**
@@ -338,7 +452,15 @@ export function createConnectorRunner(context, options = {}) {
     let firstError = null;
     for (let index = 0; index < wanted; index += 1) {
       try {
-        media.push(...(await callOneAsset(tool, argsFor(index), kind, signal, timing)));
+        const result = await callOneAsset(tool, argsFor(index), kind, signal, timing);
+        media.push(...result.media);
+        for (const item of result.missing) {
+          // The provider made the file; only its link is missing. Saying
+          // "没有生成出来" about this would be a lie about what happened.
+          const note = `provider 已经生成出来了（${item.nodeId}），但没能取回下载链接：${item.reason}`;
+          if (!firstError) firstError = Object.assign(new Error(note), { code: 'MEDIA_MISSING' });
+          warnings.push(`第 ${index + 1} 个${note}`);
+        }
       } catch (error) {
         if (!firstError) firstError = error;
         warnings.push(`第 ${index + 1} 个没有生成出来：${error?.message ?? error}`);
@@ -346,7 +468,7 @@ export function createConnectorRunner(context, options = {}) {
     }
     if (!media.length && warnings.length) {
       throw Object.assign(
-        new Error(warnings[0].replace(/^第 \d+ 个没有生成出来：/, '')),
+        new Error(firstError?.message ?? warnings[0]),
         { code: firstError?.code ?? 'CONNECTOR_ERROR' },
       );
     }
@@ -356,8 +478,9 @@ export function createConnectorRunner(context, options = {}) {
   /** One provider call for one asset. */
   async function callOneAsset(tool, args, kind, signal, timing) {
     const value = await callTool(tool, args, signal, timing);
-    if (value?.code && value.code !== 0) {
-      throw Object.assign(new Error(value.message || '生成失败'), { code: 'CONNECTOR_PROVIDER_ERROR' });
+    const failure = providerFailure(value);
+    if (failure) {
+      throw Object.assign(new Error(failure.message), { code: failure.code, errCode: failure.errCode });
     }
     return collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), kind);
   }
@@ -372,8 +495,13 @@ export function createConnectorRunner(context, options = {}) {
     if (mode === 'image') {
       const request = { prompt: text };
       if (params?.ratio) request.aspect_ratio = params.ratio;
-      if (params?.resolution) request.resolution = params.resolution;
-      if (reference.images.length) request.input_urls = reference.images.map((item) => item.url);
+      // The size tier is called `area` on the image interface, and the
+      // pictures it works from are `reference_images`: one object per
+      // picture, in the order the prompt names them (图1, 图2 …).
+      if (params?.resolution) request.area = params.resolution;
+      if (reference.images.length) {
+        request.reference_images = reference.images.map((item) => ({ url: item.url }));
+      }
       const { media, warnings, waitedMs, callMs } = await callPerAsset(
         TOOL.image,
         () => ({ requests: [{ ...request }] }),
@@ -490,12 +618,20 @@ export function createConnectorRunner(context, options = {}) {
       // A video has no drive asset: the provider keeps the file on its task and
       // gives the link with the task's own answer. So the task's link comes
       // first, and the drive asset is only the second try.
-      const url = mediaUrl(value) ?? (await assetUrl(nodeId));
+      // The task is done, but the file could not be fetched. Saying "完成"
+      // with nothing behind it is a lie the user would believe.
+      let url = mediaUrl(value);
+      let reason = '';
       if (!url) {
-        // The task is done but the file could not be fetched. Saying "完成"
-        // with nothing behind it is a lie the user would believe.
+        try {
+          url = await assetUrl(nodeId);
+        } catch (error) {
+          reason = error?.message ?? String(error);
+        }
+      }
+      if (!url) {
         throw Object.assign(
-          new Error('视频已经生成完，但这次没有取回文件（provider 没有给出下载地址），请重试这次运行'),
+          new Error(`视频已经生成完，但这次没有取回文件${reason ? `：${reason}` : '（provider 没有给出下载地址）'}，请重试这次运行`),
           { code: 'MEDIA_MISSING' },
         );
       }
@@ -545,6 +681,51 @@ export function createConnectorRunner(context, options = {}) {
     return { text: description };
   }
 
+  /**
+   * Let the provider change one picture.
+   *
+   * Two of the provider's tools do this: it sharpens a blurry picture, and it
+   * takes a subject away from its background. Both read a picture the provider
+   * can fetch and answer with a picture of their own, which is kept in this
+   * runtime's own asset folder so the canvas does not depend on a link that
+   * expires.
+   *
+   * @param {string} tool which of the two to run
+   * @param {string} url the picture, already uploaded so the provider can read it
+   */
+  async function transformImage({ tool, url }) {
+    const definition = findCapabilityTool(tool);
+    const target = definition?.providerTool;
+    if (!target) {
+      throw Object.assign(new Error('这个工具不是连接器工具'), { code: 'INVALID_ARGUMENTS' });
+    }
+    const value = await callTool(target, { image_url: url });
+    const failure = providerFailure(value, '图片处理失败');
+    if (failure) {
+      throw Object.assign(new Error(failure.message), { code: failure.code, errCode: failure.errCode });
+    }
+    const { media, missing } = await collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), 'image');
+    const outcome = mediaOutcome({
+      mode: 'image',
+      media,
+      warnings: missing.map((item) => `provider 已经生成出来了（${item.nodeId}），但没能取回下载链接：${item.reason}`),
+      subject: '这次处理',
+    });
+    if (!outcome.ok) {
+      throw Object.assign(new Error(outcome.message), { code: outcome.code });
+    }
+    // The provider says how big the result is, so the card can show it.
+    return {
+      media: media.map((item) => ({
+        ...item,
+        name: value?.file_name ?? item.name ?? '',
+        width: Number(value?.width ?? 0) || 0,
+        height: Number(value?.height ?? 0) || 0,
+      })),
+      text: value?.message ?? '',
+    };
+  }
+
   return {
     available() {
       return Boolean(connector());
@@ -567,6 +748,7 @@ export function createConnectorRunner(context, options = {}) {
     submit,
     pollVideo,
     understand,
+    transformImage,
     videoPollIntervalMs: VIDEO_POLL_INTERVAL_MS,
   };
 }

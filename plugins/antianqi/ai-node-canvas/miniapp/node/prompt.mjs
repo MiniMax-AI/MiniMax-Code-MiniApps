@@ -9,6 +9,7 @@
 // arrays and handed to the model alongside the text.
 //
 //   kling       <<<image_1>>>
+//   matrix      图1 / 视频1 / 音频1
 //   minimax     @图片1 / @视频1 / @音频1
 //   wanxiang   @图片1 / @视频1 / @音频1
 //   bytedance   @Image1 / @Video1 / @Audio1
@@ -31,6 +32,10 @@ export function mentionToken(kind, nodeId) {
 export function providerFamily(model) {
   const text = String(model ?? '').trim().toLowerCase();
   if (text.includes('kling')) return 'kling';
+  // The matrix family is the one the image model belongs to: its interface
+  // names the pictures it was given by their place, `图1`, `图2`, and the
+  // prompt has to say the same word the interface does.
+  if (text.includes('matrix')) return 'matrix';
   if (text.includes('minimax') || text.includes('hailuo')) return 'minimax';
   if (text.includes('wan')) return 'wanxiang';
   return 'bytedance';
@@ -38,6 +43,9 @@ export function providerFamily(model) {
 
 function referenceSyntax(provider, kind, index) {
   if (provider === 'kling') return `<<<${kind}_${index}>>>`;
+  if (provider === 'matrix') {
+    return { image: `图${index}`, video: `视频${index}`, audio: `音频${index}` }[kind];
+  }
   if (provider === 'minimax' || provider === 'wanxiang') {
     return { image: `@图片${index}`, video: `@视频${index}`, audio: `@音频${index}` }[kind];
   }
@@ -46,6 +54,9 @@ function referenceSyntax(provider, kind, index) {
 
 function missingSyntax(provider, kind) {
   if (provider === 'kling') return `<<<${kind}_?>>>`;
+  if (provider === 'matrix') {
+    return { image: '图?', video: '视频?', audio: '音频?' }[kind];
+  }
   if (provider === 'minimax' || provider === 'wanxiang') {
     return { image: '@图片?', video: '@视频?', audio: '@音频?' }[kind];
   }
