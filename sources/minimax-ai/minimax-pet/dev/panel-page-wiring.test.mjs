@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { createPanelNavigation } from '../miniapp/client/panel-navigation.mjs';
 import { taskStatus } from '../miniapp/client/compact-pet-view.mjs';
+import { renderMarkdown } from '../miniapp/client/markdown.mjs';
 
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
 const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
@@ -32,7 +33,7 @@ function harness(t, patch = {}) {
     openTaskPreview: (id) => compact.push(id),
     callBridge: (callback) => { try { return Promise.resolve(callback()); } catch (error) { return Promise.reject(error); } },
     setMsg: (element, text, kind = 'info') => { reports.push(text); if (element) { element.textContent = text || ''; element.dataset.kind = kind; } },
-    availabilityText: () => '连接不可用', console: { warn: (...args) => warnings.push(args) },
+    availabilityText: () => '连接不可用', console: { warn: (...args) => warnings.push(args) }, renderMarkdown,
     STATUS_LABEL: { idle: '空闲', completed: '本次完成', running: '工作中', error: '异常' },
   });
   vm.runInContext(`${errCode}\n${select}\n${detail}\n${navigate}\n${hostOpen}\nglobalThis.handlers = { selectSession, renderDetail, focusFullPanel, openSelectedSession, openSessionInHost };`, context);
