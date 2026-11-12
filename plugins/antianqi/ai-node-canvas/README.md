@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.3`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.4`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -257,6 +257,19 @@ this package.
   can still be found there. The link of such a file is asked for twice: the
   Host's window is 30 seconds, and a link asked for too early can come back
   empty while the file is already there.
+- **An upstream that holds a product is not run again** — a chain fills in the
+  steps that still owe a product. The product of a run lands on the card that
+  made it (a text node's product is the text on its own card), so an upstream
+  that is done is used as it is: it is not run behind your back, which would
+  cost a second time and quietly replace the prompt you wrote with a fresh
+  expansion of it.
+- **A refusal says what the provider refused** — the provider answers a
+  refused request with `code: 0` and puts the reason in `failed_items`. Reading
+  only a non-zero code throws that reason away, and the user is left with
+  "nothing came back". The provider's err_code and reason now reach the run log.
+- **A failed rerun does not take the last product away** — the card keeps the
+  result of the run before it, so a rerun that fails leaves the picture there
+  instead of turning the card empty.
 - **One slow call at a time** — the window belongs to a single call, so a call
   that shares the machine with another one is the call that runs over it. The
   slow calls (pictures, speech, music, video submits) therefore wait for each

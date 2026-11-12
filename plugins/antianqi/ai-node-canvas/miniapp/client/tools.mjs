@@ -846,3 +846,56 @@ export function toolSizeReason(tool, size = {}) {
   }
   return null;
 }
+
+/**
+ * The result cards a generating node produced.
+ *
+ * A canvas from before the three roles kept the product of a run on a card of
+ * its own. Those cards are still here, and a node that has one has a product.
+ */
+export function resultNodesOf(canvas, node) {
+  const ids = new Set();
+  for (const conn of canvas?.connections ?? []) {
+    if (conn.fromNodeId !== node?.id) continue;
+    const target = (canvas?.nodes ?? []).find((item) => item.id === conn.toNodeId);
+    if (target && target.type === 'result') ids.add(target.id);
+  }
+  return (canvas?.nodes ?? []).filter((item) => ids.has(item.id));
+}
+
+/**
+ * Whether one output holds a product.
+ *
+ * A product whose file is gone does not count: the chain would reuse a dead
+ * reference instead of running that step again, and the step is cheap
+ * compared to a broken picture further down.
+ *
+ * The state of the last run is not asked about here. A run that failed still
+ * leaves the product of the run before it where it was, and that product is
+ * good enough to hand on.
+ */
+export function outputHasProduct(output) {
+  if (!output) return false;
+  if (output.missing) return false;
+  if ((output.media?.length ?? 0) > 0) return true;
+  return String(output.text ?? '').trim() !== '';
+}
+
+/**
+ * Whether the node already holds a product.
+ *
+ * The product of a run lands on the card that made it, so that is the first
+ * place to look. A canvas from before that also keeps it on a result card of
+ * its own, and those count too.
+ *
+ * The rule is in one place, because the page and the runtime must agree on
+ * it: a node that holds a product is not run again, and a node without one is.
+ * Reading only the result cards would say that every generating node is still
+ * owed a product — the product sits on the card itself — and the chain would
+ * run the whole upstream again on every single run.
+ */
+export function nodeHasProduct(canvas, node) {
+  if (!node) return false;
+  if (outputHasProduct(node.metadata?.output)) return true;
+  return resultNodesOf(canvas, node).some((item) => outputHasProduct(item.metadata?.output));
+}

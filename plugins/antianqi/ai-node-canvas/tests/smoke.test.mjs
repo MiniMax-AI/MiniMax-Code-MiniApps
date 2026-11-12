@@ -18,11 +18,12 @@ import { createServer as createHttpServer } from 'node:http';
 
 import { start } from '../miniapp/node/server.mjs';
 import { palette, resolveLimits, resolutionsForDuration } from '../miniapp/node/capabilities.mjs';
-import { applyAction, materializeResults, runSpecFor } from '../miniapp/client/actions.mjs';
+import { applyAction, materializeResults, outputForRun, pendingAncestors, runSpecFor } from '../miniapp/client/actions.mjs';
 import { createActionQueue, OWNER_TTL_MS } from '../miniapp/node/action-queue.mjs';
 import { decodeHostConnectorValue } from '../miniapp/node/host-connector-value.mjs';
 import { findMediaTool, RETIRED_TOOLS, TOOL_ACCEPTS, TOOL_PRODUCES, delogoRect } from '../miniapp/node/media-tools.mjs';
-import { cropRectAfterDrag, fanOutParams, NODE_GAP, toolPrompt } from '../miniapp/client/tools.mjs';
+import { cropRectAfterDrag, fanOutParams, nodeHasProduct, NODE_GAP, toolPrompt } from '../miniapp/client/tools.mjs';
+import { providerFailure } from '../miniapp/node/connector-runner.mjs';
 import { scanFiles } from './scan-undefined.mjs';
 
 // The provider's asset host cannot be reached from a test, and a real request
@@ -327,6 +328,22 @@ function createMockHostConnector(voices = [
         return {
           invocationId: 'invocation-test',
           value: [{ type: 'text', text: JSON.stringify({ code: 0, message: 'ok', success_items: [] }) }],
+        };
+      }
+      // A provider that refuses: the call went through (code 0) and the
+      // reason travels in the answer, not in the code.
+      if (options.imageRefused) {
+        return {
+          invocationId: 'invocation-test',
+          value: [{ type: 'text', text: JSON.stringify({
+            code: 0,
+            message: `all 1 failed: ${options.imageRefused}`,
+            total_requested: 1,
+            total_success: 0,
+            total_failed: 1,
+            success_items: [],
+            failed_items: [{ index: 0, err_code: 400, error_msg: options.imageRefused }],
+          }) }],
         };
       }
       const items = (Array.isArray(args?.requests) ? args.requests : []).map(() => ({ node_id: `node-${seq}`, file_name: 'a.png' }));
@@ -11479,4 +11496,108 @@ test('an Agent turn that ends without a picture is not a success', async (t) => 
   assert.equal((run.media ?? []).length, 0);
   assert.match(run.error, /图片/);
   assert.ok(!(run.log ?? []).some((line) => line.startsWith('完成')), 'the run must not say it is done');
+});
+
+// ── the product of a run lives on the card that made it ──
+test('a node that holds a product is not owed one', async () => {
+  const image = { id: 'n1', type: 'image', metadata: { output: { status: 'success', media: [{ url: '/assets/m1.jpg' }] } } };
+  const text = { id: 'n2', type: 'text', metadata: { output: { status: 'success', text: '写好的提示词' } } };
+  const canvas = { nodes: [image, text], connections: [] };
+  assert.equal(nodeHasProduct(canvas, image), true);
+  assert.equal(nodeHasProduct(canvas, text), true);
+});
+
+test('a node whose run produced nothing still owes a product', async () => {
+  const node = { id: 'n1', type: 'image', metadata: { output: { status: 'error', error: '没有取回来', media: [] } } };
+  assert.equal(nodeHasProduct({ nodes: [node], connections: [] }, node), false);
+});
+
+test('a result card from the old canvas counts, and a lost one does not', async () => {
+  const node = { id: 'n1', type: 'image', metadata: { output: { status: 'success', media: [] } } };
+  const card = { id: 'r1', type: 'result', metadata: { output: { status: 'success', media: [{ url: '/assets/m2.jpg' }] } } };
+  const connections = [{ fromNodeId: 'n1', toNodeId: 'r1', kind: 'image' }];
+  assert.equal(nodeHasProduct({ nodes: [node, card], connections }, node), true);
+  const gone = { ...card, metadata: { output: { status: 'success', missing: true, media: [{ url: '/assets/m2.jpg' }] } } };
+  assert.equal(nodeHasProduct({ nodes: [node, gone], connections }, node), false);
+});
+
+// ── the provider's refusal has to reach the user ──
+test('the provider refuses with code 0, and the reason comes out', async () => {
+  const reason = 'requests[0].reference_images[0].url could not be read or decoded';
+  const failure = providerFailure({
+    code: 0,
+    message: 'all 1 failed: ' + reason,
+    total_requested: 1,
+    total_success: 0,
+    total_failed: 1,
+    success_items: [],
+    failed_items: [{ index: 0, err_code: 400, error_msg: reason }],
+  });
+  assert.ok(failure, 'a refusal is a failure');
+  assert.equal(failure.code, 'CONNECTOR_PROVIDER_ERROR');
+  assert.equal(failure.errCode, 400);
+  assert.match(failure.message, /err_code 400/);
+  assert.match(failure.message, /could not be read or decoded/);
+  assert.doesNotMatch(failure.message, /^all 1 failed/);
+});
+
+test('a call that produced something is not a failure', async () => {
+  assert.equal(providerFailure({ code: 0, success_items: [{ node_id: '1' }], total_success: 1 }), null);
+  assert.equal(providerFailure({ node_id: '1' }), null);
+  assert.equal(providerFailure(null), null);
+  // A batch where one item came back is not a refusal either.
+  assert.equal(providerFailure({ code: 0, success_items: [{ node_id: '1' }], failed_items: [{ err_code: 400 }] }), null);
+});
+
+test('a refused picture says what the provider said', async (t) => {
+  const connector = createMockHostConnector(undefined, {
+    imageRefused: 'requests[0].reference_images[0].url could not be read or decoded',
+  });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'n_1', mode: 'image', prompt: '一只猫' }),
+  });
+  assert.equal(started.status, 202);
+  const run = await waitFor(h.base, started.body.run.id, (item) => item.status === 'done' || item.status === 'error', 400);
+  assert.equal(run.status, 'error');
+  assert.match(run.error, /err_code 400/);
+  assert.match(run.error, /could not be read or decoded/);
+  assert.doesNotMatch(run.error, /没有取回来/, 'the provider reason must not be replaced by a generic sentence');
+});
+
+test('a run does not take away the product the last run left', async () => {
+  const before = { status: 'success', text: '', media: [{ url: '/assets/m1.jpg' }], error: '' };
+  const during = outputForRun(before, '2026-01-01T00:00:00.000Z');
+  assert.equal(during.status, 'loading');
+  assert.equal(during.error, '');
+  assert.equal(during.media.length, 1, 'the product of the last run stays on the card');
+  assert.equal(during.media[0].url, '/assets/m1.jpg');
+  assert.equal(during.updatedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('the chain does not run an upstream that already holds its product', async () => {
+  const text = { id: 'n_text', type: 'text', metadata: { output: { status: 'success', text: '写好的提示词' } } };
+  const image = { id: 'n_img', type: 'image', metadata: { output: { status: 'success', media: [{ url: '/assets/m1.jpg' }] } } };
+  const child = { id: 'n_child', type: 'image', metadata: { output: { status: 'idle' } } };
+  const canvas = {
+    nodes: [text, image, child],
+    connections: [
+      { fromNodeId: 'n_text', toNodeId: 'n_img', kind: 'text' },
+      { fromNodeId: 'n_img', toNodeId: 'n_child', kind: 'image' },
+    ],
+  };
+  // The prompt node holds its text and the picture node holds its picture:
+  // the chain has nothing to do.
+  assert.deepEqual(pendingAncestors(canvas, image), [], 'the prompt node is not run again');
+  assert.deepEqual(pendingAncestors(canvas, child), [], 'the picture node is not run again');
+  // A node that owes a product is run first, and only that one.
+  image.metadata.output = { status: 'error', media: [] };
+  assert.deepEqual(pendingAncestors(canvas, child).map((item) => item.id), ['n_img']);
+  // When the prompt is missing too, the prompt runs before the picture.
+  text.metadata.output = { status: 'idle', text: '' };
+  assert.deepEqual(pendingAncestors(canvas, child).map((item) => item.id), ['n_text', 'n_img']);
 });

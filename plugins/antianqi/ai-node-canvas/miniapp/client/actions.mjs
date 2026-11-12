@@ -13,7 +13,7 @@
 // second list written down here.
 
 import { CREATABLE_TYPES, DATA_KINDS, kindLabel, kindOf, modeLabelOf, modeOf, modesFor, modesOf, pathOf, roleOf, runModeOf, slotsOf } from './forms.mjs';
-import { batchCount, fitParamsToCaps, framePorts, assignPorts, directLines, planBatchPlacement, portKey, pushAside, takenPorts, upstreamNodes } from './tools.mjs';
+import { batchCount, fitParamsToCaps, framePorts, assignPorts, directLines, nodeHasProduct, planBatchPlacement, portKey, pushAside, resultNodesOf, takenPorts, upstreamNodes } from './tools.mjs';
 
 /** The actions an Agent may ask for. */
 export const ACTION_TYPES = ['add_node', 'connect', 'remove_node', 'update_node', 'run', 'apply_template'];
@@ -1215,15 +1215,59 @@ export function runSpecFor(canvas, node, context = {}) {
   };
 }
 
-/** The result nodes a generating node produced. */
-function resultNodesOf(canvas, node) {
-  const ids = new Set();
-  for (const conn of canvas?.connections ?? []) {
-    if (conn.fromNodeId !== node.id) continue;
-    const target = (canvas?.nodes ?? []).find((item) => item.id === conn.toNodeId);
-    if (target && target.type === 'result') ids.add(target.id);
-  }
-  return (canvas?.nodes ?? []).filter((item) => ids.has(item.id));
+/**
+ * The generating nodes above this one that still owe a product.
+ *
+ * A chain runs itself: the nodes above that have nothing yet are run first,
+ * and a node that already holds a product is left alone. Reading only the
+ * result cards would say that every generating node is still owed a product —
+ * the product of a run lands on the card that made it — and the chain would
+ * run the whole upstream again on every single run.
+ *
+ * The rule is pure, so the page and the tests read the same one.
+ *
+ * @param {object} canvas the canvas
+ * @param {object} node the node that is about to run
+ * @returns {object[]} the nodes to run first, nearest first
+ */
+export function pendingAncestors(canvas, node) {
+  const seen = new Set([node?.id]);
+  const order = [];
+  const visit = (current) => {
+    for (const conn of canvas?.connections ?? []) {
+      if (conn.toNodeId !== current?.id) continue;
+      const source = (canvas?.nodes ?? []).find((item) => item.id === conn.fromNodeId);
+      if (!source || seen.has(source.id)) continue;
+      seen.add(source.id);
+      if (roleOf(source) !== 'generate' || nodeHasProduct(canvas, source)) continue;
+      visit(source);
+      order.push(source);
+    }
+  };
+  visit(node);
+  return order;
+}
+
+/**
+ * The state a card goes into while a new run is made.
+ *
+ * The product that is already there stays there: a run that fails must not
+ * take away what the run before it produced. The card shows the old product
+ * while the new one is being made, and a failed run leaves it alone.
+ *
+ * The rule is pure, so the page and the tests read the same one.
+ *
+ * @param {object} output what the card holds now
+ * @param {string} now when the run started
+ * @returns {object} what the card holds while the run is going
+ */
+export function outputForRun(output = {}, now = new Date().toISOString()) {
+  return {
+    ...(output ?? {}),
+    status: 'loading',
+    error: '',
+    updatedAt: now,
+  };
 }
 
 /** The generating node this node feeds, if there is one. */

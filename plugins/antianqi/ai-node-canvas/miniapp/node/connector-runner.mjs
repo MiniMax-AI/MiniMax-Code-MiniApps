@@ -92,6 +92,52 @@ function mediaUrl(item) {
   return item?.url ?? item?.link ?? item?.download_url ?? item?.video_url ?? null;
 }
 
+/**
+ * What the provider's answer says when it produced nothing.
+ *
+ * The provider reports a failed request with `code: 0` — the code says the
+ * call went through — and puts the reason in `failed_items` and in the
+ * message. A runner that only reads the code throws that reason away, and the
+ * user is left with "nothing came back" and no idea why.
+ *
+ * The rule is pure, so the picture path and the picture-tool path read the
+ * same one.
+ *
+ * @param {object} value what the provider answered
+ * @param {string} label what the call was doing, in the user's words
+ * @returns {{code: string, message: string, errCode: number|string|null}|null}
+ *   the failure, or null when the call produced something
+ */
+export function providerFailure(value, label = '生成失败') {
+  if (!value || typeof value !== 'object') return null;
+  const produced = (Array.isArray(value.success_items) ? value.success_items.length : 0)
+    + (value.node_id ? 1 : 0);
+  if (produced > 0) return null;
+  const failed = Array.isArray(value.failed_items) ? value.failed_items : [];
+  const raw = String(failed[0]?.error_msg ?? '').trim() || String(value.message ?? '').trim();
+  const reason = raw.replace(/^all\s+\d+\s+failed:\s*/i, '');
+  const errCode = failed[0]?.err_code ?? value.err_code ?? null;
+  const none = value.total_success !== undefined && Number(value.total_success) === 0;
+  if (failed.length || none) {
+    const detail = reason || '厂商没有给出失败原因';
+    return {
+      code: 'CONNECTOR_PROVIDER_ERROR',
+      message: errCode === null || errCode === undefined
+        ? `${label}：${detail}`
+        : `${label}（厂商 err_code ${errCode}）：${detail}`,
+      errCode: errCode ?? null,
+    };
+  }
+  if (value.code && value.code !== 0) {
+    return {
+      code: 'CONNECTOR_PROVIDER_ERROR',
+      message: `${label}：${value.message || '厂商没有给出失败原因'}`,
+      errCode: value.code ?? null,
+    };
+  }
+  return null;
+}
+
 // The note that goes with a batch: what did not come out of it.
 function batchNote(warnings) {
   return (warnings ?? []).join('；');
@@ -432,8 +478,9 @@ export function createConnectorRunner(context, options = {}) {
   /** One provider call for one asset. */
   async function callOneAsset(tool, args, kind, signal, timing) {
     const value = await callTool(tool, args, signal, timing);
-    if (value?.code && value.code !== 0) {
-      throw Object.assign(new Error(value.message || '生成失败'), { code: 'CONNECTOR_PROVIDER_ERROR' });
+    const failure = providerFailure(value);
+    if (failure) {
+      throw Object.assign(new Error(failure.message), { code: failure.code, errCode: failure.errCode });
     }
     return collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), kind);
   }
@@ -653,8 +700,9 @@ export function createConnectorRunner(context, options = {}) {
       throw Object.assign(new Error('这个工具不是连接器工具'), { code: 'INVALID_ARGUMENTS' });
     }
     const value = await callTool(target, { image_url: url });
-    if (value?.code && value.code !== 0) {
-      throw Object.assign(new Error(value.message || '图片处理失败'), { code: 'CONNECTOR_PROVIDER_ERROR' });
+    const failure = providerFailure(value, '图片处理失败');
+    if (failure) {
+      throw Object.assign(new Error(failure.message), { code: failure.code, errCode: failure.errCode });
     }
     const { media, missing } = await collectMedia(value?.success_items ?? (value?.node_id ? [value] : []), 'image');
     const outcome = mediaOutcome({

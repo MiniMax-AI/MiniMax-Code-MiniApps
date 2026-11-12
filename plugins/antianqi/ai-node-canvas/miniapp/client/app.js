@@ -19,7 +19,7 @@ import { wirePlayhead } from './clip-playhead.mjs';
 import { frameStops, paintFilmstrip, paintWaveform, redrawStrips } from './strip.mjs';
 import { isBusyRefusal, panelClosed, panelIsShown, panelTasks, runIsGone, taskIsExpired, theRunThatIsGoing, theRunToWaitFor, waitForTheRun, withDeadline } from './run-watch.mjs';
 import { panelTitleRow } from './task-panel.mjs';
-import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, legacyProductNodes, lineKind, linesDroppedByMode, materializeResults, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
+import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, legacyProductNodes, lineKind, linesDroppedByMode, materializeResults, outputForRun, pendingAncestors as pendingAncestorsIn, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
   'use strict';
@@ -395,17 +395,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     return Boolean(node) && roleOf(node) === 'generate';
   }
 
-  // The result node a generating node produced.
-  function resultNodeOf(node) {
-    if (!node) return null;
-    for (const conn of state.canvas.connections) {
-      if (conn.fromNodeId !== node.id) continue;
-      const target = getNode(conn.toNodeId);
-      if (target && target.type === 'result') return target;
-    }
-    return null;
-  }
-
   // Every result node a generating node produced. A batch of results is more
   // than one, and a second run has to replace all of them.
   function resultNodesOf(node) {
@@ -417,17 +406,6 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
       if (target && target.type === 'result') ids.add(target.id);
     }
     return state.canvas.nodes.filter((item) => ids.has(item.id));
-  }
-
-  // Whether the node already produced something.
-  //
-  // A result whose asset is gone does not count: the chain would reuse a dead
-  // reference instead of running that step again, and the step is cheap
-  // compared to a broken picture further down.
-  function hasResult(node) {
-    const result = resultNodeOf(node);
-    if (!result) return false;
-    return !result.metadata?.output?.missing;
   }
 
   // The text an upstream line hands over is read in `actions.mjs`, where the
@@ -5263,21 +5241,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
    * They are returned in the order they have to run: the deepest one first.
    */
   function pendingAncestors(node) {
-    const seen = new Set([node.id]);
-    const order = [];
-    const visit = (current) => {
-      for (const conn of state.canvas.connections) {
-        if (conn.toNodeId !== current.id) continue;
-        const source = getNode(conn.fromNodeId);
-        if (!source || seen.has(source.id)) continue;
-        seen.add(source.id);
-        if (!isGeneratingNode(source) || hasResult(source)) continue;
-        visit(source);
-        order.push(source);
-      }
-    };
-    visit(node);
-    return order;
+    return pendingAncestorsIn(state.canvas, node);
   }
 
   /** Wait for the run that was started on this node to finish. */
@@ -5327,18 +5291,10 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     // the same thing: the text the card shows is the text the run sends.
     const spec = runSpecFor(state.canvas, node, { chain: options.chain !== false });
 
-    node.metadata.output = {
-      status: 'loading',
-      text: '',
-      media: [],
-      error: '',
-      posterUrl: '',
-      durationMs: 0,
-      width: 0,
-      height: 0,
-      missing: false,
-      updatedAt: new Date().toISOString(),
-    };
+    // The product that is already there stays there: a run that fails must not
+    // take away what the run before it produced. The card shows the old
+    // product while the new one is being made, and a failed run leaves it.
+    node.metadata.output = outputForRun(node.metadata.output, new Date().toISOString());
     // Leave the editor: while it holds the focus the canvas defers its
     // rendering, and the run progress would stay invisible.
     if (document.activeElement?.isContentEditable) document.activeElement.blur();
