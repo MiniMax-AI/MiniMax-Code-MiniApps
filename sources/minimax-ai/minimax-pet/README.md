@@ -15,6 +15,8 @@ A lightweight desktop companion for MiniMax Code, by **MiniMax**. It shows visib
 
 The pet does not run Agent turns, create independent chats, write to chat inputs, comment on every session, stop tasks, or answer questionnaires. Selecting a task only reads its details; the main window switches only when you click **打开对话** or **去回答**.
 
+Version **0.8.0** aligns the panel with the MiniMax Code design language: 24px page margins and section gaps, 14px/22px body copy with 12px/18px supporting text, 32px minimum control height, 12px cards and 8px controls, 0.5px borders on desktop overlays, and press/focus states. The desktop pet keeps its 280px layout with the same tokens.
+
 Version **0.7.0** renders each task's latest reply as Markdown: headings, emphasis, lists, task lists, fenced code, tables, quotes and links, with raw HTML shown as inert text and images as a label instead of a remote request. Notification cards and reminder previews stay plain text. Parsing uses a vendored bundle of unified, remark-parse and remark-gfm (MIT) built by `npm run build:markdown`; the page never builds an HTML string from model output. The bundle makes no network request and runs entirely in the page.
 
 Version **0.6.0** removes the **打招呼** (wave) and **跳一下** (jump) actions from the menu and the appearance page, and removes the original-chat draft with its voice input; the package no longer requests the microphone. It adds **打开对话** / **去回答** and the client theme. The supported baseline stays MiniMax Code 3.1.6: both additions are feature-detected and need no new access.
