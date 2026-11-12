@@ -1,6 +1,11 @@
 const TABS = ['appearance', 'tasks', 'settings'];
 const FILTERS = ['recent', 'all'];
-const CONNECTION = { ready: '已连接', connecting: '连接中', not_permitted: '未授权', unavailable: '连接中断' };
+import { t } from './i18n.mjs';
+
+const CONNECTION = {
+  ready: 'settings.connected', connecting: 'availability.connectingShort',
+  not_permitted: 'availability.notPermittedShort', unavailable: 'settings.disconnected',
+};
 
 /** Owns the inline panel only; task updates never navigate or replace its content. */
 export function createPanelNavigation({ panel, beforeCloseImport = () => true }) {
@@ -83,7 +88,7 @@ export function createPanelNavigation({ panel, beforeCloseImport = () => true })
       if (badge) { badge.hidden = count === 0; badge.textContent = count > 99 ? '99+' : String(count); }
       const connection = find('#connection-status');
       if (connection) {
-        connection.textContent = CONNECTION[availability] || CONNECTION.unavailable;
+        connection.textContent = t(CONNECTION[availability] || CONNECTION.unavailable);
         connection.dataset.status = availability in CONNECTION ? availability : 'unavailable';
       }
     },

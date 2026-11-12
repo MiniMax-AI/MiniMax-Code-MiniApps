@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { createPanelNavigation } from '../miniapp/client/panel-navigation.mjs';
 import { taskStatus } from '../miniapp/client/compact-pet-view.mjs';
 import { renderMarkdown } from '../miniapp/client/markdown.mjs';
+import { localeFor, t, translate } from '../miniapp/client/i18n.mjs';
 
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
 const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
@@ -13,8 +14,9 @@ const html = await readFile(new URL('../miniapp/client/index.html', import.meta.
 const select = source.slice(source.indexOf('function selectSession('), source.indexOf('// Window', source.indexOf('function selectSession(')));
 const detail = source.slice(source.indexOf('function renderDetail()'), source.indexOf('function initWorkbench()'));
 const navigate = source.slice(source.indexOf('function focusFullPanel('), source.indexOf('async function openWorkbench('));
-const hostOpen = source.slice(source.indexOf('function describeOpenError('), source.indexOf('function initHostTheme('));
-const hostTheme = source.slice(source.indexOf('function initHostTheme('), source.indexOf('// Window mode switching'));
+const hostOpen = source.slice(source.indexOf('function describeOpenError('), source.indexOf('// The Host reports the resolved theme'));
+// Only the subscription itself: applyLanguage belongs to the page and is stubbed in the test.
+const hostUi = source.slice(source.indexOf('function hostTag('), source.indexOf('function setLanguagePreference('));
 const errCode = source.slice(source.indexOf('function errCode('), source.indexOf('function logError('));
 const deferred = () => { let resolve; const promise = new Promise((yes) => { resolve = yes; }); return { promise, resolve }; };
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -34,7 +36,11 @@ function harness(t, patch = {}) {
     callBridge: (callback) => { try { return Promise.resolve(callback()); } catch (error) { return Promise.reject(error); } },
     setMsg: (element, text, kind = 'info') => { reports.push(text); if (element) { element.textContent = text || ''; element.dataset.kind = kind; } },
     availabilityText: () => '连接不可用', console: { warn: (...args) => warnings.push(args) }, renderMarkdown,
-    STATUS_LABEL: { idle: '空闲', completed: '本次完成', running: '工作中', error: '异常' },
+    t: translate, localeFor, prefs: { language: 'auto' },
+    statusLabel: (status) => translate(({ idle: 'status.idle', completed: 'status.completed', running: 'status.running', error: 'status.error' })[status] ?? 'desk.toView'),
+    // The panel shows "本次完成" for an observed completion, which the shared label does not know.
+    taskStatusLabel: (status) => (status === 'completed' ? '本次完成' : translate(({ idle: 'status.idle', running: 'status.running', error: 'status.error' })[status] ?? 'desk.toView')),
+    statusText: () => '',
   });
   vm.runInContext(`${errCode}\n${select}\n${detail}\n${navigate}\n${hostOpen}\nglobalThis.handlers = { selectSession, renderDetail, focusFullPanel, openSelectedSession, openSessionInHost };`, context);
   t.after(() => { nav.dispose(); dom.window.close(); });
@@ -77,7 +83,7 @@ test('background details retain reply content and scroll; only a different task 
   h.renderDetail(); const node = h.els.detailReply.firstChild; h.els.detailReply.scrollTop = 180;
   h.app.detailLoading = true; h.nav.showTab('settings'); h.renderDetail();
   assert.equal(h.els.detailReply.firstChild, node); assert.equal(h.els.detailReply.scrollTop, 180);
-  assert.equal(h.els.detailStatus.textContent, '本次完成'); assert.equal(h.nav.getState().tab, 'settings');
+  assert.equal(h.els.detailStatus.textContent, '已完成'); assert.equal(h.nav.getState().tab, 'settings');
   h.app.selectedSessionId = 'b'; h.app.detail = null; h.renderDetail(); assert.equal(h.els.detailReply.scrollTop, 0);
 });
 
@@ -168,17 +174,41 @@ test('the page follows the Host theme and disposes its subscription', () => {
   const root = { dataset: {} }, disposers = [], listeners = [];
   let disposed = 0;
   const ui = { subscribe: (listener, options) => { listeners.push([listener, options]); return { dispose: () => { disposed++; } }; } };
-  const context = vm.createContext({ host: { host: { ui } }, root, disposers, console: { warn() {} } });
-  vm.runInContext(`${errCode}\n${hostTheme}\ninitHostTheme();`, context);
+  const context = vm.createContext({
+    host: { host: { ui } }, root, disposers, console: { warn() {} }, prefs: { language: 'auto' }, preferencesReady: true,
+    // applyLanguage is exercised by the page, not here; the Host listener only forwards the tag.
+    applyLanguage: () => { applied.push(root.dataset.hostLanguage); },
+  });
+  const applied = [];
+  vm.runInContext(`${errCode}\n${hostUi}\ninitHostUi();`, context);
   assert.equal(listeners.length, 1);
   const [listener, { onError }] = listeners[0];
   listener({ theme: 'dark', language: 'zh-Hans' }); assert.equal(root.dataset.theme, 'dark');
   listener({ theme: 'sepia', language: 'en' }); assert.equal(root.dataset.theme, 'dark');
   listener({ theme: 'light', language: 'en' }); assert.equal(root.dataset.theme, 'light');
+  // The first Host state pins the language; a later change reaches applyLanguage again.
+  assert.deepEqual(applied, ['zh-Hans', 'en'], 'the Host language reaches applyLanguage while the preference is auto');
   onError({ code: 'host_unavailable', message: '' }); assert.equal(root.dataset.theme, 'light');
   for (const dispose of disposers) dispose();
   assert.equal(disposed, 1);
   const absent = vm.createContext({ host: {}, root: { dataset: {} }, disposers: [], console: { warn() {} } });
-  vm.runInContext(`${errCode}\n${hostTheme}\ninitHostTheme();`, absent);
+  vm.runInContext(`${errCode}\n${hostUi}\ninitHostUi();`, absent);
   assert.deepEqual(absent.disposers, []); assert.equal(absent.root.dataset.theme, undefined);
+});
+
+test('a Host language that arrives before the stored preference is only recorded', () => {
+  const root = { dataset: {} }, disposers = [], listeners = [], applied = [];
+  const ui = { subscribe: (listener) => { listeners.push(listener); return { dispose() {} }; } };
+  const context = vm.createContext({
+    host: { host: { ui } }, root, disposers, console: { warn() {} }, prefs: { language: 'auto' }, preferencesReady: false,
+    applyLanguage: () => applied.push(root.dataset.hostLanguage),
+  });
+  vm.runInContext(`${errCode}\n${hostUi}\ninitHostUi();`, context);
+  listeners[0]({ theme: 'dark', language: 'en' });
+  // Painting here would run before the stored 'zh-Hans' preference loads and flash the wrong copy.
+  assert.deepEqual(applied, []);
+  assert.equal(root.dataset.hostLanguage, 'en', 'the tag is kept for the boot-time paint');
+  context.preferencesReady = true;
+  listeners[0]({ language: 'zh-Hans' });
+  assert.deepEqual(applied, ['zh-Hans']);
 });

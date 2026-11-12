@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { translate } from '../miniapp/client/i18n.mjs';
 
 // Exercise the page's production handlers. Only browser/file/network boundaries are substituted.
 const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
@@ -21,6 +22,7 @@ function harness(overrides = {}) {
     clearInterval() {}, URL: { createObjectURL: () => `blob:${++blob}`, revokeObjectURL() {} },
     document: { createElement: () => ({ append() {} }) },
     setMsg: (el, text) => { el.textContent = text; }, basename: (value) => value.split(/[\\/]/).pop(),
+    t: translate,
     loadPetFromParts: async (value) => ({ ...value, version: 1 }), startImportPreview() {},
     fileToBase64: async () => 'aQ==', postPet: async () => ({ res: { ok: true, status: 200 }, data: { pet: pet('new') } }),
     refreshPets: async () => {}, selectPet: async (id) => { context.app.pet = { id }; return 'selected'; }, errCode: (error) => error?.code ?? error?.message, console: { warn() {}, error() {} },

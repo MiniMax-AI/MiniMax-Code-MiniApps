@@ -15,7 +15,8 @@ function harness(overrides = {}) {
     player: { setScale: (value) => calls.push(['scale', value]) },
     savePreferences: (patch) => calls.push(['save', patch.scale]), renderScale() {}, refreshInteractivity() {}, positionMenu() {}, onWindowState() {},
     closeWorkbench: async () => { app.workbenchOpen = false; calls.push(['close']); },
-    showTransient: (text) => calls.push(['error', text]), logError: () => (error) => assert.fail(error), ...overrides,
+    showTransient: (text) => calls.push(['error', text]), logError: () => (error) => assert.fail(error),
+    t: (key) => key, ...overrides,
   });
   vm.runInContext(`${handler}\nglobalThis.setScaleHandler = setScale;`, context);
   return { calls, prefs, app, context, setScale: context.setScaleHandler };

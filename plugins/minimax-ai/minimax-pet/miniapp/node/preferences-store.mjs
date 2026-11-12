@@ -20,7 +20,9 @@ export function createPreferenceStore({ dataDir, fs = { lstat, mkdir, open, read
       if (!(await fs.lstat(target)).isFile()) throw new Error('not a regular file');
       const body = JSON.parse(await fs.readFile(target, 'utf8'));
       if (body.version !== 1) throw new Error('unknown version');
-      return { preferences: validatePreferences(body.preferences), persisted: true };
+      // A file written by an earlier version lacks keys added since; defaults fill
+      // them, and validatePreferences still rejects anything unknown or mistyped.
+      return { preferences: validatePreferences({ ...DEFAULT_PREFERENCES, ...body.preferences }), persisted: true };
     } catch (error) {
       if (error.code === 'ENOENT') return { preferences: { ...DEFAULT_PREFERENCES }, persisted: false };
       throw new PreferenceError(500, 'preferences_unreadable');

@@ -1,27 +1,35 @@
 // Desktop pet page: a three-tab inline panel and a compact desktop companion.
 import { STATUS_ANIM, createActivitySource } from './activity.mjs';
-import { DEFAULT_PREFERENCES, loadPreferences, preferenceRequest } from './preferences.mjs';
+import { DEFAULT_PREFERENCES, MAX_NOTICE_TIMEOUT_SECONDS, loadPreferences, preferenceRequest } from './preferences.mjs';
 import { restoreWindowPosition, fitWindowToScreen } from './window-position.mjs';
-import { aggregateText, notificationItems, notificationText, createAnimationGate } from './pet-presentation.mjs';
+import { aggregateText, notificationItems, noticeRemaining, notificationText, visibleNotices, createAnimationGate } from './pet-presentation.mjs';
 import { createReminderStore } from './activity-reminders.mjs';
 import { createCompactPetView, taskStatus } from './compact-pet-view.mjs';
 import { createWorkbenchWindow } from './workbench-window.mjs';
 import { createNotificationPreviews } from './notification-previews.mjs';
 import { createAskObserver } from './ask-observer.mjs';
 import { createPanelNavigation } from './panel-navigation.mjs';
+import { getLanguage, localeFor, onLanguageChange, resolveLanguage, setLanguage, t } from './i18n.mjs';
 import { markdownToPlainText, renderMarkdown } from './markdown.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const STATUS_TEXT = { idle: '', running: '正在工作…', error: '任务出现异常', aborted: '任务已停止', completed: '任务已完成' };
-const STATUS_LABEL = { idle: '空闲', running: '工作中', error: '异常', aborted: '已停止', completed: '已完成' };
+const STATUS_KEYS = { idle: 'status.idle', running: 'status.running', error: 'status.error', aborted: 'status.aborted', completed: 'status.completed' };
+const STATUS_TEXT_KEYS = { idle: '', running: 'status.runningText', error: 'status.errorText', aborted: 'status.abortedText', completed: 'status.completedText' };
+const statusLabel = (status) => (STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : String(status ?? ''));
+const statusText = (status) => (STATUS_TEXT_KEYS[status] ? t(STATUS_TEXT_KEYS[status]) : '');
 const DEMO_ORDER = ['idle', 'running', 'completed', 'error', 'aborted'];
+const LANGUAGE_OPTIONS = [
+  { value: 'auto', key: 'settings.languageAuto' },
+  { value: 'zh-Hans', key: 'settings.languageZh' },
+  { value: 'en', key: 'settings.languageEn' },
+];
 const SCALES = [
-  { value: 0.5, label: '小' },
-  { value: 0.75, label: '中' },
-  { value: 1, label: '大' },
+  { value: 0.5, key: 'desk.scaleSmall' },
+  { value: 0.75, key: 'desk.scaleMedium' },
+  { value: 1, key: 'desk.scaleLarge' },
 ];
 const ID_RE = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const IMPORT_BODY_LIMIT = 12 * 1024 * 1024;
@@ -211,6 +219,10 @@ const els = {
   detailNote: $('detail-note'),
   activityRetry: $('activity-retry'),
   preferenceMsg: $('preference-msg'),
+  noticeInput: $('notice-timeout'),
+  noticeMsg: $('notice-msg'),
+  languageGroup: $('language-group'),
+  languageMsg: $('language-msg'),
   scaleGroup: $('scale-group'),
   gallery: $('gallery'),
   galleryMsg: $('gallery-msg'),
@@ -249,6 +261,11 @@ let notificationPreviews = null;
 let askObserver = null;
 let detailOpenToken = 0;
 let detailOpenSessionId = null;
+// Notification cards hide on a timer; the reminder itself stays until dismissed.
+const noticeShownAt = new Map();
+let noticeTimer = null;
+let noticePaused = false;
+let noticePauseAt = 0;
 
 // Player module is loaded dynamically so a missing/broken module surfaces in the UI instead of a blank page.
 let STATES = [];
@@ -282,9 +299,10 @@ function desiredAnimation() {
 }
 
 function availabilityText() {
-  if (app.availability === 'not_permitted') return '请先在插件详情中允许读取会话，再重试。';
-  if (app.availability === 'connecting') return '正在连接本机任务…';
-  return `暂时无法读取本机任务${app.sessionsError ? `（${app.sessionsError}）` : ''}。可重新连接。`;
+  if (app.availability === 'not_permitted') return t('availability.notPermitted');
+  if (app.availability === 'connecting') return t('availability.connecting');
+  // The brackets belong to the copy: Chinese uses full-width, English ASCII.
+  return t('availability.unavailable', { reason: app.sessionsError ? t('availability.reason', { code: app.sessionsError }) : '' });
 }
 
 function applyActivity() {
@@ -355,23 +373,25 @@ async function initPreferences() {
     try { storage = localStorage; } catch { /* The stable API still works without browser storage. */ }
     const result = await loadPreferences(fetch, storage);
     Object.assign(prefs, result.preferences);
-    setMsg(els.preferenceMsg, result.persisted ? '偏好已保存到本机。' : '调整后会保存到本机。');
+    setMsg(els.preferenceMsg, result.persisted ? t('settings.remembered') : t('settings.adjustHint'));
   } catch (error) {
     console.warn('[pet] preferences_load_failed:', errCode(error), error);
-    setMsg(els.preferenceMsg, `偏好读取失败（${errCode(error)}），当前使用临时设置。`, 'error');
+    setMsg(els.preferenceMsg, t('settings.loadFailed', { code: errCode(error) }), 'error');
+  } finally {
+    preferencesReady = true;
   }
 }
 
 function savePreferences(patch) {
   const version = ++preferenceWriteVersion;
-  setMsg(els.preferenceMsg, '正在保存偏好…');
+  setMsg(els.preferenceMsg, t('settings.saving'));
   preferenceWrites = preferenceWrites.catch(() => {}).then(() => preferenceRequest(fetch, patch)).then((result) => {
     if (!result.persisted) throw new Error('preferences_not_persisted');
-    if (version === preferenceWriteVersion && !disposed) setMsg(els.preferenceMsg, '偏好已保存到本机。', 'ok');
+    if (version === preferenceWriteVersion && !disposed) setMsg(els.preferenceMsg, t('settings.remembered'), 'ok');
   }).catch((error) => {
     console.warn('[pet] preferences_save_failed:', errCode(error), error);
     if (disposed) return;
-    const text = `偏好未保存（${errCode(error)}），本次调整仅临时生效。`;
+    const text = t('settings.saveFailed', { code: errCode(error) });
     setMsg(els.preferenceMsg, text, 'error');
     if (app.mode === 'window') showTransient(text, 'error');
   });
@@ -383,9 +403,9 @@ function selectSession(sessionId, report = (text, kind) => setMsg(els.sessionMsg
   if (!activitySource || app.availability !== 'ready') return;
   panelNavigation?.showTaskDetail();
   callBridge(() => activitySource.selectSession(sessionId)).then(() => {
-    if (app.availability !== 'ready') report('任务信息暂不可用', 'error');
-    else report('已切换任务详情；桌宠继续聚合全部任务。', 'ok');
-  }, (error) => report(`无法关注此任务（${errCode(error)}）`, 'error'));
+    if (app.availability !== 'ready') report(t('tasks.unavailable'), 'error');
+    else report(t('tasks.selectDone'), 'ok');
+  }, (error) => report(t('tasks.selectFailed', { code: errCode(error) }), 'error'));
 }
 
 // Host navigation and display preferences
@@ -394,28 +414,28 @@ function selectSession(sessionId, report = (text, kind) => setMsg(els.sessionMsg
 function describeOpenError(code) {
   switch (code) {
     case 'target_unavailable':
-      return '这个对话已不存在或暂时打不开（target_unavailable）。';
+      return t('tasks.openTargetUnavailable');
     case 'unsupported_source':
-      return '这个对话不在本机，桌宠打不开（unsupported_source）。';
+      return t('tasks.openUnsupportedSource');
     case 'not_permitted':
-      return '需要直接点击按钮才能打开（not_permitted）。';
+      return t('tasks.openNotPermitted');
     case 'host_unavailable':
-      return 'MiniMax Code 主窗口暂不可用，请稍后再试（host_unavailable）。';
+      return t('tasks.openHostUnavailable');
     case 'result_unknown':
-      return '没收到打开结果，请看看主窗口是否已经切过去（result_unknown）。';
+      return t('tasks.openUnknown');
     default:
-      return `没能打开对话（${code}）。`;
+      return t('tasks.openFailed', { code });
   }
 }
 
 /** Must be called synchronously from a click or key handler: the Host checks user activation. */
 function openSessionInHost(sessionId) {
-  if (!canOpenSession) return Promise.resolve({ kind: 'error', text: '当前 MiniMax Code 版本不能从桌宠打开对话。' });
+  if (!canOpenSession) return Promise.resolve({ kind: 'error', text: t('tasks.openNoApi') });
   return callBridge(() => hostNavigation.open({ id: 'session', sessionId, source: 'local' })).then(
     (result) => {
-      if (result?.status === 'opened') return { kind: 'ok', text: '已在 MiniMax Code 主窗口打开这个对话。' };
-      if (result?.reason === 'user_cancelled') return { kind: 'info', text: '已取消，主窗口留在原来的页面。' };
-      return { kind: 'info', text: '这次打开被另一次跳转取代了。' };
+      if (result?.status === 'opened') return { kind: 'ok', text: t('tasks.openOpened') };
+      if (result?.reason === 'user_cancelled') return { kind: 'info', text: t('tasks.openCancelled') };
+      return { kind: 'info', text: t('tasks.openSuperseded') };
     },
     (error) => {
       const code = errCode(error);
@@ -430,7 +450,7 @@ function openSelectedSession() {
   if (!sessionId) return;
   const token = ++detailOpenToken;
   els.detailOpen.disabled = true;
-  setMsg(els.detailOpenMsg, '正在打开对话…');
+  setMsg(els.detailOpenMsg, t('tasks.opening'));
   void openSessionInHost(sessionId).then((result) => {
     if (disposed || token !== detailOpenToken) return;
     els.detailOpen.disabled = false;
@@ -438,17 +458,67 @@ function openSelectedSession() {
   });
 }
 
-function initHostTheme() {
+// The Host reports the resolved theme and interface language (MiniMax Code 3.1.11+).
+// Language changes only after a client restart, so one subscription is enough.
+// The stored preference decides the language, so the first paint waits for it; a Host
+// state that arrives before then is only recorded.
+let preferencesReady = false;
+
+function applyLanguage(tag) {
+  const next = setLanguage(tag ?? hostTag() ?? navigator.language, prefs.language);
+  root.lang = next;
+  applyStaticText();
+  document.title = t('app.title');
+  renderAll();
+  renderNoticeTimeout();
+  return next;
+}
+
+/** Rewrites the static copy in index.html; the HTML keeps the Chinese source text. */
+function applyStaticText() {
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n-attr]')) {
+    for (const pair of node.dataset.i18nAttr.split(',')) {
+      const [attr, key] = pair.split(':').map((part) => part.trim());
+      if (attr && key) node.setAttribute(attr, t(key));
+    }
+  }
+  refreshSegmentedLabels();
+}
+
+/** The tag MiniMax Code reported, or null before its first state. */
+function hostTag() {
+  return root.dataset.hostLanguage ?? null;
+}
+
+function rememberHostLanguage(tag) {
+  if (typeof tag !== 'string' || !tag || tag === hostTag()) return false;
+  root.dataset.hostLanguage = tag;
+  return true;
+}
+
+function initHostUi() {
   const ui = host?.host?.ui;
   if (typeof ui?.subscribe !== 'function') return;
   try {
-    const subscription = ui.subscribe(({ theme }) => {
+    const subscription = ui.subscribe(({ theme, language }) => {
       if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
-    }, { onError: (error) => console.warn('[pet] host_theme_unavailable:', errCode(error), error) });
+      if (rememberHostLanguage(language) && preferencesReady && prefs.language === 'auto') applyLanguage();
+    }, { onError: (error) => console.warn('[pet] host_ui_unavailable:', errCode(error), error) });
     disposers.push(() => subscription?.dispose?.());
   } catch (error) {
-    console.warn('[pet] host_theme_unavailable:', errCode(error), error);
+    console.warn('[pet] host_ui_unavailable:', errCode(error), error);
   }
+}
+
+function setLanguagePreference(value) {
+  if (!['auto', 'zh-Hans', 'en'].includes(value) || value === prefs.language) return;
+  prefs.language = value;
+  savePreferences({ language: value });
+  applyLanguage();
+  setMsg(els.languageMsg, value === 'auto'
+    ? t('settings.languageFollows', { language: hostTag() ?? navigator.language })
+    : t('settings.languageSet', { language: value }), 'ok');
 }
 
 // ---------------------------------------------------------------------------
@@ -456,16 +526,16 @@ function initHostTheme() {
 // ---------------------------------------------------------------------------
 
 function describeModeError(code, target) {
-  const where = target === 'window' ? '桌面上是否已经出现宠物' : '宠物是否已经回到面板';
+  const where = target === 'window' ? t('mode.whereWindow') : t('mode.wherePanel');
   switch (code) {
     case 'not_permitted':
-      return '需要直接点击才能切换窗口（not_permitted）';
+      return t('mode.notPermitted');
     case 'busy':
-      return '窗口正在切换，请稍候再试（busy）';
+      return t('mode.busy');
     case 'result_unknown':
-      return `没收到切换结果，请看看${where}（result_unknown）`;
+      return t('mode.unknown', { where });
     default:
-      return `切换失败（${code}）`;
+      return t('mode.failed', { code });
   }
 }
 
@@ -486,7 +556,7 @@ async function initMode() {
     const code = errCode(error);
     console.error('[pet] window_state_unavailable:', code, error);
     applyMode('inline');
-    setMsg(els.popoutMsg, `读不到窗口状态（${code}）`, 'error');
+    setMsg(els.popoutMsg, t('mode.windowStateUnavailable', { code }), 'error');
   }
 }
 
@@ -520,8 +590,8 @@ function onWindowState(state) {
         app.clickThrough = result.interactive ? false : null;
         app.restoringPosition = false;
         if (result.error) showTransient(result.interactive
-          ? `位置未恢复（${result.error}），当前窗口仍可交互。`
-          : `窗口交互状态未确认（${result.error}），请收回面板重试。`, 'error');
+          ? t('mode.positionFailed', { code: result.error })
+          : t('mode.interactionUnknown', { code: result.error }), 'error');
         rememberPosition();
       });
       return;
@@ -588,7 +658,7 @@ function applyMode(mode) {
 function popOut() {
   if (!win) return;
   els.popoutBtn.disabled = true;
-  setMsg(els.popoutMsg, '正在弹出…');
+  setMsg(els.popoutMsg, t('app.popOutBusy'));
   app.modeSwitching = true;
   // Synchronous inside the click handler: mode changes need a user gesture.
   callBridge(() => win.update({ mode: 'window', width: 280, height: 340 }))
@@ -726,7 +796,7 @@ function noteForwardedMove(e) {
   if (app.ctFailures >= 3) {
     app.ctForwarding = 'broken';
     console.warn('[pet] click_through_forwarding_unavailable');
-    showTransient('这里收不到穿透时的鼠标移动，透明区域会挡住下面的点击', 'error');
+    showTransient(t('desk.transientTimeout'), 'error');
   }
 }
 
@@ -839,13 +909,13 @@ function onSpritePointerMove(e) {
     hideQuickbar();
     els.sprite.classList.add('is-dragging');
     refreshInteractivity();
-    if (!d.win) console.warn('[pet] drag_without_window_position: 还没拿到窗口位置，只播放动画');
+    if (!d.win) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
   }
   updateDragDirection(d, e.screenX);
   if (!d.win) return;
   callBridge(() => win.update({ x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy) })).catch((error) => {
     const code = errCode(error);
-    if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted（目标位置不在任何屏幕上）');
+    if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
   });
 }
@@ -942,15 +1012,15 @@ function renderBubble() {
     kind = app.availability === 'connecting' ? 'info' : 'error';
   } else {
     if (a.session) {
-      text = a.session.needsAnswer ? '需要你回答' : a.status === 'running' ? '' : STATUS_TEXT[a.status];
+      text = a.session.needsAnswer ? t('status.needsAnswer') : a.status === 'running' ? '' : statusText(a.status);
       title = a.session.title;
       clickable = !!text;
     }
 
   }
   if (app.source === 'demo') {
-    title = '状态演示';
-    text = STATUS_TEXT[app.demoStatus] ? `演示：${STATUS_TEXT[app.demoStatus]}` : '';
+    title = t('tasks.demoTitle');
+    text = statusText(app.demoStatus) ? t('tasks.demoStatus', { status: statusText(app.demoStatus) }) : '';
     clickable = false;
   }
   els.bubbleTitle.textContent = title;
@@ -959,18 +1029,60 @@ function renderBubble() {
   els.bubble.dataset.kind = kind;
   els.bubble.classList.toggle('is-clickable', clickable);
   els.bubble.tabIndex = text ? 0 : -1;
-  els.bubble.setAttribute('aria-label', text ? `${title ? `${title}，` : ''}${text}，打开桌宠工作面板` : '任务提示');
+  els.bubble.setAttribute('aria-label', text
+    ? (title ? t('desk.bubbleAriaTitle', { title, text }) : t('desk.bubbleAria', { text }))
+    : t('desk.bubbleIdle'));
   els.bubble.hidden = !text || (!app.transient && !els.notificationStack.hidden);
   app.bubbleSessionId = clickable && a.session ? a.session.sessionId : null;
   refreshInteractivity();
 }
 
+function stopNoticeTimer() {
+  clearTimeout(noticeTimer);
+  noticeTimer = null;
+}
+
+function armNoticeTimer(shown) {
+  stopNoticeTimer();
+  if (!(prefs.noticeTimeout > 0) || noticePaused || !shown.length) return;
+  let next = Infinity;
+  for (const item of shown) {
+    const remaining = noticeRemaining(item, { shownAt: noticeShownAt, now: Date.now(), timeoutSeconds: prefs.noticeTimeout });
+    if (remaining !== null) next = Math.min(next, remaining);
+  }
+  if (!Number.isFinite(next)) return;
+  noticeTimer = setTimeout(() => {
+    noticeTimer = null;
+    renderBubble();
+  }, Math.max(250, next + 50));
+}
+
+function pauseNotices(paused) {
+  if (paused === noticePaused) return;
+  const now = Date.now();
+  noticePaused = paused;
+  if (paused) { noticePauseAt = now; return; }
+  // Shift every card's start by the paused span so the remaining time is exact.
+  const pausedMs = now - noticePauseAt;
+  noticePauseAt = 0;
+  if (pausedMs > 0) for (const [id, since] of noticeShownAt) noticeShownAt.set(id, since + pausedMs);
+  renderBubble();
+}
+
 function renderNotificationStack() {
   const container = els.notificationStack;
-  const items = notificationItems(reminders.getState().items);
+  const all = notificationItems(reminders.getState().items);
+  const now = Date.now();
+  // Records the moment a card first appeared; a card that stays hidden by the
+  // workbench keeps its original start instead of restarting on every paint.
+  for (const item of all) if (!noticeShownAt.has(item.sessionId)) noticeShownAt.set(item.sessionId, now);
+  for (const id of [...noticeShownAt.keys()]) if (!all.some((item) => item.sessionId === id)) noticeShownAt.delete(id);
+  const items = visibleNotices(all, { shownAt: noticeShownAt, now, timeoutSeconds: prefs.noticeTimeout });
   const visible = app.mode === 'window' && app.availability === 'ready' && items.length
     && !app.workbenchOpen && !app.transient;
   container.hidden = !visible;
+  // Keep a timer running only while cards can actually expire on screen.
+  if (visible) armNoticeTimer(items); else stopNoticeTimer();
   if (!visible) return;
   const previews = notificationPreviews?.getState().previews ?? {};
   const existing = new Map([...container.children].map((node) => [node.dataset.sessionId, node]));
@@ -990,8 +1102,8 @@ function renderNotificationStack() {
     open.children[0].textContent = item.title;
     // A notification shows a five-line preview, so markdown is flattened, not rendered.
     open.children[1].textContent = markdownToPlainText(notificationText(item, previews));
-    open.setAttribute('aria-label', `查看通知：${item.title}`);
-    node.children[1].setAttribute('aria-label', `关闭通知：${item.title}`);
+    open.setAttribute('aria-label', t('desk.noticeView', { title: item.title }));
+    node.children[1].setAttribute('aria-label', t('desk.noticeClose', { title: item.title }));
     return node;
   });
   if (nodes.length !== container.children.length || nodes.some((node, i) => node !== container.children[i])) container.replaceChildren(...nodes);
@@ -1027,18 +1139,18 @@ function armQuickbarHide() {
 // ---------------------------------------------------------------------------
 
 const MENU_TITLES = {
-  root: '宠物菜单',
-  demo: '动作预览（演示）',
-  sessions: '全部任务',
-  pets: '换宠物',
-  scale: '大小',
+  root: 'desk.menu',
+  demo: 'desk.menuDemoTitle',
+  sessions: 'desk.menuAllTasks',
+  pets: 'desk.menuPets',
+  scale: 'desk.menuScale',
 };
 
 function menuModel(view) {
   if (view === 'demo') {
     return [
       ...DEMO_ORDER.map((s) => ({
-        label: STATUS_LABEL[s],
+        label: statusLabel(s),
         role: 'menuitemradio',
         checked: app.demoStatus === s,
         run: () => setDemoStatus(s),
@@ -1046,16 +1158,16 @@ function menuModel(view) {
     ];
   }
   if (view === 'sessions') {
-    if (!app.sessions.length) return [{ label: '还没有会话', disabled: true }];
+    if (!app.sessions.length) return [{ label: t('desk.menuEmptySessions'), disabled: true }];
     return app.sessions.map((s) => ({
       label: s.title,
-      detail: STATUS_LABEL[s.status] ?? s.status,
+      detail: statusLabel(s.status),
       disabled: false,
       run: () => selectSession(s.sessionId, showTransient),
     }));
   }
   if (view === 'pets') {
-    if (!app.pets.length) return [{ label: '没有可用的宠物', disabled: true }];
+    if (!app.pets.length) return [{ label: t('desk.menuEmptyPets'), disabled: true }];
     return app.pets.map((p) => ({
       label: p.displayName,
       detail: `v${p.version}`,
@@ -1066,19 +1178,19 @@ function menuModel(view) {
   }
   if (view === 'scale') {
     return SCALES.map((s) => ({
-      label: s.label,
+      label: t(s.key),
       role: 'menuitemradio',
       checked: prefs.scale === s.value,
       run: () => setScale(s.value),
     }));
   }
   return [
-    app.source === 'demo' && { label: '动作预览', submenu: 'demo' },
-    app.source === 'real' && app.availability === 'ready' && { label: '全部任务', run: () => { void openWorkbench('tasks'); } },
-    app.source === 'real' && app.availability !== 'ready' && { label: '重新连接会话', run: () => { void activitySource?.refresh(); } },
-    { label: '换宠物', submenu: 'pets' },
-    { label: '大小', submenu: 'scale' },
-    win && { label: '收回到面板', run: returnToPanel },
+    app.source === 'demo' && { label: t('desk.menuDemo'), submenu: 'demo' },
+    app.source === 'real' && app.availability === 'ready' && { label: t('desk.menuAllTasks'), run: () => { void openWorkbench('tasks'); } },
+    app.source === 'real' && app.availability !== 'ready' && { label: t('desk.menuReconnect'), run: () => { void activitySource?.refresh(); } },
+    { label: t('desk.menuPets'), submenu: 'pets' },
+    { label: t('desk.menuScale'), submenu: 'scale' },
+    win && { label: t('desk.menuCollapse'), run: returnToPanel },
   ].filter(Boolean);
 }
 
@@ -1144,10 +1256,10 @@ function goMenu(view) {
 
 function renderMenu(focusIndex = 0) {
   const nodes = [];
-  if (app.menuView !== 'root') nodes.push(menuButton({ label: '返回', back: true }));
+  if (app.menuView !== 'root') nodes.push(menuButton({ label: t('desk.menuBack'), back: true }));
   for (const item of menuModel(app.menuView)) nodes.push(menuButton(item));
   els.menu.replaceChildren(...nodes);
-  els.menu.setAttribute('aria-label', MENU_TITLES[app.menuView] ?? '菜单');
+  els.menu.setAttribute('aria-label', t(MENU_TITLES[app.menuView] ?? 'desk.menu'));
   els.menu.hidden = false;
   positionMenu();
   const buttons = menuButtons();
@@ -1269,11 +1381,11 @@ async function refreshPets() {
   try {
     res = await fetch('/api/pets', { cache: 'no-store' });
   } catch (error) {
-    throw Object.assign(new Error('读不到宠物列表'), { code: 'pets_list_unreachable', cause: error });
+    throw Object.assign(new Error(t('appearance.readListFailed')), { code: 'pets_list_unreachable', cause: error });
   }
   if (!res.ok) {
     const { code, message } = await readErrorBody(res);
-    throw Object.assign(new Error(message || '读不到宠物列表'), { code });
+    throw Object.assign(new Error(message || t('appearance.readListFailed')), { code });
   }
   const body = await res.json();
   app.pets = Array.isArray(body?.pets) ? body.pets : [];
@@ -1302,12 +1414,12 @@ async function resolveThumbs() {
 async function selectPet(id) {
   const summary = app.pets.find((p) => p.id === id);
   if (!summary) {
-    showLoadError({ code: 'pet_not_found', message: `没有 id 为 ${id} 的宠物` });
+    showLoadError({ code: 'pet_not_found', message: t('appearance.missingId', { id }) });
     return 'failed';
   }
   const token = ++app.selectToken;
   let result = 'selected';
-  setMsg(els.galleryMsg, `正在加载「${summary.displayName}」…`);
+  setMsg(els.galleryMsg, t('appearance.loadingPet', { name: summary.displayName }));
   try {
     const loaded = await loadPet(new URL(summary.petJsonUrl, location.href).href);
     if (token !== app.selectToken) return 'superseded';
@@ -1342,7 +1454,7 @@ function showLoadError(error, name) {
   }
   const code = errCode(error);
   const detail = error.message && error.message !== code ? `：${error.message}` : '';
-  const text = `${name ? `「${name}」` : ''}加载失败（${code}）${detail}`;
+  const text = t('appearance.loadFailedDetail', { name: name ? `「${name}」` : '', code, detail });
   console.error('[pet] load_failed:', code, error);
   app.loadError = text;
   els.loadError.textContent = text;
@@ -1352,20 +1464,20 @@ function showLoadError(error, name) {
 }
 
 async function deletePet(pet) {
-  if (!window.confirm(`删除导入的宠物「${pet.displayName}」？删除后不能恢复。`)) {
-    setMsg(els.galleryMsg, '已取消删除');
+  if (!window.confirm(t('appearance.confirmDelete', { name: pet.displayName }))) {
+    setMsg(els.galleryMsg, t('appearance.deleteCancelled'));
     return;
   }
-  setMsg(els.galleryMsg, `正在删除「${pet.displayName}」…`);
+  setMsg(els.galleryMsg, t('appearance.deleting', { name: pet.displayName }));
   try {
     const res = await fetch(`/api/pets/${encodeURIComponent(pet.id)}`, { method: 'DELETE' });
     if (!res.ok) {
       const { code, message } = await readErrorBody(res);
-      setMsg(els.galleryMsg, `删除失败（${code}）${message ? `：${message}` : ''}`, 'error');
+      setMsg(els.galleryMsg, t('appearance.deleteFailed', { code, detail: message ? `：${message}` : '' }), 'error');
       return;
     }
     await refreshPets();
-    setMsg(els.galleryMsg, `已删除「${pet.displayName}」`, 'ok');
+    setMsg(els.galleryMsg, t('appearance.deleted', { name: pet.displayName }), 'ok');
     if (app.pet?.id === pet.id || prefs.petId === pet.id) {
       const next = app.pets[0];
       if (next) await selectPet(next.id);
@@ -1373,7 +1485,7 @@ async function deletePet(pet) {
   } catch (error) {
     const code = errCode(error);
     console.error('[pet] delete_failed:', code, error);
-    setMsg(els.galleryMsg, `删除失败（${code}）`, 'error');
+    setMsg(els.galleryMsg, t('appearance.deleteFailed', { code, detail: '' }), 'error');
   }
 }
 
@@ -1392,7 +1504,7 @@ function setScale(value) {
         isCurrent: () => current() && app.mode === 'window',
       });
       if (!current() || result.cancelled) return;
-      if (result.error) { showTransient(`尺寸未调整（${result.error}），请稍后重试。`, 'error'); return; }
+      if (result.error) { showTransient(t('mode.resizeFailed', { code: result.error }), 'error'); return; }
       if (result.state) onWindowState(result.state);
       player.setScale(value);
       if (app.menuOpen) positionMenu();
@@ -1450,21 +1562,21 @@ function renderImportErrors() {
 function precheckImport(petJson, file) {
   const errs = [];
   if (typeof petJson.id !== 'string' || !ID_RE.test(petJson.id)) {
-    errs.push({ code: 'invalid_id', message: 'id 只能用小写字母、数字、点、下划线、连字符，最长 80 个字符' });
+    errs.push({ code: 'invalid_id', message: t('import.invalidId') });
   } else if (app.pets.some((p) => p.id === petJson.id && p.source === 'bundled')) {
-    errs.push({ code: 'bundled_conflict', message: '和内置宠物的 id 重复了' });
+    errs.push({ code: 'bundled_conflict', message: t('import.bundledConflict') });
   }
   if (typeof petJson.displayName !== 'string' || petJson.displayName.length < 1 || petJson.displayName.length > 80) {
-    errs.push({ code: 'invalid_pet_json', message: 'displayName 需要 1–80 个字符' });
+    errs.push({ code: 'invalid_pet_json', message: t('import.displayNameRange') });
   }
   if (petJson.description != null && (typeof petJson.description !== 'string' || petJson.description.length > 300)) {
-    errs.push({ code: 'invalid_pet_json', message: 'description 最多 300 个字符' });
+    errs.push({ code: 'invalid_pet_json', message: t('import.descriptionRange') });
   }
   if (!/^[^/\\]+\.(webp|png)$/.test(petJson.spritesheetPath)) {
-    errs.push({ code: 'invalid_sprite_name', message: 'spritesheetPath 只能是同目录下的 .webp 或 .png 文件名' });
+    errs.push({ code: 'invalid_sprite_name', message: t('import.spriteNameRule') });
   }
   if (Math.ceil(file.size / 3) * 4 + 4096 > IMPORT_BODY_LIMIT) {
-    errs.push({ code: 'payload_too_large', message: '图集太大，上传内容会超过 12 MB' });
+    errs.push({ code: 'payload_too_large', message: t('import.tooLarge') });
   }
   return errs;
 }
@@ -1481,8 +1593,8 @@ async function handleImportFiles(fileList) {
     setMsg(
       els.importMsg,
       jsons.length === 0
-        ? '缺少 pet.json，请和图集一起选择（import_pet_json_missing）'
-        : '一次只能导入一个宠物，选了多个 .json（import_pet_json_ambiguous）',
+        ? t('import.noJson')
+        : t('import.tooManyJson'),
       'error',
     );
     return;
@@ -1493,18 +1605,18 @@ async function handleImportFiles(fileList) {
   } catch (error) {
     if (!current()) return;
     console.warn('[pet] import_pet_json_unreadable:', error);
-    setMsg(els.importMsg, `pet.json 不是有效的 JSON（pet_json_unreadable）`, 'error');
+    setMsg(els.importMsg, t('import.unreadableJson'), 'error');
     return;
   }
   if (!current()) return;
   if (!petJson || typeof petJson !== 'object' || Array.isArray(petJson) || typeof petJson.spritesheetPath !== 'string') {
-    setMsg(els.importMsg, 'pet.json 缺少 spritesheetPath（pet_json_invalid）', 'error');
+    setMsg(els.importMsg, t('import.noSpritesheetPath'), 'error');
     return;
   }
   const spriteName = basename(petJson.spritesheetPath);
   const file = files.find((f) => f.name === spriteName);
   if (!file) {
-    setMsg(els.importMsg, `没找到 ${spriteName}，请和 pet.json 一起选择（import_sprite_missing）`, 'error');
+    setMsg(els.importMsg, t('import.noSprite', { name: spriteName }), 'error');
     return;
   }
 
@@ -1512,10 +1624,10 @@ async function handleImportFiles(fileList) {
   importState.file = file;
   importState.blobUrl = URL.createObjectURL(file);
   importState.errors = precheckImport(petJson, file);
-  els.importName.textContent = petJson.displayName || petJson.id || '未命名宠物';
-  els.importMeta.textContent = `id：${petJson.id ?? '—'} · 图集：${file.name}（${Math.round(file.size / 1024)} KB）`;
+  els.importName.textContent = petJson.displayName || petJson.id || t('import.unnamed');
+  els.importMeta.textContent = t('import.meta', { id: petJson.id ?? '—', file: file.name, kb: Math.round(file.size / 1024) });
   els.importPreview.hidden = false;
-  els.importStateText.textContent = '正在检查图集…';
+  els.importStateText.textContent = t('import.checking');
   renderImportErrors();
 
   const blobUrl = importState.blobUrl;
@@ -1523,13 +1635,13 @@ async function handleImportFiles(fileList) {
     const loaded = await loadPetFromParts(petJson, blobUrl);
     if (!current() || importState.blobUrl !== blobUrl) return;
     importState.loaded = loaded;
-    els.importMeta.textContent += ` · v${loaded.version}${loaded.version === 2 ? '（支持看向鼠标）' : ''}`;
+    els.importMeta.textContent += t('import.metaVersion', { version: loaded.version, looks: loaded.version === 2 ? t('appearance.looks') : '' });
     startImportPreview(loaded);
   } catch (error) {
     if (!current() || importState.blobUrl !== blobUrl) return;
     const code = errCode(error);
     console.warn('[pet] import_preview_failed:', code, error);
-    importState.errors.push({ code, message: error?.message && error.message !== code ? error.message : '图集无法预览' });
+    importState.errors.push({ code, message: error?.message && error.message !== code ? error.message : t('import.previewFailed') });
     els.importStateText.textContent = '';
   }
   renderImportErrors();
@@ -1545,7 +1657,7 @@ function startImportPreview(loaded) {
     const state = STATES[i % STATES.length];
     i++;
     preview.play(state, { loop: true }).catch(logError('import_preview_play'));
-    els.importStateText.textContent = `预览动作：${state}（${((i - 1) % STATES.length) + 1}/${STATES.length}）`;
+    els.importStateText.textContent = t('import.previewState', { state, index: ((i - 1) % STATES.length) + 1, total: STATES.length });
   };
   step();
   importState.cycleTimer = setInterval(step, 1200);
@@ -1558,7 +1670,7 @@ function fileToBase64(file) {
       const result = String(reader.result);
       resolve(result.slice(result.indexOf(',') + 1));
     };
-    reader.onerror = () => reject(Object.assign(new Error('读不到图集文件'), { code: 'sprite_unreadable', cause: reader.error }));
+    reader.onerror = () => reject(Object.assign(new Error(t('import.spriteUnreadable')), { code: 'sprite_unreadable', cause: reader.error }));
     reader.readAsDataURL(file);
   });
 }
@@ -1586,7 +1698,7 @@ async function confirmImport() {
   const current = () => !disposed && generation === importState.generation;
   importState.busy = true;
   renderImportErrors();
-  setMsg(els.importMsg, '正在导入…');
+  setMsg(els.importMsg, t('import.sessionBusy'));
   try {
     const base64 = await fileToBase64(file);
     if (!current()) return;
@@ -1594,8 +1706,8 @@ async function confirmImport() {
     let { res, data } = await postPet(payload);
     if (!current()) return;
     if (res.status === 409 && data?.error === 'pet_exists') {
-      if (!window.confirm(`已经导入过 id 为「${petJson.id}」的宠物，要用这次的文件替换它吗？`)) {
-        setMsg(els.importMsg, '已取消导入，原来的宠物没有变化');
+      if (!window.confirm(t('import.alreadyExists', { id: petJson.id }))) {
+        setMsg(els.importMsg, t('import.cancelledKept'));
         return;
       }
       ({ res, data } = await postPet({ ...payload, replace: true }));
@@ -1603,7 +1715,7 @@ async function confirmImport() {
     }
     if (!res.ok) {
       const code = data?.error || `http_${res.status}`;
-      setMsg(els.importMsg, `导入失败（${code}）${data?.message ? `：${data.message}` : ''}`, 'error');
+      setMsg(els.importMsg, t('import.failed', { code, detail: data?.message ? `：${data.message}` : '' }), 'error');
       return;
     }
     const newId = data?.pet?.id ?? petJson.id;
@@ -1617,17 +1729,17 @@ async function confirmImport() {
     const selection = await selectPet(newId);
     if (!current()) return;
     if (selection === 'failed') {
-      const message = '文件已导入，但宠物加载失败；请返回外观重新选择';
+      const message = t('import.loadFailedAfterImport');
       setMsg(els.importMsg, message, 'error');
       setMsg(els.galleryMsg, message, 'error');
       return;
     }
     if (selection !== 'selected' || app.pet?.id !== newId) {
-      setMsg(els.importMsg, '文件已导入，已保留你当前的宠物选择', 'ok');
+      setMsg(els.importMsg, t('import.keptSelection'), 'ok');
       return;
     }
     panelNavigation?.completeImport();
-    const message = `导入成功，已切换到「${data?.pet?.displayName ?? newId}」`;
+    const message = t('import.success', { name: data?.pet?.displayName ?? newId });
     setMsg(els.importMsg, message, 'ok');
     setMsg(els.galleryMsg, message, 'ok');
   } catch (error) {
@@ -1635,8 +1747,8 @@ async function confirmImport() {
     const code = errCode(error);
     console.error('[pet] import_failed:', code, error);
     setMsg(els.importMsg, saved
-      ? `文件已导入，但暂时无法加载列表；请返回外观重试（${code}）`
-      : `导入失败（${code}）`, 'error');
+      ? t('import.listFailedAfterImport', { code })
+      : t('import.failedCode', { code }), 'error');
   } finally {
     if (current()) { importState.busy = false; renderImportErrors(); }
   }
@@ -1650,26 +1762,28 @@ function renderAll() {
   renderHeader();
   renderActivityUI();
   renderScale();
+  renderNoticeTimeout();
+  renderLanguage();
   renderGallery();
   renderBubble();
 }
 
 function renderHeader() {
   const pet = app.pet;
-  els.petName.textContent = pet?.displayName ?? (app.loadError ? '宠物没加载出来' : '正在加载宠物…');
+  els.petName.textContent = pet?.displayName ?? (app.loadError ? t('appearance.loadFailed') : t('appearance.loading'));
   els.petDesc.textContent = pet?.description ?? '';
   els.versionBadge.hidden = !pet;
-  els.versionBadge.textContent = pet?.version === 2 ? 'v2·可看向鼠标' : 'v1';
-  const sourceLabel = app.source === 'demo' ? '资源预览' : app.availability === 'ready' ? '真实会话' : app.availability === 'connecting' ? '连接中' : app.availability === 'not_permitted' ? '未授权' : '不可用';
+  els.versionBadge.textContent = pet?.version === 2 ? t('appearance.v2') : 'v1';
+  const sourceLabel = app.source === 'demo' ? t('availability.demo') : app.availability === 'ready' ? t('availability.real') : app.availability === 'connecting' ? t('availability.connectingShort') : app.availability === 'not_permitted' ? t('availability.notPermittedShort') : t('availability.unavailableShort');
   els.sourceBadge.textContent = sourceLabel;
   els.sourceBadge.dataset.source = app.source;
   els.popoutBtn.hidden = !win || app.mode === 'window';
 
   let note = '';
   if (app.mode === 'standalone') {
-    note = '普通浏览器没有任务和窗口能力；可用 ?demo=1 手动预览资源动作。';
+    note = t('app.hostNote.browser');
   } else if (!win) {
-    note = '当前 MiniMax Code 版本不支持弹出窗口，只能在面板里使用。';
+    note = t('app.hostNote.noWindow');
   }
   els.hostNote.textContent = note;
   els.hostNote.hidden = !note;
@@ -1682,34 +1796,34 @@ function renderActivityUI() {
   const available = real && app.availability === 'ready';
   panelNavigation?.update({ reminderCount: reminders.getState().items.length, availability: app.availability });
   els.taskConnection.hidden = available || !real;
-  if (!available && real) setMsg(els.taskConnection, `${availabilityText()} 可在设置中重新连接。`, app.availability === 'connecting' ? 'info' : 'error');
+  if (!available && real) setMsg(els.taskConnection, t('availability.reconnectHint', { text: availabilityText() }), app.availability === 'connecting' ? 'info' : 'error');
   els.sessionList.hidden = !available;
   els.activityRetry.hidden = !real || available;
   if (available) {
     const coverage = askObserver?.getState();
-    els.activityNote.textContent = `聚合最近 50 个用户主会话及本次可见活动。新出现的 ask 实时跟随 ${coverage?.watchingIds.length ?? 0}/${coverage?.runningCount ?? 0} 个运行任务；订阅前的问题无法恢复。选择条目只查看详情。`;
+    els.activityNote.textContent = t('tasks.coverage', { watching: coverage?.watchingIds.length ?? 0, running: coverage?.runningCount ?? 0 });
     renderSessionList(a.session);
   } else if (real) {
     els.activityNote.textContent = availabilityText();
     els.sessionList.replaceChildren();
   } else {
-    els.activityNote.textContent = '手动资源动作预览（演示），不代表真实任务。';
+    els.activityNote.textContent = t('tasks.demoHint');
     syncSegmented(els.demoStatus, app.demoStatus);
   }
-  els.aggregateCounts.textContent = available ? aggregateText(app.aggregate?.counts) : '';
+  els.aggregateCounts.textContent = available ? aggregateText(app.aggregate?.counts, localeFor()) : '';
   els.clearCompleted.hidden = !available || !app.aggregate?.counts.completed;
   renderReminders();
-  const text = real && !available ? availabilityText() : a.session?.needsAnswer ? '需要你回答' : a.session || !real ? STATUS_TEXT[a.status] || '空闲中' : '暂无当前提醒';
-  els.panelStatus.textContent = a.session?.needsAnswer ? `「${a.session.title}」需要你回答` : a.session && STATUS_TEXT[a.status] ? `「${a.session.title}」${text}` : text;
+  const text = real && !available ? availabilityText() : a.session?.needsAnswer ? t('status.needsAnswer') : a.session || !real ? statusText(a.status) || t('status.idleNow') : t('tasks.noCurrent');
+  els.panelStatus.textContent = a.session?.needsAnswer ? t('status.needsAnswerFor', { title: a.session.title }) : a.session && statusText(a.status) ? `「${a.session.title}」${text}` : text;
   renderDetail();
-  const name = app.pet?.displayName ?? '宠物';
-  const stateLabel = a.session?.needsAnswer ? '需要你回答' : STATUS_LABEL[a.status] || sourceLabelForActivity();
+  const name = app.pet?.displayName ?? t('desk.pet');
+  const stateLabel = a.session?.needsAnswer ? t('status.needsAnswer') : statusLabel(a.status) || sourceLabelForActivity();
   els.sprite.setAttribute('aria-label', app.mode === 'window'
-    ? `${name}，${stateLabel}。点击或回车查看任务，可拖动` : `${name}，${stateLabel}`);
+    ? t('desk.petAriaWindow', { name, state: stateLabel }) : t('desk.petAria', { name, state: stateLabel }));
 
 }
 
-function sourceLabelForActivity() { return app.availability === 'connecting' ? '连接中' : app.availability === 'not_permitted' ? '未授权读取会话' : '会话状态不可用'; }
+function sourceLabelForActivity() { return app.availability === 'connecting' ? t('availability.connectingShort') : app.availability === 'not_permitted' ? t('availability.readNotPermitted') : t('availability.sessionUnavailable'); }
 
 function renderSessionList(current) {
   const focusedId = els.sessionList.contains(document.activeElement) ? document.activeElement?.dataset?.sessionId : null;
@@ -1729,17 +1843,17 @@ function renderSessionList(current) {
     pill.className = 'pill';
     const displayStatus = taskStatus(s);
     pill.dataset.status = displayStatus === 'needs_answer' ? 'needs_input' : displayStatus;
-    pill.textContent = s.needsAnswer ? '需要你回答' : STATUS_LABEL[displayStatus] ?? displayStatus;
+    pill.textContent = s.needsAnswer ? t('status.needsAnswer') : statusLabel(displayStatus);
     btn.append(title);
     if (current?.sessionId === s.sessionId) {
       const tag = document.createElement('span');
       tag.className = 'session-current';
-      tag.textContent = '当前提示';
+      tag.textContent = t('status.currentHint');
       btn.append(tag);
     }
     btn.append(pill);
     if (app.selectedSessionId === s.sessionId) btn.setAttribute('aria-current', 'true');
-    btn.setAttribute('aria-label', `${s.title}，${pill.textContent}，查看详情`);
+    btn.setAttribute('aria-label', t('tasks.sessionRow', { title: s.title, status: pill.textContent }));
     btn.addEventListener('click', () => selectSession(s.sessionId, (t, k) => setMsg(els.sessionMsg, t, k)));
     li.append(btn);
     return li;
@@ -1747,7 +1861,7 @@ function renderSessionList(current) {
   if (!items.length) {
     const li = document.createElement('li');
     li.className = 'muted';
-    li.textContent = '还没有会话';
+    li.textContent = t('tasks.noSessions');
     items.push(li);
   }
   els.sessionList.replaceChildren(...items);
@@ -1759,23 +1873,23 @@ function renderDetail() {
   const detail = app.detail;
   const session = app.sessions.find((row) => row.sessionId === app.selectedSessionId);
   const needsAnswer = session?.needsAnswer;
-  els.detailTitle.textContent = detail?.title || '任务概览';
+  els.detailTitle.textContent = detail?.title || t('tasks.summary');
   const status = taskStatus(session) || taskStatus(detail);
-  els.detailStatus.textContent = needsAnswer ? '需要你回答' : detail ? STATUS_LABEL[status] || status : '—';
-  els.detailTime.textContent = detail ? new Date(detail.updatedAtMs).toLocaleString('zh-CN') : '—';
+  els.detailStatus.textContent = needsAnswer ? t('status.needsAnswer') : detail ? statusLabel(status) : '—';
+  els.detailTime.textContent = detail ? new Date(detail.updatedAtMs).toLocaleString(localeFor()) : '—';
   els.detailError.textContent = detail?.error || app.detailError || '';
   els.detailError.hidden = !els.detailError.textContent;
-  const reply = needsAnswer ? '需要你回答' : detail?.lastAssistantText || '';
+  const reply = needsAnswer ? t('status.needsAnswer') : detail?.lastAssistantText || '';
   // The reply is markdown; renderMarkdown keeps the DOM when the text is unchanged,
   // so a background refresh cannot disturb the reading position.
   renderMarkdown(els.detailReply, reply);
   if (panelDetailId !== app.selectedSessionId) { els.detailReply.scrollTop = 0; panelDetailId = app.selectedSessionId; }
   renderDetailOpen(needsAnswer);
-  els.detailNote.textContent = app.source === 'demo' ? '资源动作预览，不提供真实任务概览。'
+  els.detailNote.textContent = app.source === 'demo' ? t('tasks.demoNote')
     : app.availability !== 'ready' ? availabilityText()
-      : app.detailLoading ? (detail ? '正在更新…' : '正在读取任务…') : !detail ? '选择任务后查看最近回复。'
-        : needsAnswer ? (canOpenSession ? '点「去回答」在主窗口打开这个对话后回答。' : '请回到 MiniMax Code 的对应聊天回答。')
-          : detail.lastAssistantText ? `显示任务的最近回复。${canOpenSession ? '点「打开对话」继续处理。' : '后续处理请回到对应聊天。'}` : '这项任务暂时没有可查看的回复。';
+      : app.detailLoading ? (detail ? t('tasks.replyUpdating') : t('tasks.replyLoading')) : !detail ? t('tasks.selectHint')
+        : needsAnswer ? (canOpenSession ? t('tasks.answerNextOpen') : t('tasks.answerNextChat'))
+          : detail.lastAssistantText ? t('tasks.replyNote', { next: canOpenSession ? t('tasks.replyNextOpen') : t('tasks.replyNextChat') }) : t('tasks.replyEmpty');
 }
 
 function renderDetailOpen(needsAnswer) {
@@ -1787,7 +1901,7 @@ function renderDetailOpen(needsAnswer) {
     setMsg(els.detailOpenMsg, '');
   }
   els.detailActions.hidden = !canOpenSession || !app.selectedSessionId || app.source !== 'real' || app.availability !== 'ready';
-  els.detailOpen.textContent = needsAnswer ? '去回答' : '打开对话';
+  els.detailOpen.textContent = needsAnswer ? t('tasks.goAnswer') : t('tasks.open');
 }
 
 function initWorkbench() {
@@ -1808,14 +1922,14 @@ function renderCompactView() {
   const notice = reminders.getState();
   notificationPreviews?.update({ availability: app.availability, items: notificationItems(notice.items) });
   const previews = notificationPreviews?.getState().previews ?? {};
-  workbenchView?.update({ reminders: { ...notice, items: notice.items.map((item) => ({ ...item, previewText: item.needsAnswer ? '需要你回答' : markdownToPlainText(previews[item.sessionId] || '') })) }, allSessions: app.sessions,
+  workbenchView?.update({ reminders: { ...notice, items: notice.items.map((item) => ({ ...item, previewText: item.needsAnswer ? t('status.needsAnswer') : markdownToPlainText(previews[item.sessionId] || '') })) }, allSessions: app.sessions,
     taskSelection: { availability: app.availability, selectedSessionId: app.selectedSessionId, session: app.sessions.find((row) => row.sessionId === app.selectedSessionId), detail: app.detail, detailLoading: app.detailLoading, detailError: app.detailError } });
 }
 
 function openTaskPreview(sessionId) {
   if (!activitySource || app.availability !== 'ready') { showTransient(availabilityText(), 'error'); return; }
-  try { void activitySource.selectSession(sessionId).catch((error) => showTransient(`无法读取任务（${errCode(error)}）。`, 'error')); }
-  catch (error) { showTransient(`无法读取任务（${errCode(error)}）。`, 'error'); return; }
+  try { void activitySource.selectSession(sessionId).catch((error) => showTransient(t('desk.replyFailed', { code: errCode(error) }), 'error')); }
+  catch (error) { showTransient(t('desk.replyFailed', { code: errCode(error) }), 'error'); return; }
   void openWorkbench('detail');
 }
 
@@ -1844,7 +1958,7 @@ async function openWorkbench(view = 'tasks') {
   if (disposed || token !== app.workbenchRevision || app.mode !== 'window' || !app.workbenchOpen) return;
   if (!result.ok) {
     app.workbenchOpen = false;
-    showTransient(`暂时无法展开（${result.code}），可收回面板继续使用。`, 'error');
+    showTransient(t('mode.expandFailed', { code: result.code }), 'error');
     refreshInteractivity(); return;
   }
   workbenchView.open(view);
@@ -1862,7 +1976,7 @@ async function closeWorkbench() {
   const result = await workbenchWindow?.setExpanded(false);
   if (token === app.workbenchRevision) app.compacting = false;
   if (!disposed && token === app.workbenchRevision && app.mode === 'window' && !app.workbenchOpen) {
-    if (result && !result.ok && !['stale', 'superseded', 'cancelled'].includes(result.code)) showTransient(`窗口大小暂未恢复（${result.code}），仍可继续操作。`, 'error');
+    if (result && !result.ok && !['stale', 'superseded', 'cancelled'].includes(result.code)) showTransient(t('mode.collapseFailed', { code: result.code }), 'error');
     const current = () => !disposed && token === app.workbenchRevision && app.mode === 'window' && !app.workbenchOpen;
     callBridge(() => win.getState()).then((state) => { if (current()) onWindowState(state); }, (error) => { if (current()) logError('get_state_after_collapse')(error); });
     refreshInteractivity();
@@ -1872,7 +1986,7 @@ async function closeWorkbench() {
 function renderReminders() {
   const state = reminders.getState();
   renderCompactView();
-  els.reminderNote.textContent = state.items.length ? '按最新活动显示；静音只影响桌宠本次提示。' : '当前没有需要提示的活动。历史状态仍在全部会话中。';
+  els.reminderNote.textContent = state.items.length ? t('tasks.reminderNote.active') : t('tasks.reminderNote.idle');
   const existing = new Map([...els.reminderList.children].map((node) => [node.dataset.sessionId, node]));
   const nodes = state.items.slice(0, 10).map((item) => {
     let li = existing.get(item.sessionId);
@@ -1882,17 +1996,17 @@ function renderReminders() {
       title.addEventListener('click', () => { selectSession(item.sessionId); });
       const status = document.createElement('span'); status.className = 'pill';
       const actions = document.createElement('div'); actions.className = 'row';
-      const mute = document.createElement('button'); mute.type = 'button'; mute.className = 'btn small'; mute.textContent = '本次静音';
+      const mute = document.createElement('button'); mute.type = 'button'; mute.className = 'btn small'; mute.textContent = t('tasks.mute');
       mute.addEventListener('click', () => { reminders.mute(item.sessionId); applyActivity(); });
       actions.append(mute); li.append(title, status, actions);
     }
     li.children[0].textContent = item.title;
-    li.children[0].setAttribute('aria-label', `查看提醒：${item.title}`);
-    li.children[1].textContent = item.needsAnswer ? '需要你回答' : STATUS_LABEL[item.displayStatus]; li.children[1].dataset.status = item.needsAnswer ? 'needs_input' : item.displayStatus;
-    li.children[2].children[0].setAttribute('aria-label', `本次静音：${item.title}`);
+    li.children[0].setAttribute('aria-label', t('tasks.viewReminder', { title: item.title }));
+    li.children[1].textContent = item.needsAnswer ? t('status.needsAnswer') : statusLabel(item.displayStatus); li.children[1].dataset.status = item.needsAnswer ? 'needs_input' : item.displayStatus;
+    li.children[2].children[0].setAttribute('aria-label', t('tasks.muteTitle', { title: item.title }));
     return li;
   });
-  if (!nodes.length) { const empty = document.createElement('li'); empty.className = 'muted'; empty.textContent = '暂无当前提醒'; nodes.push(empty); }
+  if (!nodes.length) { const empty = document.createElement('li'); empty.className = 'muted'; empty.textContent = t('tasks.noReminder'); nodes.push(empty); }
   const focused = document.activeElement;
   if (nodes.length !== els.reminderList.children.length || nodes.some((node, i) => node !== els.reminderList.children[i])) els.reminderList.replaceChildren(...nodes);
   if (focused?.isConnected && els.reminderList.contains(focused)) focused.focus({ preventScroll: true });
@@ -1905,11 +2019,37 @@ function renderReminders() {
       button = document.createElement('button'); button.type = 'button'; button.className = 'btn small'; button.dataset.sessionId = id;
       button.addEventListener('click', () => { reminders.unmute(id); applyActivity(); });
     }
-    button.textContent = `恢复提醒：${app.sessions.find((row) => row.sessionId === id)?.title || '该会话'}`;
+    button.textContent = t('settings.restoreReminder', { title: app.sessions.find((row) => row.sessionId === id)?.title || t('settings.restoreFallback') });
     return button;
   });
   if (mutedNodes.length !== els.mutedList.children.length || mutedNodes.some((node, i) => node !== els.mutedList.children[i])) els.mutedList.replaceChildren(...mutedNodes);
   if (mutedFocus?.isConnected && els.mutedList.contains(mutedFocus)) mutedFocus.focus({ preventScroll: true });
+}
+
+function renderLanguage() {
+  syncSegmented(els.languageGroup, prefs.language);
+}
+
+function renderNoticeTimeout() {
+  if (document.activeElement !== els.noticeInput) els.noticeInput.value = String(prefs.noticeTimeout);
+  els.noticeInput.setAttribute('aria-describedby', 'notice-msg');
+}
+
+function setNoticeTimeout(raw) {
+  const parsed = Number(raw);
+  const value = Number.isFinite(parsed) ? Math.round(parsed) : prefs.noticeTimeout;
+  const next = Math.min(Math.max(value, 0), MAX_NOTICE_TIMEOUT_SECONDS);
+  els.noticeInput.value = String(next);
+  if (next === prefs.noticeTimeout) { setMsg(els.noticeMsg, ''); return; }
+  prefs.noticeTimeout = next;
+  // Restart every card's clock so the new duration applies from now.
+  const at = Date.now();
+  for (const id of noticeShownAt.keys()) noticeShownAt.set(id, at);
+  // Keep counting from now if the input is focused while the pointer stays on a card.
+  noticePauseAt = noticePaused ? at : 0;
+  setMsg(els.noticeMsg, next === 0 ? t('settings.noticeNever') : t('settings.noticeSaved', { seconds: next }), 'ok');
+  savePreferences({ noticeTimeout: next });
+  renderBubble();
 }
 
 function renderScale() {
@@ -1931,7 +2071,7 @@ function renderGallery() {
     pick.className = 'pet-pick';
     pick.dataset.petId = pet.id;
     pick.setAttribute('aria-pressed', String(selected));
-    pick.setAttribute('aria-label', `使用 ${pet.displayName}`);
+    pick.setAttribute('aria-label', t('appearance.use', { name: pet.displayName }));
     const thumb = document.createElement('span');
     thumb.className = 'thumb';
     thumb.setAttribute('aria-hidden', 'true');
@@ -1953,12 +2093,12 @@ function renderGallery() {
     ver.textContent = `v${pet.version}`;
     const src = document.createElement('span');
     src.className = 'badge';
-    src.textContent = pet.source === 'imported' ? '导入' : '内置';
+    src.textContent = pet.source === 'imported' ? t('appearance.imported') : t('appearance.bundled');
     meta.append(ver, src);
     if (selected) {
       const on = document.createElement('span');
       on.className = 'badge is-selected';
-      on.textContent = '使用中';
+      on.textContent = t('appearance.inUse');
       meta.append(on);
     }
     info.append(name, meta);
@@ -1970,8 +2110,8 @@ function renderGallery() {
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'btn small danger';
-      del.textContent = '删除';
-      del.setAttribute('aria-label', `删除 ${pet.displayName}`);
+      del.textContent = t('appearance.delete');
+      del.setAttribute('aria-label', t('appearance.deletePet', { name: pet.displayName }));
       del.addEventListener('click', () => deletePet(pet));
       li.append(del);
     }
@@ -1980,7 +2120,7 @@ function renderGallery() {
   if (!items.length) {
     const li = document.createElement('li');
     li.className = 'muted';
-    li.textContent = '还没有可用的宠物';
+    li.textContent = t('appearance.noPets');
     items.push(li);
   }
   els.gallery.replaceChildren(...items);
@@ -1999,7 +2139,9 @@ function buildSegmented(fieldset, name, options, onChange) {
       if (input.checked) onChange(opt.value);
     });
     const span = document.createElement('span');
-    span.textContent = opt.label;
+    // Options name a key when their label follows the interface language.
+    if (opt.key) span.dataset.labelKey = opt.key;
+    span.textContent = opt.label ?? t(opt.key);
     label.append(input, span);
     fieldset.append(label);
   }
@@ -2007,6 +2149,13 @@ function buildSegmented(fieldset, name, options, onChange) {
 
 function syncSegmented(fieldset, value) {
   for (const input of fieldset.querySelectorAll('input')) input.checked = input.value === String(value);
+}
+
+/** Rewrites option labels after a language change; the radios and their state stay put. */
+function refreshSegmentedLabels() {
+  for (const span of document.querySelectorAll('.seg-option [data-label-key]')) {
+    span.textContent = t(span.dataset.labelKey);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2017,14 +2166,18 @@ function bindPanel() {
   buildSegmented(
     els.demoStatus,
     'demo-status',
-    DEMO_ORDER.map((s) => ({ value: s, label: STATUS_LABEL[s] })),
+    DEMO_ORDER.map((s) => ({ value: s, label: statusLabel(s) })),
     setDemoStatus,
   );
   buildSegmented(els.scaleGroup, 'scale', SCALES, setScale);
+  buildSegmented(els.languageGroup, 'language', LANGUAGE_OPTIONS, setLanguagePreference);
   listen(els.activityRetry, 'click', () => { void activitySource?.refresh(); });
   listen(els.clearCompleted, 'click', () => { activitySource?.clearCompleted(); });
   listen(els.popoutBtn, 'click', popOut);
   listen(els.detailOpen, 'click', openSelectedSession);
+  listen(els.noticeInput, 'change', () => setNoticeTimeout(els.noticeInput.value));
+  listen(els.noticeInput, 'blur', () => setNoticeTimeout(els.noticeInput.value));
+  listen(window, 'languagechange', () => { if (prefs.language === 'auto' && !hostTag()) applyLanguage(); });
 
   listen(els.importPick, 'click', () => els.importInput.click());
   listen(els.importInput, 'change', () => {
@@ -2122,6 +2275,14 @@ function bindDesk() {
     openMenu(r.left + r.width / 2, r.bottom);
   });
   listen(els.quickbar, 'pointerenter', armQuickbarHide);
+
+  // Reading a card, with a pointer or a keyboard, must outlast the timeout.
+  listen(els.notificationStack, 'pointerenter', () => pauseNotices(true));
+  listen(els.notificationStack, 'pointerleave', () => pauseNotices(false));
+  listen(els.notificationStack, 'focusin', () => pauseNotices(true));
+  listen(els.notificationStack, 'focusout', (e) => {
+    if (!els.notificationStack.contains(e.relatedTarget)) pauseNotices(false);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2142,7 +2303,7 @@ async function boot() {
     panel: els.panel,
     beforeCloseImport() {
       if (importState.busy) return false;
-      resetImport(); setMsg(els.importMsg, '已取消导入'); return true;
+      resetImport(); setMsg(els.importMsg, t('import.cancelled')); return true;
     },
   });
   disposers.push(() => panelNavigation.dispose());
@@ -2152,13 +2313,14 @@ async function boot() {
     if (e.matches) stopLook();
   });
 
-  initHostTheme();
+  initHostUi();
   bindPanel();
   initWorkbench();
   bindDesk();
   listen(window, 'pagehide', disposeApp);
   await initPreferences();
   if (disposed) return;
+  applyLanguage();
   await initMode();
   if (disposed) return;
   root.classList.remove('booting');
@@ -2172,7 +2334,7 @@ async function boot() {
   }
   const initial = app.pets.find((p) => p.id === prefs.petId) ?? app.pets[0];
   if (initial) await selectPet(initial.id);
-  else if (!app.loadError) showLoadError({ code: 'no_pets', message: '没有可用的宠物' });
+  else if (!app.loadError) showLoadError({ code: 'no_pets', message: t('appearance.noPetsReason') });
   renderAll();
   noteInteraction();
 
@@ -2184,6 +2346,8 @@ function disposeApp() {
   for (const dispose of disposers.splice(0).reverse()) {
     try { dispose(); } catch (error) { console.warn('[pet] dispose_failed:', errCode(error), error); }
   }
+  stopNoticeTimer();
+  noticeShownAt.clear();
   for (const key of ['positionTimer', 'ctWatchdog', 'menuCloseTimer', 'quickbarTimer', 'transientTimer']) {
     clearTimeout(app[key]);
     clearInterval(app[key]);
@@ -2199,17 +2363,17 @@ try {
   const mod = await import('/assets/pet-player.js');
   ({ STATES, SpritePlayer, loadPet, loadPetFromParts } = mod);
   if (typeof SpritePlayer !== 'function' || typeof loadPet !== 'function' || typeof loadPetFromParts !== 'function') {
-    throw Object.assign(new Error('pet-player.js 缺少约定的导出'), { code: 'player_module_invalid' });
+    throw Object.assign(new Error('player_module_invalid: missing exports'), { code: 'player_module_invalid' });
   }
 } catch (error) {
   console.error('[pet] player_module_unavailable:', errCode(error), error);
   SpritePlayer = null;
-  showFatal(`播放器加载失败（${error?.code ?? 'player_module_unavailable'}）`);
+  showFatal(t('app.fatal.player', { code: error?.code ?? 'player_module_unavailable' }));
 }
 
 if (SpritePlayer) {
   boot().catch((error) => {
     console.error('[pet] boot_failed:', errCode(error), error);
-    showFatal(`启动失败（${errCode(error)}）`);
+    showFatal(t('app.fatal.boot', { code: errCode(error) }));
   });
 }

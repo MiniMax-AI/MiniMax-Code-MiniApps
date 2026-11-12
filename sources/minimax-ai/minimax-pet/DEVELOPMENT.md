@@ -27,6 +27,10 @@ npm run check:package
 - The page follows `host.ui.subscribe` themes through `data-theme`; without it the CSS falls back to `prefers-color-scheme`.
 - Preference and imported-resource writes are local to `context.dataDir`. Interrupted replacements retain enough information to restore or finish safely before the next read/write. Legacy ambiguous trash is retained for recovery.
 - Resizing the desktop pet first brings the transparent window inside the available screen area so smaller sprites remain reachable.
+- Every user-visible string comes from `miniapp/client/i18n.mjs` through `t()`; static markup carries `data-i18n` / `data-i18n-attr`. Keys are `<domain>.<context>.<name>`, interpolation is `{{name}}`, a missing key renders as the key itself, and `dev/i18n.test.mjs` fails when a key the client uses is missing from either language. Conversation titles, replies and error text from the Host are data and stay in the language the Agent wrote them.
+- Text created once when a view is built (segmented labels, compact-view buttons) must be re-applied on a language change, or it keeps the language of the moment it was built.
+- The language is resolved from the stored preference first, then the Host tag, then `navigator.language`. The Host state can arrive before preferences load, so the first paint waits for `preferencesReady`; a Host tag that arrives earlier is only recorded.
+- A desktop notification card hides on a page-level timer (`noticeShownAt`, `visibleNotices`, `noticeRemaining`). Hiding a card never dismisses the reminder or marks the task read, `needsAnswer` cards never hide, and pointer or focus inside the stack shifts each start time forward by the paused span. Rows and cards that were already read must keep their state across a hide.
 
 ## Verification
 

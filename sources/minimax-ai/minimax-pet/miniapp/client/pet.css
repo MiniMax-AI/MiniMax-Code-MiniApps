@@ -1594,6 +1594,46 @@ html.mode-inline body {
   min-width: 0;
 }
 
+#panel .setting-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#panel .number-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+}
+
+#panel .number-field:focus-within {
+  border-color: var(--mcode-accent);
+}
+
+#panel #notice-timeout {
+  width: 64px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mcode-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+}
+
+#panel #notice-timeout:focus {
+  outline: none;
+}
+
 #panel #muted-list {
   flex-direction: column;
   align-items: flex-start;

@@ -1,4 +1,5 @@
 // Public Page Agent adapter. No Host activity projection, private IPC or inferred asks/unread state.
+import { t } from './i18n.mjs';
 export const STATUS_ANIM = Object.freeze({ idle: 'idle', running: 'running', error: 'failed', aborted: 'idle', completed: 'review' });
 const RAW_STATUSES = new Set(['idle', 'running', 'error', 'aborted']);
 const PRIORITY = ['error', 'completed', 'running', 'aborted', 'idle'];
@@ -10,7 +11,7 @@ const idOf = (value) => typeof value === 'string' && value.length > 0 && value.l
 
 export function normalizeSession(raw, { detail = false } = {}) {
   if (!raw || typeof raw !== 'object' || !idOf(raw.sessionId) || !RAW_STATUSES.has(raw.status) || !Number.isSafeInteger(raw.updatedAtMs) || raw.updatedAtMs < 0 || (raw.title !== undefined && typeof raw.title !== 'string')) throw invalid();
-  const session = { sessionId: raw.sessionId, title: (raw.title || '未命名对话').slice(0, 1000), status: raw.status, updatedAtMs: raw.updatedAtMs };
+  const session = { sessionId: raw.sessionId, title: (raw.title || t('desk.untitled')).slice(0, 1000), status: raw.status, updatedAtMs: raw.updatedAtMs };
   if (detail) {
     if (typeof raw.error?.message === 'string') session.error = raw.error.message;
     if (typeof raw.lastAssistantText === 'string') session.lastAssistantText = raw.lastAssistantText;
@@ -152,7 +153,7 @@ export function createActivitySource({ agent, onChange, pollIntervalMs = 5000, n
     removedAt.delete(event.sessionId);
     const previous = rows.get(event.sessionId);
     const status = outcome === 'finished' ? 'idle' : outcome;
-    rows.set(event.sessionId, { sessionId: event.sessionId, title: typeof event.title === 'string' && event.title ? event.title.slice(0, 1000) : previous?.title || '未命名对话', status, updatedAtMs: now(), liveCompleted: outcome === 'finished' });
+    rows.set(event.sessionId, { sessionId: event.sessionId, title: typeof event.title === 'string' && event.title ? event.title.slice(0, 1000) : previous?.title || t('desk.untitled'), status, updatedAtMs: now(), liveCompleted: outcome === 'finished' });
     emit({});
     if (state.selectedSessionId === event.sessionId) void readDetail(epoch);
   }
