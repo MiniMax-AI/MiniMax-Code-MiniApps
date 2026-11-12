@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.6`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.7`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -842,6 +842,15 @@ the user brought in — so the picture a tool produced can be worked on again:
   folder are what the **资产库** panel lists, and **清理未引用** deletes the
   files in them that no canvas points at any more. A file a canvas still
   points at is never deleted by the library.
+- **The audio the provider takes** — the provider reads an audio reference as a
+  file it can decode, and it takes **wav and mp3 only**: an m4a is refused with an
+  error that names the two formats it does take. So the tools that make an audio
+  (**音画分离**, **分离音频**, **剪辑**) leave an mp3 behind, and an audio that came
+  from somewhere else — a file the user brought in, a track made before this rule
+  existed — is converted to an mp3 on the way out and the converted copy is
+  thrown away afterwards. The canvas keeps the file it points at either way. The
+  rule and the encoding live in one place (`miniapp/node/provider-audio.mjs`), so
+  the two sides of it cannot drift apart.
 - **Network hosts** — the asset host that the generation provider returns in
   `get_asset_url` (the provider's own object storage domain), and the host the
   provider's upload command returns a temporary link on. Nothing else.
@@ -890,8 +899,8 @@ the user brought in — so the picture a tool produced can be worked on again:
     tool: a frame extract (`-ss`, `-frames:v 1`), a grid tile
     (`fps=…,tile=CxR`), a trim (`-ss`, `-to`, libx264/aac), an aspect crop
     (`crop=W:H:X:Y`), a scene-detect pass (`select='gt(scene,…)',showinfo`),
-    an audio split (`-an` / `-vn`), an audio take (`-vn`, aac), an audio trim
-    (`-ss`, `-to`, aac), a concat (`-f concat -safe 0 -i <list>`),
+    an audio split (`-an` / `-vn`), an audio take (`-vn`, libmp3lame), an
+    audio trim (`-ss`, `-to`, libmp3lame), a concat (`-f concat -safe 0 -i <list>`),
     a chroma key (`chromakey=0xRRGGBB`), a logo removal (`delogo=x:y:w:h`),
     and the image passes (`colorkey`, `scale`, `pad`, `crop`, `unsharp`,
     `hqdn3d`).

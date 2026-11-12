@@ -11,6 +11,7 @@
 // Four of the reference implementation's image tools are deliberately not
 // here: see RETIRED_TOOLS at the bottom of this file.
 
+import { AUDIO_TARGET_EXT, AUDIO_TARGET_MIME, toProviderAudio } from './provider-audio.mjs';
 
 const NAMED_COLORS = {
   white: 'ffffff',
@@ -270,8 +271,8 @@ export const MEDIA_TOOLS = {
   splitAv: {
     label: '音画分离',
     kind: 'audio',
-    ext: '.m4a',
-    mimeType: 'audio/mp4',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
     params: [],
     async run({ ffmpeg, source, out }) {
       const info = await ffmpeg.probe(source);
@@ -280,11 +281,11 @@ export const MEDIA_TOOLS = {
       if (!info.hasAudio) {
         return [{ path: video, kind: 'video', mimeType: 'video/mp4' }];
       }
-      const audio = out('.m4a');
-      await ffmpeg.run(['-i', source, '-vn', '-c:a', 'aac', '-b:a', '192k', audio]);
+      const audio = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({ ffmpeg, source, target: audio });
       return [
         { path: video, kind: 'video', mimeType: 'video/mp4' },
-        { path: audio, kind: 'audio', mimeType: 'audio/mp4' },
+        { path: audio, kind: 'audio', mimeType: AUDIO_TARGET_MIME },
       ];
     },
   },
@@ -292,17 +293,17 @@ export const MEDIA_TOOLS = {
   extractAudio: {
     label: '分离音频',
     kind: 'audio',
-    ext: '.m4a',
-    mimeType: 'audio/mp4',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
     params: [],
     async run({ ffmpeg, source, out }) {
       const info = await ffmpeg.probe(source);
       if (!info.hasAudio) {
         throw new MediaToolError('这段视频没有声音，分不出音轨', 'MEDIA_TOOL_FAILED');
       }
-      const audio = out('.m4a');
-      await ffmpeg.run(['-i', source, '-vn', '-c:a', 'aac', '-b:a', '192k', audio]);
-      return [{ path: audio, kind: 'audio', mimeType: 'audio/mp4' }];
+      const audio = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({ ffmpeg, source, target: audio });
+      return [{ path: audio, kind: 'audio', mimeType: AUDIO_TARGET_MIME }];
     },
   },
 
@@ -455,8 +456,8 @@ export const MEDIA_TOOLS = {
   trimAudio: {
     label: '剪辑',
     kind: 'audio',
-    ext: '.m4a',
-    mimeType: 'audio/mp4',
+    ext: AUDIO_TARGET_EXT,
+    mimeType: AUDIO_TARGET_MIME,
     params: [
       { key: 'start', label: '起点（秒）', type: 'number', default: 0, min: 0 },
       { key: 'end', label: '终点（秒）', type: 'number', default: 5, min: 0.2 },
@@ -464,12 +465,16 @@ export const MEDIA_TOOLS = {
     async run({ ffmpeg, params, source, out }) {
       const start = num(params.start, 0, { min: 0 });
       const end = Math.max(start + 0.2, num(params.end, start + 5, { min: 0.2 }));
-      const target = out('.m4a');
-      await ffmpeg.run([
-        '-ss', start.toFixed(3), '-to', end.toFixed(3), '-i', source,
-        '-c:a', 'aac', '-b:a', '192k', target,
-      ]);
-      return [{ path: target, kind: 'audio', mimeType: 'audio/mp4' }];
+      const target = out(AUDIO_TARGET_EXT);
+      await toProviderAudio({
+        ffmpeg,
+        source,
+        target,
+        // The cut is said in front of the input, so ffmpeg seeks there
+        // instead of reading the whole track first.
+        args: ['-ss', start.toFixed(3), '-to', end.toFixed(3)],
+      });
+      return [{ path: target, kind: 'audio', mimeType: AUDIO_TARGET_MIME }];
     },
   },
 };

@@ -11691,3 +11691,176 @@ async function settleWithin(runner, runId, ms) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+
+/**
+ * A real one-second track in the format the provider refuses: an m4a.
+ *
+ * It is made by the local ffmpeg: the runtime has to read the file to
+ * convert it, and a file that is not a track cannot be read. A machine
+ * without ffmpeg skips the test that needs one.
+ */
+async function makeTestTrack(path) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+        '-c:a', 'aac', '-b:a', '192k',
+        path,
+      ],
+      { shell: false, windowsHide: true },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+test('the provider takes wav and mp3, and the app writes mp3', async () => {
+  // The provider reads an audio reference as a file it can decode, and it
+  // takes wav and mp3 only: an m4a is refused with an error that names the
+  // two formats it does take. The rule lives in one place, and both sides
+  // of it read it from there: the tools that make an audio and the code
+  // that converts one on the way out.
+  const {
+    PROVIDER_AUDIO_EXTS,
+    AUDIO_TARGET_EXT,
+    AUDIO_TARGET_MIME,
+    AUDIO_ENCODE_ARGS,
+    isProviderAudio,
+    toProviderAudio,
+  } = await import('../miniapp/node/provider-audio.mjs');
+
+  // What the provider takes.
+  assert.deepEqual(PROVIDER_AUDIO_EXTS, ['.wav', '.mp3']);
+  assert.equal(isProviderAudio('track.mp3'), true);
+  assert.equal(isProviderAudio('track.wav'), true);
+  assert.equal(isProviderAudio('track.m4a'), false, 'an m4a is one the provider refuses');
+  assert.equal(isProviderAudio('track.aac'), false);
+  assert.equal(isProviderAudio('track.flac'), false);
+  assert.equal(isProviderAudio('track'), false, 'a file with no name has no format');
+
+  // What the app writes.
+  assert.equal(AUDIO_TARGET_EXT, '.mp3');
+  assert.equal(AUDIO_TARGET_MIME, 'audio/mpeg');
+  assert.deepEqual(AUDIO_ENCODE_ARGS, ['-c:a', 'libmp3lame', '-b:a', '192k']);
+
+  // The conversion runs ffmpeg on the source and writes an mp3.
+  const calls = [];
+  const ffmpeg = {
+    async run(args) { calls.push(args); },
+  };
+  const target = await toProviderAudio({ ffmpeg, source: '/tmp/track.m4a', target: '/tmp/out.mp3' });
+  assert.equal(target, '/tmp/out.mp3');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], [
+    '-i', '/tmp/track.m4a', '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '/tmp/out.mp3',
+  ]);
+
+  // A tool that cuts a piece out of a track says where the cut is, and the
+  // cut is said in front of the input so ffmpeg seeks there.
+  const cut = [];
+  await toProviderAudio({
+    ffmpeg: { async run(args) { cut.push(args); } },
+    source: '/tmp/track.m4a',
+    target: '/tmp/cut.mp3',
+    args: ['-ss', '1.500', '-to', '4.000'],
+  });
+  assert.deepEqual(cut[0].slice(0, 4), ['-ss', '1.500', '-to', '4.000']);
+  assert.equal(cut[0].indexOf('-i'), 4, 'the cut is said before the input');
+});
+test('an audio the provider would refuse is converted before it goes up', async (t) => {
+  // The rule is about the file that reaches the provider, not only about the
+  // files this app makes. A track made before the rule existed is an m4a,
+  // and a track the user brought in may be one too, so the audio is
+  // converted on the way out and what goes up is an mp3.
+  //
+  // The shape is the one the provider refused: a reference set of a picture
+  // and a sound, asked for as a collection.
+  const received = [];
+  const uploadServer = createHttpServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push({ url: req.url, body: Buffer.concat(chunks) });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const uploadHost = `http://127.0.0.1:${uploadServer.address().port}/upload`;
+  t.after(() => new Promise((resolve) => {
+    uploadServer.closeAllConnections?.();
+    uploadServer.close(resolve);
+  }));
+
+  const h = await createHarness({
+    hostConnector: createMockHostConnector(undefined, { uploadHost }),
+  });
+  t.after(() => h.cleanup());
+
+  const state = (await getJson(h.base, '/api/media/status')).body.media;
+  if (!state.available) {
+    // No ffmpeg here: the audio cannot be converted, and the run says so
+    // rather than pretending. This contract needs a machine with ffmpeg.
+    assert.equal(state.available, false);
+    return;
+  }
+
+  // A real track in the format the provider refuses: an m4a.
+  const assetsDir = join(h.dataDir, 'assets');
+  await mkdir(assetsDir, { recursive: true });
+  const track = join(assetsDir, 'old_track.m4a');
+  const made = await makeTestTrack(track);
+  if (!made) {
+    t.skip('本机没有 ffmpeg，这条合同要在一台装了 ffmpeg 的机器上验');
+    return;
+  }
+
+  const started = await getJson(h.base, '/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_audio',
+      mode: 'video',
+      path: 'collection',
+      modelKey: 'MiniMax-H3',
+      prompt: '跟着这段声音走',
+      params: { ratio: '16:9', resolution: '768P', duration: 6 },
+      references: [
+        {
+          id: 'n_pic',
+          title: '画面',
+          kind: 'image',
+          role: 'result',
+          text: '',
+          media: [{ url: 'https://cdn.example.com/ref.png', kind: 'image' }],
+        },
+        {
+          id: 'n_0',
+          title: '音轨',
+          kind: 'audio',
+          role: 'result',
+          text: '',
+          media: [{ url: '/assets/old_track.m4a', kind: 'audio' }],
+        },
+      ],
+    }),
+  });
+  assert.equal(started.status, 202, `这次跑没起来：${started.body?.message ?? ''}`);
+
+  // What went up is an mp3, under the name the provider reads.
+  assert.equal(received.length, 1, 'the file was not uploaded');
+  const body = received[0].body.toString('latin1');
+  assert.match(body, /name="file"; filename="[^"]*\.mp3"/, 'an m4a went up as it is');
+  assert.match(body, /Content-Type: audio\/mpeg/);
+
+  // And the canvas keeps the file it points at: the converted copy is
+  // scratch, so the working folder does not grow without bound.
+  const workDir = join(h.dataDir, 'work');
+  const leftovers = await readdir(workDir).catch(() => []);
+  assert.deepEqual(leftovers.filter((name) => name.endsWith('.mp3')), [], 'the converted copy was left behind');
+});

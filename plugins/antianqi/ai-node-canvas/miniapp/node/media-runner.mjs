@@ -7,11 +7,12 @@
 import { createFfmpeg } from './ffmpeg.mjs';
 import { createMediaStore } from './media-store.mjs';
 import { findMediaTool, TOOL_ACCEPTS } from './media-tools.mjs';
+import { AUDIO_EXTS, AUDIO_TARGET_EXT } from './provider-audio.mjs';
 
 const FALLBACK_EXT = {
   video: '.mp4',
   image: '.jpg',
-  audio: '.m4a',
+  audio: AUDIO_TARGET_EXT,
 };
 
 // The files each kind of material comes in. The check is a soft one — a
@@ -20,7 +21,7 @@ const FALLBACK_EXT = {
 const SOURCE_EXTS = {
   video: ['.mp4', '.mov', '.webm', '.mkv', '.avi'],
   image: ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'],
-  audio: ['.m4a', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.opus'],
+  audio: AUDIO_EXTS,
 };
 
 const SOURCE_LABELS = { video: '视频', image: '图片', audio: '音频' };

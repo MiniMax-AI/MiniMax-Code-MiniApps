@@ -28,6 +28,7 @@ import {
 import { createProviderUploader } from './provider-upload.mjs';
 import { createMediaStore } from './media-store.mjs';
 import { createFfmpeg } from './ffmpeg.mjs';
+import { AUDIO_TARGET_EXT, isProviderAudio, toProviderAudio } from './provider-audio.mjs';
 import { buildMentionMap, compilePrompt, providerFamily, referencePattern, referenceSlots, tokenize } from './prompt.mjs';
 import { alignmentLine, COLLECTION_PATHS, frameRequestShape, lastShotIndex, referenceSetError } from './video-request.mjs';
 import { compressionArgs, isUnderstandTimeout, understandingPlan } from './understand-media.mjs';
@@ -519,7 +520,19 @@ export function createAgentRunner(context) {
           const seconds = await durationOf(localPath);
           if (seconds) next = { ...item, durationSeconds: seconds };
         }
-        const uploaded = await uploader.upload(localPath);
+        // The provider reads an audio reference as a wav or an mp3 and
+        // refuses every other format, so an audio that is not one of the
+        // two is converted before it goes up.
+        const uploadPath = await audioForProvider(localPath, item?.kind);
+        let uploaded = null;
+        try {
+          uploaded = await uploader.upload(uploadPath);
+        } finally {
+          // The converted copy is scratch: the provider has it, and the
+          // canvas keeps the file it points at. The working folder does
+          // not grow without bound.
+          if (uploadPath !== localPath) await store.discard(uploadPath);
+        }
         media.push(uploaded ? { ...next, url: uploaded.url } : next);
       }
       if (gone) {
@@ -535,6 +548,36 @@ export function createAgentRunner(context) {
       out.push({ ...ref, media });
     }
     return { references: out, warnings };
+  }
+
+  /**
+   * The file to upload for an audio reference.
+   *
+   * The provider reads an audio as a wav or an mp3 and refuses every
+   * other format, so an audio that is not one of the two is converted on
+   * the way out. The converted copy is scratch: it goes up and is thrown
+   * away, and the file the canvas points at is left as it is.
+   *
+   * An audio that cannot be converted is not sent as it is: the provider
+   * would refuse it, and that refusal arrives as a wall of English in the
+   * middle of a run. The reason is said here instead, where it can be
+   * read.
+   */
+  async function audioForProvider(localPath, kind) {
+    if (kind !== 'audio' || isProviderAudio(localPath)) return localPath;
+    const target = store.out(AUDIO_TARGET_EXT);
+    try {
+      await toProviderAudio({ ffmpeg, source: localPath, target });
+      return target;
+    } catch (error) {
+      await store.discard(target);
+      throw Object.assign(
+        new Error(
+          `这段音频的格式 provider 不收（只收 wav 和 mp3），本机也转不了：${error?.message ?? error}`,
+        ),
+        { code: 'PROVIDER_AUDIO_UNCONVERTIBLE' },
+      );
+    }
   }
 
   /** Whether a file is on this machine. */
