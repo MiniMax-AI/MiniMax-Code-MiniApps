@@ -794,7 +794,6 @@ html.mode-window .pet-sprite:focus-visible {
 .last-reply {
   max-height: 20rem;
   overflow: auto;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
   user-select: text;
@@ -850,7 +849,18 @@ html.mode-window .pet-sprite:focus-visible {
 .pet-notice-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; color: var(--mcode-text-muted); overflow-wrap: anywhere; }
 .compact-detail-title { margin: 0; font-size: 12px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compact-detail-status { margin: 2px 0 2px 6px; font-size: 11px; line-height: 16px; color: var(--mcode-text-muted); }
-.compact-detail-reply { margin: 5px 0; max-height: 126px; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.compact-detail-reply { margin: 5px 0; max-height: 126px; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+/* The desktop card is 280px wide; keep the same structure at a tighter scale. */
+.compact-detail-reply.md { font-size: 12px; line-height: 17px; text-align: left; }
+.compact-detail-reply.md .md-p,
+.compact-detail-reply.md .md-list,
+.compact-detail-reply.md .md-pre,
+.compact-detail-reply.md .md-table,
+.compact-detail-reply.md .md-quote { margin-bottom: 5px; }
+.compact-detail-reply.md .md-heading { margin: 8px 0 4px; font-size: 13px; line-height: 18px; }
+.compact-detail-reply.md .md-pre { padding: 6px 8px; }
+.compact-detail-reply.md .md-table th,
+.compact-detail-reply.md .md-table td { padding: 3px 6px; font-size: 11px; }
 .compact-detail-back { color: var(--mcode-text-muted); font-size: 11px; }
 .compact-open { font-size: 11px; font-weight: 600; }
 .pet-notice-dismiss { flex: none; border: 0; background: transparent; color: var(--mcode-text-muted); cursor: pointer; font-size: 15px; padding: 0 2px 0 6px; }
@@ -865,6 +875,174 @@ summary { cursor: pointer; color: var(--mcode-text-muted); font-size: 12px; }
 .pill[data-status='running'] { color: var(--mcode-accent); }
 
 
+
+/* ------------------------------------------------------------------ */
+/* Markdown replies (markdown.mjs)                                     */
+/* ------------------------------------------------------------------ */
+
+/* Only structure the parser emitted lives in here; every value comes from the
+   --mcode-* roles the page already defines, so both themes stay readable. */
+.md {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--mcode-text);
+  overflow-wrap: anywhere;
+}
+
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+
+.md .md-p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.md .md-heading {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  color: var(--mcode-text);
+  line-height: 24px;
+}
+
+.md .md-heading[data-depth='1'],
+.md .md-heading[data-depth='2'] { font-size: 16px; }
+.md .md-heading[data-depth='3'] { font-size: 15px; }
+.md .md-heading[data-depth='4'],
+.md .md-heading[data-depth='5'],
+.md .md-heading[data-depth='6'] { font-size: 14px; }
+
+.md .md-list {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.md .md-li { margin: 2px 0; }
+
+.md .md-task {
+  list-style: none;
+  margin-left: -20px;
+  padding-left: 20px;
+  position: relative;
+}
+
+.md .md-task::before {
+  position: absolute;
+  left: 0;
+  content: '☐';
+  color: var(--mcode-text-muted);
+}
+
+.md .md-task[data-checked='true']::before {
+  content: '☑';
+  color: var(--mcode-accent);
+}
+
+.md .md-code-inline {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--mcode-surface-muted);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.md .md-pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.md .md-pre code {
+  display: block;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre;
+}
+
+.md .md-pre[data-lang]::after {
+  display: block;
+  margin-top: 6px;
+  color: var(--mcode-text-subtle);
+  content: attr(data-lang);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.md .md-quote {
+  margin: 0 0 8px;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--mcode-border);
+  color: var(--mcode-text-muted);
+}
+
+.md .md-rule {
+  height: 1px;
+  margin: 12px 0;
+  border: 0;
+  background: var(--mcode-border);
+}
+
+.md .md-table {
+  margin: 0 0 8px;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+
+.md .md-table table {
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.md .md-table th,
+.md .md-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--mcode-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md .md-table th {
+  background: var(--mcode-surface-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md .md-table td[data-align='center'] { text-align: center; }
+.md .md-table td[data-align='right'] { text-align: right; }
+
+.md .md-link {
+  color: var(--mcode-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.md .md-link-blocked { color: var(--mcode-text); cursor: text; }
+
+.md .md-image { color: var(--mcode-text-muted); }
+
+.md .md-formula {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.md .md-raw {
+  color: var(--mcode-text-muted);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.md .md-block { margin: 0 0 8px; }
+
+.md strong { font-weight: 600; }
+.md del { color: var(--mcode-text-muted); }
 
 /* Main panel: appearance, task reading, and settings share one quiet surface.
    All selectors are panel-scoped so the desktop companion keeps its layout. */
@@ -1347,7 +1525,6 @@ html.mode-inline body {
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  line-height: 1.7;
 }
 
 #panel #session-msg {

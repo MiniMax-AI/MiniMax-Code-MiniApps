@@ -296,3 +296,21 @@ domTest('switching tasks clears a pending open result and a throwing handler rep
   const failedHint = failing.container.querySelector('.compact-detail .compact-hint');
   assert.match(failedHint.textContent, /host_unavailable/); assert.equal(failedHint.dataset.kind, 'error');
 });
+
+domTest('a markdown reply renders as structure in the detail, previews stay flat text', (t) => {
+  const h = harness(t);
+  const reply = '## 结论\n\n**留存** 41%\n\n- 次周 38%\n- 四周 27%\n\n```js\nconst x = 1\n```';
+  h.update({ taskSelection: selection(1, reply), reminders: { items: [{ ...task(1), previewText: reply }] } });
+  h.view.open('detail');
+  const node = h.container.querySelector('.compact-detail-reply');
+  assert.equal(node.querySelector('.md-heading').textContent, '结论');
+  assert.equal(node.querySelector('strong').textContent, '留存');
+  assert.equal(node.querySelectorAll('.md-li').length, 2);
+  assert.equal(node.querySelector('.md-pre code').textContent, 'const x = 1');
+  assert.equal(h.container.querySelector('.compact-task-preview').textContent.includes('**'), false);
+  h.update({ taskSelection: { ...selection(1), session: { ...task(1), needsAnswer: true } } });
+  assert.equal(node.textContent, '需要你回答');
+  assert.equal(node.querySelector('.md-heading'), null);
+  h.update({ taskSelection: selection(1, reply) });
+  assert.equal(node.querySelector('.md-heading').textContent, '结论');
+});

@@ -1,3 +1,5 @@
+import { markdownToPlainText, renderMarkdown, resetMarkdown } from './markdown.mjs';
+
 const STATUS = { running: '进行中', error: '异常', completed: '已完成', aborted: '已停止', idle: '空闲', needs_answer: '需要你回答' };
 const textOf = (value) => typeof value === 'string' ? value : '';
 const failureCode = (error) => textOf(error?.code) || textOf(error?.message) || textOf(error) || 'result_unknown';
@@ -66,7 +68,7 @@ export function createCompactPetView({
   const detailPane = element('div', 'compact-detail compact-body');
   const detailTitle = element('strong', 'compact-detail-title');
   const detailStatus = element('span', 'compact-detail-status'); detailStatus.setAttribute('role', 'status');
-  const detailReply = element('p', 'compact-detail-reply');
+  const detailReply = element('div', 'compact-detail-reply md');
   detailReply.setAttribute('aria-label', '任务最近回复'); detailReply.tabIndex = 0;
   const detailFooter = element('div', 'compact-footer');
   const back = button('返回任务', 'compact-detail-back compact-link', () => api.open(detailBackView));
@@ -112,7 +114,7 @@ export function createCompactPetView({
       row.item = item;
       setText(row.title, textOf(item.title) || '未命名任务');
       row.title.setAttribute('aria-label', `查看任务：${textOf(item.title) || '未命名任务'}`);
-      setText(row.preview, item.needsAnswer === true ? '需要你回答' : textOf(item.previewText)); row.preview.hidden = !row.preview.textContent;
+      setText(row.preview, item.needsAnswer === true ? '需要你回答' : markdownToPlainText(textOf(item.previewText))); row.preview.hidden = !row.preview.textContent;
       const status = taskStatus(item);
       setText(row.status, STATUS[status] || '待查看'); row.status.dataset.status = status;
       row.title.disabled = typeof onSelectTask !== 'function';
@@ -140,7 +142,14 @@ export function createCompactPetView({
     else if (!id) text = '选择任务后查看回复。';
     else if (!detail) text = '正在读取任务…';
     else text = (detail.status === 'error' && textOf(detail.error)) || textOf(detail.lastAssistantText) || '该任务暂时没有可读取的最后回复。';
-    setText(detailReply, text);
+    // Status copy stays plain text; an actual reply is markdown. renderMarkdown keeps
+    // the DOM when the text is unchanged and restores the scroll offset when a
+    // streaming reply replaces it.
+    if (needsAnswer || !available || taskSelection.detailLoading && !detail) {
+      if (detailReply.dataset.mdSource !== text) { resetMarkdown(detailReply); setText(detailReply, text); }
+    } else {
+      renderMarkdown(detailReply, text);
+    }
     detailPane.setAttribute('aria-busy', String(available && !needsAnswer && taskSelection.detailLoading === true));
     if (paintedDetailId !== id) {
       detailReply.scrollTop = 0; detailPane.scrollTop = 0; paintedDetailId = id;

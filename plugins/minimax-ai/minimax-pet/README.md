@@ -7,13 +7,15 @@ A lightweight desktop companion for MiniMax Code, by **MiniMax**. It shows visib
 ## Features
 
 - **Appearance:** preview and select pets, import compatible pet JSON and spritesheets, and remove imported pets.
-- **Tasks:** recent reminders, visible user conversations, and a scrollable latest reply. Desktop cards preview up to five lines. Clicking a card keeps the pet visible; observed `ask_user` calls show “需要你回答” (needs your answer).
+- **Tasks:** recent reminders, visible user conversations, and a scrollable latest reply rendered as Markdown. Desktop cards preview up to five lines. Clicking a card keeps the pet visible; observed `ask_user` calls show “需要你回答” (needs your answer).
 - **Open the conversation:** on MiniMax Code 3.1.11 or later, a task's detail, in the panel and on the desktop, has a **打开对话** (open conversation) button, labelled **去回答** (go answer) while the task needs an answer. It brings the MiniMax Code main window forward on that conversation. Older clients do not show the button.
 - **Settings:** pet size, page-local reminder dismissal and mute, connection status, and reconnect.
 - **Desktop window:** a draggable transparent pet with compact notification cards. Return it to the main panel to use the three tabs.
 - **Theme:** on MiniMax Code 3.1.11 or later the panel and desktop cards follow the client's light or dark theme; older clients follow the system setting.
 
 The pet does not run Agent turns, create independent chats, write to chat inputs, comment on every session, stop tasks, or answer questionnaires. Selecting a task only reads its details; the main window switches only when you click **打开对话** or **去回答**.
+
+Version **0.7.0** renders each task's latest reply as Markdown: headings, emphasis, lists, task lists, fenced code, tables, quotes and links, with raw HTML shown as inert text and images as a label instead of a remote request. Notification cards and reminder previews stay plain text. Parsing uses a vendored bundle of unified, remark-parse and remark-gfm (MIT) built by `npm run build:markdown`; the page never builds an HTML string from model output. The bundle makes no network request and runs entirely in the page.
 
 Version **0.6.0** removes the **打招呼** (wave) and **跳一下** (jump) actions from the menu and the appearance page, and removes the original-chat draft with its voice input; the package no longer requests the microphone. It adds **打开对话** / **去回答** and the client theme. The supported baseline stays MiniMax Code 3.1.6: both additions are feature-detected and need no new access.
 
@@ -43,6 +45,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - **Observations:** one global observer aggregates visible task lifecycle events. Up to three detailed observers follow active tasks and detect new ask tool events. A completed/removed task releases its detailed slot; another task enters only after the previous subscription settles. The initial snapshot contains up to 50 recent visible conversations; observed tasks remain while the Host confirms visibility.
 - **Coverage limits:** observers are tail-only. They cannot reconstruct questionnaires opened before subscribing or during a disconnect. More than three active tasks means only three receive detailed ask coverage. No observed ask does not prove no pending question. Historical idle tasks are not presented as newly completed.
 - **Local files:** the Node service serves packaged assets and stores preferences and user-imported JSON/WebP/PNG spritesheets under opaque `context.dataDir`. Imports, replacement recovery and deletion are limited to that plugin data. Browser storage is used only to migrate old view preferences.
+- **Rendered replies:** the latest reply is parsed as Markdown by the vendored parser and rebuilt as DOM nodes under the page's own stylesheet. Raw HTML in a reply is displayed as literal text, never executed or inserted as markup; links show their target on hover and are not opened; images are not fetched and appear as a text label.
 - **Host navigation:** only when you click **打开对话** or **去回答**, the page calls `host.navigation.open({ id: 'session', sessionId, source: 'local' })` for a conversation it already lists through `session.read`. It does not declare `hostAccess` and never reads which page of MiniMax Code you are on. It writes nothing to chat inputs and sends no message.
 - **Display preferences:** `host.ui.subscribe` reports the client theme, which the page applies; the reported language is ignored. No grant is involved.
 - **Network:** the plugin has no hard-coded external runtime endpoint; its own HTTP requests use its assigned loopback origin.
@@ -66,3 +69,5 @@ The complete editable source is at `sources/minimax-ai/minimax-pet/`. The instal
 ## License
 
 Original code, documentation, the robot, minimax-tako pet and icon: [MIT](LICENSE), Copyright 2026 MiniMax. Maiyatang artwork: MIT, Copyright 2026 Fectivnfy112357. The minimax-tako atlas was generated with MiniMax image generation. The default atlas is generated from editable geometric drawing code; the octopus icon and Maiyatang were generated with imagegen from supplied visual references. See [ARTWORK.md](ARTWORK.md). No externally sourced pet spritesheet is bundled. User-imported artwork keeps its own license.
+
+`miniapp/client/vendor/markdown.mjs` bundles 59 MIT-licensed packages from the unified, remark-parse and remark-gfm dependency trees. Each package keeps its own copyright notice in `miniapp/client/vendor/markdown.LICENSE.txt`, which `npm run build:markdown` regenerates from the packages esbuild actually includes.

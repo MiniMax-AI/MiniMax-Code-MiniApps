@@ -9,6 +9,7 @@ import { createWorkbenchWindow } from './workbench-window.mjs';
 import { createNotificationPreviews } from './notification-previews.mjs';
 import { createAskObserver } from './ask-observer.mjs';
 import { createPanelNavigation } from './panel-navigation.mjs';
+import { markdownToPlainText, renderMarkdown } from './markdown.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -985,7 +986,8 @@ function renderNotificationStack() {
     }
     const open = node.children[0];
     open.children[0].textContent = item.title;
-    open.children[1].textContent = notificationText(item, previews);
+    // A notification shows a five-line preview, so markdown is flattened, not rendered.
+    open.children[1].textContent = markdownToPlainText(notificationText(item, previews));
     open.setAttribute('aria-label', `查看通知：${item.title}`);
     node.children[1].setAttribute('aria-label', `关闭通知：${item.title}`);
     return node;
@@ -1762,7 +1764,9 @@ function renderDetail() {
   els.detailError.textContent = detail?.error || app.detailError || '';
   els.detailError.hidden = !els.detailError.textContent;
   const reply = needsAnswer ? '需要你回答' : detail?.lastAssistantText || '';
-  if (els.detailReply.textContent !== reply) els.detailReply.textContent = reply;
+  // The reply is markdown; renderMarkdown keeps the DOM when the text is unchanged,
+  // so a background refresh cannot disturb the reading position.
+  renderMarkdown(els.detailReply, reply);
   if (panelDetailId !== app.selectedSessionId) { els.detailReply.scrollTop = 0; panelDetailId = app.selectedSessionId; }
   renderDetailOpen(needsAnswer);
   els.detailNote.textContent = app.source === 'demo' ? '资源动作预览，不提供真实任务概览。'
@@ -1802,7 +1806,7 @@ function renderCompactView() {
   const notice = reminders.getState();
   notificationPreviews?.update({ availability: app.availability, items: notificationItems(notice.items) });
   const previews = notificationPreviews?.getState().previews ?? {};
-  workbenchView?.update({ reminders: { ...notice, items: notice.items.map((item) => ({ ...item, previewText: item.needsAnswer ? '需要你回答' : previews[item.sessionId] || '' })) }, allSessions: app.sessions,
+  workbenchView?.update({ reminders: { ...notice, items: notice.items.map((item) => ({ ...item, previewText: item.needsAnswer ? '需要你回答' : markdownToPlainText(previews[item.sessionId] || '') })) }, allSessions: app.sessions,
     taskSelection: { availability: app.availability, selectedSessionId: app.selectedSessionId, session: app.sessions.find((row) => row.sessionId === app.selectedSessionId), detail: app.detail, detailLoading: app.detailLoading, detailError: app.detailError } });
 }
 
