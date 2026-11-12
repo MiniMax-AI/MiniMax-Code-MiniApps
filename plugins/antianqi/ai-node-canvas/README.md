@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.5`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.6`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -275,6 +275,12 @@ this package.
   an upstream line hands over. The read-only panel used to fall back to the
   narrow column and stack a long prompt into a tower; it is the same page now,
   and a long prompt scrolls inside its box.
+- **A run that does not end says so** — the Host never times an Agent turn out:
+  a turn can wait for a long thinking pass, for a tool, or for the user. The run
+  waits ten minutes and no longer, then gives the turn up, tells the Host to
+  stop it, and says what happened instead of turning for ever. A card that is
+  working says how long it has been working, and the panel says what it is
+  doing meanwhile.
 - **One slow call at a time** — the window belongs to a single call, so a call
   that shares the machine with another one is the call that runs over it. The
   slow calls (pictures, speech, music, video submits) therefore wait for each

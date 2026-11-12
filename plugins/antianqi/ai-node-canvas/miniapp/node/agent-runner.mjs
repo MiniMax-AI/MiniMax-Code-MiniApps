@@ -43,6 +43,34 @@ const MODES = new Set(['image', 'video', 'audio', 'music', 'text']);
 // so it keeps the Agent turn.
 const DIRECT_MODES = new Set(['image', 'video', 'audio', 'music']);
 
+// How long one Agent turn may take before the run gives up on it.
+//
+// The Host does not time an Agent turn out: a turn can wait for a long
+// thinking pass, for a tool, or for the user. A card that turns for ever
+// tells the user nothing, so the run bounds the wait itself — and says what
+// happened instead of turning for ever.
+export const AGENT_TURN_LIMIT_MS = 600_000;
+
+/**
+ * The limit of one Agent turn, in milliseconds.
+ *
+ * The context may shorten it (the tests do); nothing may lengthen it past
+ * the bound.
+ */
+export function agentTurnLimitMs(context = {}) {
+  const raw = Number(context.agentTurnLimitMs);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(raw, AGENT_TURN_LIMIT_MS);
+  return AGENT_TURN_LIMIT_MS;
+}
+
+/**
+ * What a run says when the turn it waits for did not end in time.
+ */
+export function agentTurnTimeoutMessage(limitMs = AGENT_TURN_LIMIT_MS) {
+  const minutes = Math.max(1, Math.round(limitMs / 60000));
+  return `这次 Agent 回合超过 ${minutes} 分钟没有结束：模型可能在长时间思考，或卡在某个工具上。可以重试，或先取消当前会话。`;
+}
+
 // The codes that mean the Host stopped a connector call it had already sent:
 // the provider may still be working on it, and a picture has no task number
 // to ask about afterwards.
@@ -858,14 +886,36 @@ export function createAgentRunner(context) {
     }
     const signal = armController(task);
     const onEvent = makeEventHandler(task);
+    const limitMs = agentTurnLimitMs(context);
+    let deadline = null;
     try {
-      const result = await api.run({ text, sessionId, model }, { signal, onEvent });
+      const call = api.run({ text, sessionId, model }, { signal, onEvent });
+      // The Host may drop a turn without a word. The run does not wait for
+      // ever: the turn gets a deadline, and the deadline is the answer.
+      // A turn that is given up on must not become an unhandled rejection.
+      call.catch(() => {});
+      const result = await Promise.race([
+        call,
+        new Promise((_, reject) => {
+          deadline = setTimeout(() => {
+            reject(Object.assign(new Error('AGENT_TURN_TIMEOUT'), { code: 'AGENT_TURN_TIMEOUT' }));
+          }, limitMs);
+          deadline.unref?.();
+        }),
+      ]);
       applyResult(task, result);
       if (task.status === 'running') task.status = 'done';
       if (task.status === 'error' && !task.error) task.error = '未知错误';
     } catch (error) {
       const code = error?.code ?? 'UNKNOWN';
-      if (task.cancelled) {
+      if (code === 'AGENT_TURN_TIMEOUT') {
+        // The turn is given up on, and the Host is told to stop it: a turn
+        // that keeps going costs tokens and nobody is waiting for it.
+        const record = controllers.get(task.id);
+        if (record) record.controller.abort(new Error('agent turn deadline'));
+        task.status = 'error';
+        task.error = agentTurnTimeoutMessage(limitMs);
+      } else if (task.cancelled) {
         // The user asked for this run to stop; whatever the Host says about
         // the torn-down call does not change that.
         task.status = 'aborted';
@@ -875,6 +925,7 @@ export function createAgentRunner(context) {
         task.error = describeError(code, error?.message);
       }
     } finally {
+      if (deadline) clearTimeout(deadline);
       releaseController(task);
     }
     // A turn that ends without a file is not a file: the run says so,

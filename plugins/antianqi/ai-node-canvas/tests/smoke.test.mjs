@@ -4853,7 +4853,10 @@ test('the card is the work itself: no head, no words, no icons', async () => {
   // picture it made, the error it hit, or the empty frame that says it has
   // not run yet.
   const frame = functionBody(app, 'renderEmptyFrame');
-  assert.match(frame, /'正在生成…'/);
+  // A card that is working says how long it has been working: a card that
+  // turns for ever tells the user nothing.
+  assert.match(frame, /正在生成…/);
+  assert.match(frame, /runningFor\(node\.id\)/);
   assert.match(frame, /'还没有产物 · 写好提示词点「生成」'/);
   assert.match(functionBody(app, 'renderErrorCard'), /el\('div', 'nxc-node__error'\)/);
   // What floats above a card is the dock of tools and the small buttons, and
@@ -11633,3 +11636,58 @@ test('the chain does not run an upstream that already holds its product', async 
   text.metadata.output = { status: 'idle', text: '' };
   assert.deepEqual(pendingAncestors(canvas, child).map((item) => item.id), ['n_text', 'n_img']);
 });
+
+test('an Agent turn that does not end in time is given up on, and the run says so', async () => {
+  const { createAgentRunner, agentTurnLimitMs, agentTurnTimeoutMessage, AGENT_TURN_LIMIT_MS } =
+    await import('../miniapp/node/agent-runner.mjs');
+
+  // The bound is ten minutes, and nothing may lengthen it past that.
+  assert.equal(AGENT_TURN_LIMIT_MS, 600000);
+  assert.equal(agentTurnLimitMs({}), AGENT_TURN_LIMIT_MS);
+  assert.equal(agentTurnLimitMs({ agentTurnLimitMs: 120 }), 120);
+  assert.equal(agentTurnLimitMs({ agentTurnLimitMs: 10 ** 9 }), AGENT_TURN_LIMIT_MS);
+  assert.match(agentTurnTimeoutMessage(AGENT_TURN_LIMIT_MS), /10 分钟/);
+
+  // A Host that never answers must not leave the card turning for ever.
+  const dataDir = await mkdtemp(join(tmpdir(), 'nxc-agent-turn-'));
+  let hostSignal = null;
+  const runner = createAgentRunner({
+    dataDir,
+    agent: {
+      async run(_input, options) {
+        hostSignal = options?.signal ?? null;
+        return new Promise(() => {});
+      },
+      async models() { return { models: [] }; },
+      async agents() { return { agents: [] }; },
+    },
+    hostConnector: {
+      async list() { return { tools: [] }; },
+      async call() { return { value: null }; },
+    },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    agentTurnLimitMs: 80,
+  });
+  const task = await runner.startRun({ mode: 'text', nodeId: 'n_slow', prompt: '写一段提示词' });
+  // The test waits with its own clock, so a run that never gives up fails
+  // here in seconds instead of hanging the whole suite.
+  const settled = await settleWithin(runner, task.id, 3000);
+  assert.equal(settled.status, 'error', 'the run gives up on a turn that does not end');
+  assert.match(settled.error, /没有结束/);
+  // And the run says why, in the log the panel reads.
+  assert.ok(settled.log.some((line) => /没有结束/.test(line)), 'the run log says the turn did not end');
+  // The turn is given up on, so the Host is told to stop it as well.
+  assert.ok(hostSignal?.aborted, 'the Host is told to stop the turn that was given up on');
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
+});
+
+// Wait for a run to settle, with a clock of one's own.
+async function settleWithin(runner, runId, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const task = runner.get(runId);
+    if (!task || task.status !== 'running') return task;
+    if (Date.now() > deadline) return task;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

@@ -1414,7 +1414,7 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     box.appendChild(icon);
     const output = node.metadata?.output ?? {};
     const hint = output.status === 'loading'
-      ? '正在生成…'
+      ? `正在生成…${runningFor(node.id)}`
       : output.resultCount
         ? `生成了 ${output.resultCount} 张结果`
         : roleOf(node) === 'input'
@@ -4481,6 +4481,16 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
   function isRunning(nodeId) {
     const task = state.tasks.get(state.nodeTasks.get(nodeId));
     return Boolean(task && (task.status === 'running' || task.status === 'waiting-question'));
+  }
+
+  // How long the run on this card has been going.
+  //
+  // A card that turns for ever tells the user nothing: the clock says the
+  // run is still going, and the panel says what it is doing meanwhile.
+  function runningFor(nodeId) {
+    const task = state.tasks.get(state.nodeTasks.get(nodeId));
+    if (!task || !['running', 'waiting-question'].includes(task.status)) return '';
+    return `（已跑 ${Math.round((task.elapsedMs ?? 0) / 1000)}s）`;
   }
 
   // The Host chat side panel, when this Mini App runs in a chat. It is not
