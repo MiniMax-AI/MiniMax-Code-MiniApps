@@ -294,7 +294,9 @@ function activityAnim() {
 function desiredAnimation() {
   if (activity().session?.needsAnswer) return { state: 'waiting', key: activity().key };
   const base = { state: activityAnim(), key: activity().key };
-  if (app.hovered && app.mode === 'window' && !app.menuOpen && !app.workbenchOpen) return { state: 'jumping', key: 'hover' };
+  // Opening the card must not cut the hover animation short: switching rows restarts
+  // the sprite at frame 0, which reads as a flicker on every click.
+  if (app.hovered && app.mode === 'window' && !app.menuOpen) return { state: 'jumping', key: 'hover' };
   return base;
 }
 
@@ -722,11 +724,13 @@ function isOverOverlay(x, y) {
 function refreshInteractivity() {
   if (app.mode !== 'window' || !win || app.modeSwitching || app.restoringPosition || app.awaitingPointer) return;
   const p = app.pointer;
+  // An open card owns only the pixels it covers, not the whole expanded window:
+  // the transparent margin around it must keep forwarding clicks to what is below.
+  // With no pointer sample (opened from the keyboard) the card must stay clickable.
   const interactive =
-    app.workbenchOpen ||
     app.dragging ||
     app.menuOpen ||
-    (p ? isOverPet(p.x, p.y) || isOverOverlay(p.x, p.y) : false);
+    (p ? isOverPet(p.x, p.y) || isOverOverlay(p.x, p.y) : app.workbenchOpen);
   setClickThrough(!interactive);
 }
 
