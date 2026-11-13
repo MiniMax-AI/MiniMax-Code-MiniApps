@@ -104,3 +104,20 @@ test('opening the card does not cut the hover animation short', () => {
   h.app.hovered = false;
   assert.equal(state(), 'idle:k');
 });
+
+test('the card never resizes the window, and the fixed height always fits it', async () => {
+  // A resize moves the native window origin; the old layout is repainted at the new
+  // top-left for a frame, which is the up-and-left jump seen on every click.
+  const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
+  const open = source.slice(source.indexOf('async function openWorkbench('), source.indexOf('async function closeWorkbench('));
+  const close = source.slice(source.indexOf('async function closeWorkbench('), source.indexOf('function renderReminders('));
+  for (const [name, body] of [['openWorkbench', open], ['closeWorkbench', close]]) {
+    assert.equal(/win\.update|setExpanded|createWorkbenchWindow/u.test(body), false, `${name} must not touch window geometry`);
+  }
+  const declared = source.match(/const deskHeight = \(scale\) => ([^;]+);/u);
+  assert.ok(declared, 'deskHeight declares the fixed window height');
+  const deskHeight = new Function('scale', `return ${declared[1]};`);
+  for (const scale of [0.5, 0.75, 1]) {
+    assert.ok(deskHeight(scale) >= Math.ceil(208 * scale) + 216, `scale ${scale} leaves room for the card`);
+  }
+});

@@ -5,7 +5,6 @@ import { restoreWindowPosition, fitWindowToScreen } from './window-position.mjs'
 import { aggregateText, notificationItems, noticeRemaining, notificationText, visibleNotices, createAnimationGate } from './pet-presentation.mjs';
 import { createReminderStore } from './activity-reminders.mjs';
 import { createCompactPetView, taskStatus } from './compact-pet-view.mjs';
-import { createWorkbenchWindow } from './workbench-window.mjs';
 import { createNotificationPreviews } from './notification-previews.mjs';
 import { createAskObserver } from './ask-observer.mjs';
 import { createPanelNavigation } from './panel-navigation.mjs';
@@ -252,13 +251,18 @@ const els = {
 };
 let animationGate = null;
 let workbenchView = null;
-let workbenchWindow = null;
 const reminders = createReminderStore();
-// Expanded card: the pet keeps its slot at the bottom and the card gets a readable
-// reply body, instead of the ~110px left in the compact window. The width stays at the
-// compact 280 on purpose: growing wider moves the bottom-right anchored window left,
-// which slides the pet sideways on every open and reads as a flicker.
-const compactBubbleSize = { width: 280, height: 520 };
+// The desktop window is one fixed size that already fits the open card. Toggling the card
+// by resizing the native window moves its origin and repaints the old layout at the new
+// top-left, so the pet visibly jumped up (and left, while the card was wider). Keeping the
+// geometry constant removes that class of flicker entirely; the area above the pet is
+// transparent and forwards clicks.
+const DESK_WIDTH = 280;
+const deskHeight = (scale) => Math.max(380, Math.ceil(208 * scale) + 332);
+// Saved positions are the top-left a 280x340 window would have had, so they keep working
+// after the window grows: the bottom edge is what must stay fixed on screen.
+const LEGACY_DESK_HEIGHT = 340;
+const savedTopLeft = (position, height) => ({ x: position.x, y: position.y + LEGACY_DESK_HEIGHT - height });
 let notificationPreviews = null;
 let askObserver = null;
 let detailOpenToken = 0;
@@ -575,7 +579,7 @@ function onWindowState(state) {
     app.winBounds = state.window;
     if (app.mode !== 'window') app.clickThrough = state.window.clickThrough ?? null;
     if (entering) {
-      const saved = prefs.windowPosition;
+      const saved = prefs.windowPosition && savedTopLeft(prefs.windowPosition, deskHeight(prefs.scale));
       const token = ++app.positionRestoreToken;
       app.restoringPosition = true;
       app.awaitingPointer = true;
@@ -584,8 +588,9 @@ function onWindowState(state) {
       void restoreWindowPosition(win, saved, { isCurrent }).then(async (result) => {
         if (disposed || token !== app.positionRestoreToken || app.mode !== 'window') return;
         let restoredState = result.state;
-        if (result.interactive && restoredState?.window && (restoredState.window.width !== 280 || restoredState.window.height !== 340)) {
-          try { restoredState = await win.update({ width: 280, height: 340 }); }
+        const height = deskHeight(prefs.scale);
+        if (result.interactive && restoredState?.window && (restoredState.window.width !== DESK_WIDTH || restoredState.window.height !== height)) {
+          try { restoredState = await win.update({ width: DESK_WIDTH, height }); }
           catch (error) { if (!isCurrent()) return; result.error = errCode(error); }
           if (!isCurrent()) return;
         }
@@ -607,9 +612,11 @@ function onWindowState(state) {
 
 function rememberPosition() {
   if (!app.winPos || disposed || app.compacting || app.mode !== 'window') return;
+  // Stored as the bottom-right anchor: the window keeps its bottom edge while its height
+  // follows the pet scale, so the pet returns to the same screen spot.
   const bounds = app.winBounds;
-  const position = app.workbenchOpen && bounds
-    ? { x: Math.round(bounds.x + bounds.width - 280), y: Math.round(bounds.y + bounds.height - 340) }
+  const position = bounds
+    ? { x: Math.round(bounds.x + bounds.width - DESK_WIDTH), y: Math.round(bounds.y + bounds.height - LEGACY_DESK_HEIGHT) }
     : { x: Math.round(app.winPos.x), y: Math.round(app.winPos.y) };
   if (prefs.windowPosition?.x === position.x && prefs.windowPosition?.y === position.y) return;
   prefs.windowPosition = position;
@@ -665,7 +672,7 @@ function popOut() {
   setMsg(els.popoutMsg, t('app.popOutBusy'));
   app.modeSwitching = true;
   // Synchronous inside the click handler: mode changes need a user gesture.
-  callBridge(() => win.update({ mode: 'window', width: 280, height: 340 }))
+  callBridge(() => win.update({ mode: 'window', width: DESK_WIDTH, height: deskHeight(prefs.scale) }))
     .then(
       (state) => {
         setMsg(els.popoutMsg, '');
@@ -1503,6 +1510,23 @@ function setScale(value) {
     if (app.workbenchOpen) await closeWorkbench();
     if (!current()) return;
     if (app.mode === 'window') {
+      // The window height follows the pet size so the open card still fits. Anchor the
+      // bottom-right corner, which is what the stored position and the pet's slot use.
+      const height = deskHeight(value);
+      const patch = { width: DESK_WIDTH, height };
+      if (app.winBounds) {
+        patch.x = Math.round(app.winBounds.x + app.winBounds.width - DESK_WIDTH);
+        patch.y = Math.round(app.winBounds.y + app.winBounds.height - height);
+      }
+      let state = null;
+      try { state = await win.update(patch); }
+      catch (error) {
+        if (!current()) return;
+        showTransient(t('mode.resizeFailed', { code: errCode(error) }), 'error');
+        return;
+      }
+      if (!current()) return;
+      if (state) onWindowState(state);
       // The Host only requires the transparent window to overlap a display.
       // Fit its whole content area before shrinking so opaque pet pixels remain reachable.
       const result = await fitWindowToScreen(win, {
@@ -1917,11 +1941,7 @@ function initWorkbench() {
     onOpenSession: canOpenSession ? openSessionInHost : null,
   });
   notificationPreviews = createNotificationPreviews({ agent, onChange: () => { renderBubble(); renderCompactView(); } });
-  if (win) workbenchWindow = createWorkbenchWindow({ windowAPI: win,
-    screenRect: () => ({ x: screen.availLeft, y: screen.availTop, width: screen.availWidth, height: screen.availHeight }),
-    isCurrent: () => !disposed && app.mode === 'window', expandedSize: compactBubbleSize,
-  });
-  disposers.push(() => { notificationPreviews.dispose(); workbenchWindow?.dispose(); workbenchView.dispose(); });
+  disposers.push(() => { notificationPreviews.dispose(); workbenchView.dispose(); });
 }
 
 function renderCompactView() {
@@ -1953,20 +1973,12 @@ async function openWorkbench(view = 'tasks') {
   }
   const token = ++app.workbenchRevision;
   app.compacting = false;
-  const alreadyOpen = workbenchView.opened;
   app.workbenchOpen = true;
   closeMenu(); hideQuickbar(); stopLook();
   setClickThrough(false);
   const waitingAt = Date.now();
   while (app.restoringPosition && token === app.workbenchRevision && !disposed && Date.now() - waitingAt < 3000) await new Promise((resolve) => setTimeout(resolve, 20));
   if (disposed || token !== app.workbenchRevision || app.mode !== 'window' || !app.workbenchOpen) return;
-  const result = app.restoringPosition ? { ok: false, code: 'window_restoring' } : alreadyOpen ? { ok: true } : await workbenchWindow.setExpanded(true);
-  if (disposed || token !== app.workbenchRevision || app.mode !== 'window' || !app.workbenchOpen) return;
-  if (!result.ok) {
-    app.workbenchOpen = false;
-    showTransient(t('mode.expandFailed', { code: result.code }), 'error');
-    refreshInteractivity(); return;
-  }
   workbenchView.open(view);
   root.classList.add('workbench-open');
   applyActivity();
@@ -1979,14 +1991,8 @@ async function closeWorkbench() {
   workbenchView.close();
   root.classList.remove('workbench-open');
   applyActivity();
-  const result = await workbenchWindow?.setExpanded(false);
-  if (token === app.workbenchRevision) app.compacting = false;
-  if (!disposed && token === app.workbenchRevision && app.mode === 'window' && !app.workbenchOpen) {
-    if (result && !result.ok && !['stale', 'superseded', 'cancelled'].includes(result.code)) showTransient(t('mode.collapseFailed', { code: result.code }), 'error');
-    const current = () => !disposed && token === app.workbenchRevision && app.mode === 'window' && !app.workbenchOpen;
-    callBridge(() => win.getState()).then((state) => { if (current()) onWindowState(state); }, (error) => { if (current()) logError('get_state_after_collapse')(error); });
-    refreshInteractivity();
-  }
+  app.compacting = false;
+  if (!disposed && token === app.workbenchRevision && app.mode === 'window' && !app.workbenchOpen) refreshInteractivity();
 }
 
 function renderReminders() {
@@ -2060,7 +2066,6 @@ function setNoticeTimeout(raw) {
 
 function renderScale() {
   root.style.setProperty('--minimax-pet-height', `${208 * prefs.scale}px`);
-  compactBubbleSize.height = Math.max(380, Math.ceil(208 * prefs.scale) + 332);
   syncSegmented(els.scaleGroup, prefs.scale);
 }
 

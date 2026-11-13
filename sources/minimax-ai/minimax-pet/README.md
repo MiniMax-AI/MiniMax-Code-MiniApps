@@ -18,6 +18,8 @@ The pet does not run Agent turns, create independent chats, write to chat inputs
 
 Version **0.9.0** adds two settings. **Task notifications** sets how many seconds a desktop card stays after a task finishes or fails, entered as a number and saved on the device; the default is 10 and **0** keeps the card until you close it. A card hiding never marks the task read, cards that need your answer never hide, and pointing at or focusing the cards pauses the countdown. **Language** follows the MiniMax Code interface language by default and can be pinned to 简体中文 or English; the whole panel and desktop copy switch, while conversation titles and replies stay as the Agent wrote them.
 
+Version **0.9.0** also gives the desktop window one fixed size, tall enough for the open card. Earlier versions grew the window when a card opened, which moved it on screen and made the pet jump for a frame; now opening or closing a card only shows or hides it. The area above the pet is transparent and passes clicks through to whatever is behind it.
+
 Version **0.8.1** fixes the desktop card: the title truncates to one line, only the reply scrolls, and the actions stay pinned, so a long title or reply no longer pushes 返回任务 / 打开对话 out of the card. Expanding the card also grows the window instead of squeezing the reply into one line.
 
 Version **0.8.0** aligns the panel with the MiniMax Code design language: 24px page margins and section gaps, 14px/22px body copy with 12px/18px supporting text, 32px minimum control height, 12px cards and 8px controls, 0.5px borders on desktop overlays, and press/focus states. The desktop pet keeps its 280px layout with the same tokens.
