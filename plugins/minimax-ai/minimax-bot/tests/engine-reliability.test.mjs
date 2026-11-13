@@ -648,6 +648,44 @@ test('an interrupted associated assistant is reported as uncertain, and legacy m
   await restored.writeChain;
 });
 
+test('a request whose queue died with the process is still sendable from the page', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  // The process died after the inbox marked the batch processing and before any reply existed.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text: 'Ship the hotfix', clientMessageId: 'orphan-1',
+    clientMessageHash: engine.userMessageFingerprint('Ship the hotfix', []), dispatchState: 'processing',
+  });
+  await store.writeChain;
+
+  const restored = new Store(dir);
+  await restored.init();
+  let runs = 0;
+  const reopened = new Engine({ store: restored, memory, logger: { warn() {} }, broadcast() {}, retryDelaysMs: [], agent: {
+    async run(input, options) { runs += 1; return { ...started(input, options, 'resumed'), status: 'finished', text: 'Shipped' }; },
+  } });
+  reopened.startScheduler();
+  reopened.tasks.start();
+
+  // The load-time mapping keeps `pending`, which the client retry path needs. The queue that owned
+  // it is gone, so the resume route has to recognise it too or the request is stranded for good.
+  const afterRestart = (await restored.getMessages(chatId)).find((message) => message.id === user.id);
+  assert.equal(afterRestart.dispatchState, 'pending');
+  await until(() => idle(reopened));
+  // Nothing replays it on its own: the turn may already have run tools before the process died.
+  assert.equal(runs, 0);
+
+  await reopened.inbox.resume(chatId);
+  await until(() => idle(reopened));
+  assert.equal(runs, 1);
+  const messages = await restored.getMessages(chatId);
+  assert.equal(messages.find((message) => message.id === user.id).dispatchState, 'delivered');
+  assert.equal(messages.filter((message) => message.sourceMessageId === user.id).length, 1);
+  reopened.dispose();
+  await restored.writeChain;
+});
+
 test('repeated pending submissions do not duplicate queued turns or revive a deliberately cancelled queue', async (t) => {
   const { store, engine } = await fixture(t);
   const bot = store.state.bots[0];

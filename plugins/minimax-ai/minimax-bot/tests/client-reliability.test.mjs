@@ -570,6 +570,22 @@ test('held supplements require an explicit continuation and a failed action leav
   assert.equal(calls.filter((call) => call.path.endsWith('/resume-pending')).length, 1);
 });
 
+test('a request stranded by a restart offers to send it again, and one this page just sent does not', async () => {
+  // dispatchRevision is written when a delivery state changes, so a recovered request has one and
+  // a request the composer just created does not.
+  const stranded = message('msg_stranded', 'Ship the hotfix', { role: 'user', dispatchState: 'pending', dispatchRevision: 1 });
+  await reset([stranded]);
+  const button = document.querySelector('.message-delivery button');
+  assert.equal(button.textContent, 'Continue with follow-ups');
+  route = ({ path }) => path.endsWith('/resume-pending') ? response({ ok: true }) : undefined;
+  button.click(); await settle();
+  assert.equal(calls.filter((call) => call.path.endsWith('/resume-pending')).length, 1);
+
+  const fresh = message('msg_fresh', 'Just typed', { role: 'user', dispatchState: 'pending' });
+  await reset([fresh]);
+  assert.equal(document.querySelector('.message-delivery button'), null);
+});
+
 test('a delayed send receipt cannot restore an obsolete pending state after the live processing event', async () => {
   await reset();
   const user = message('msg_receipt', 'Request', { role: 'user', dispatchState: 'pending', dispatchRevision: 0 });

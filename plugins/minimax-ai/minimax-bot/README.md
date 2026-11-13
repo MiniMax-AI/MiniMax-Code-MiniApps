@@ -95,6 +95,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 
 - The approval claim in **Agent turns** mixed the plugin's own behaviour with the Host's. The plugin never approves a call by itself — that part was true and stays true — but whether approval is asked for at all is decided by the Host's permission mode, and a Host that never asks for approval never shows the card. The old sentence stated the first half as if it also settled the second, so it read as a promise about an outcome the plugin does not control. It now names the Host condition, and keeps the plugin's own side: when approval is needed, the plugin never approves it by itself.
 
+## 0.7.27 A request the plugin already accepted is still sendable after a restart
+
+- MiniMax Code may stop the plugin's Node process while no page is visible, and it does so without a callback. A request that was already accepted and had produced no reply used to come back as waiting for a queue that no longer existed: it stayed in the chat with no answer, the page offered no way to send it again, and the resume route refused it. The request was unreachable for good.
+- The page now offers the same **Continue with follow-ups** button for it, and the resume route accepts it, so the request can be sent again. Nothing is replayed on its own: the turn may already have run tools before the process stopped, so sending it again stays the user's decision.
+- A request whose reply had already started is unchanged, and a request this page has just sent never offers to resume itself.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
