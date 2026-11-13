@@ -906,8 +906,11 @@ function onSpritePointerDown(e) {
     grabY: e.clientY,
     // Window origin at grab time; null when the Host reported no position.
     base: origin,
-    // Optimistic window origin: the position the Host accepted last.
+    // Window origin the Host confirmed; every target is measured against it.
     origin: origin ? { ...origin } : null,
+    // Latest target not sent yet, and whether an update is already in flight.
+    pending: null,
+    sending: false,
     // Reference for the run direction: the window origin when it is known,
     // otherwise the pointer position inside the window.
     ref: origin ? origin.x : e.clientX,
@@ -945,17 +948,43 @@ function onSpritePointerMove(e) {
     updateDragDirection(d, e.clientX);
     return;
   }
-  // The window already sits where the pointer wants it: no update, no loop.
+  // The pointer sits at the grab point inside the window: the window already
+  // is where the pointer wants it, so there is nothing to send.
+  if (dx === 0 && dy === 0) {
+    d.pending = null;
+    return;
+  }
+  // Keep only the latest target; one update is in flight at a time.
+  d.pending = target;
+  flushDrag(d);
+}
+
+// One window update at a time. The Host answers with the position it holds,
+// so the next target is measured against a confirmed position, and a refused
+// update can never roll the window back past a later accepted one.
+function flushDrag(d) {
+  if (d.sending || !d.pending) return;
+  const target = d.pending;
+  d.pending = null;
   if (target.x === d.origin.x && target.y === d.origin.y) return;
+  d.sending = true;
   updateDragDirection(d, target.x);
-  const accepted = d.origin;
-  d.origin = target;
-  callBridge(() => win.update({ x: target.x, y: target.y })).catch((error) => {
-    const code = errCode(error);
+  callBridge(() => win.update({ x: target.x, y: target.y })).then((state) => {
+    d.sending = false;
+    const moved = state?.window;
+    if (moved) {
+      d.origin = { x: moved.x, y: moved.y };
+      app.winPos = { x: moved.x, y: moved.y };
+    } else if (app.winPos) d.origin = { ...app.winPos };
+    flushDrag(d);
+  }, (error) => {
+    d.sending = false;
     // The Host refused the move and kept the window where it was.
-    d.origin = accepted;
+    if (app.winPos) d.origin = { ...app.winPos };
+    const code = errCode(error);
     if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
+    flushDrag(d);
   });
 }
 
@@ -986,6 +1015,8 @@ function finishDrag(e, cancelled) {
   const d = app.drag;
   if (!d || e.pointerId !== d.pointerId) return;
   app.drag = null;
+  // The last pointer position is where the pet belongs: send it.
+  if (!cancelled) flushDrag(d);
   try {
     if (els.sprite.hasPointerCapture(e.pointerId)) els.sprite.releasePointerCapture(e.pointerId);
   } catch (error) {
