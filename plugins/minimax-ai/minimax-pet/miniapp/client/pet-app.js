@@ -255,8 +255,10 @@ let workbenchView = null;
 let workbenchWindow = null;
 const reminders = createReminderStore();
 // Expanded card: the pet keeps its slot at the bottom and the card gets a readable
-// reply body, instead of the ~110px left in the compact window.
-const compactBubbleSize = { width: 300, height: 520 };
+// reply body, instead of the ~110px left in the compact window. The width stays at the
+// compact 280 on purpose: growing wider moves the bottom-right anchored window left,
+// which slides the pet sideways on every open and reads as a flicker.
+const compactBubbleSize = { width: 280, height: 520 };
 let notificationPreviews = null;
 let askObserver = null;
 let detailOpenToken = 0;

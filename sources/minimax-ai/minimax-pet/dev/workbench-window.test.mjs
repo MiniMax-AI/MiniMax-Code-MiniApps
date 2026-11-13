@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createWorkbenchWindow } from '../miniapp/client/workbench-window.mjs';
 
@@ -159,4 +160,23 @@ test('unavailable, inline and non-resizable handles fail without writing geometr
   const fixed = harness({ state: { mode: 'window', window: { x: 0, y: 0, width: 280, height: 340, resizable: false } } });
   assert.deepEqual(await fixed.controller.setExpanded(true), { ok: false, code: 'not_permitted' });
   assert.deepEqual(fixed.calls, []); assert.deepEqual(inline.calls, []);
+});
+
+test('expanding the companion card never moves the pet sideways', async () => {
+  // The pet is centred in the window, so a bottom-right anchored resize only keeps it
+  // still if the width is unchanged. A wider card slides the pet and reads as a flicker
+  // each time the card opens.
+  const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
+  const declared = source.match(/const compactBubbleSize = \{ width: (\d+), height: (\d+) \};/u);
+  assert.ok(declared, 'compactBubbleSize is where the card size is declared');
+  const expandedSize = { width: Number(declared[1]), height: Number(declared[2]) };
+  const petWidth = 144;
+  const petScreenX = (bounds) => bounds.x + (bounds.width - petWidth) / 2;
+  const h = harness({ expandedSize, state: { mode: 'window', window: { x: 1640, y: 680, width: 280, height: 340, resizable: true } } });
+  const before = petScreenX(h.state().window);
+  await h.controller.setExpanded(true);
+  assert.equal(petScreenX(h.state().window), before, 'opening the card must not move the pet');
+  assert.ok(h.state().window.height > 340, 'the card still gets more room');
+  await h.controller.setExpanded(false);
+  assert.equal(petScreenX(h.state().window), before, 'closing it must not move the pet either');
 });

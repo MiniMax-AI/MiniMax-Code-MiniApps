@@ -619,9 +619,7 @@ html.mode-window body {
   justify-content: flex-end;
   gap: 4px;
   padding: 8px 8px 4px;
-  /* The window is transparent and frameless: the card may overflow it upward so a
-     long reply keeps a readable body instead of a single line. */
-  overflow: visible;
+  overflow: hidden;
 }
 
 .desk-overlays {
