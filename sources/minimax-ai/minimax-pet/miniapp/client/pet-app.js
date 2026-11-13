@@ -896,24 +896,40 @@ function onSpritePointerDown(e) {
   } catch (error) {
     console.warn('[pet] pointer_capture_failed:', errCode(error), error);
   }
+  const origin = app.winPos ? { ...app.winPos } : null;
   app.drag = {
     pointerId: e.pointerId,
-    startX: e.screenX,
-    startY: e.screenY,
-    win: app.winPos ? { ...app.winPos } : null,
+    // A popped-out window reports screenX relative to its own frame, so the
+    // pointer position inside the window plus the window origin is the only
+    // place the window can go.
+    grabX: e.clientX,
+    grabY: e.clientY,
+    // Window origin at grab time; null when the Host reported no position.
+    base: origin,
+    // Optimistic window origin: the position the Host accepted last.
+    origin: origin ? { ...origin } : null,
+    // Reference for the run direction: the window origin when it is known,
+    // otherwise the pointer position inside the window.
+    ref: origin ? origin.x : e.clientX,
     active: false,
     dir: null,
-    extreme: e.screenX,
+    extreme: origin ? origin.x : e.clientX,
   };
 }
 
 function onSpritePointerMove(e) {
   const d = app.drag;
   if (!d || e.pointerId !== d.pointerId) return;
-  const dx = e.screenX - d.startX;
-  const dy = e.screenY - d.startY;
+  const dx = e.clientX - d.grabX;
+  const dy = e.clientY - d.grabY;
+  // The window follows the pointer, so the pointer offset inside the window
+  // shrinks back to the grab point. The target is measured against the window
+  // origin the Host holds, never against the grab position.
+  const target = d.origin ? { x: Math.round(d.origin.x + dx), y: Math.round(d.origin.y + dy) } : null;
   if (!d.active) {
-    if (Math.hypot(dx, dy) <= DRAG_THRESHOLD) return;
+    // How far the pointer travelled on screen, not inside the window.
+    const travel = target ? { x: target.x - d.base.x, y: target.y - d.base.y } : { x: dx, y: dy };
+    if (Math.hypot(travel.x, travel.y) <= DRAG_THRESHOLD) return;
     d.active = true;
     app.dragging = true;
     app.oneShotToken++;
@@ -922,12 +938,22 @@ function onSpritePointerMove(e) {
     hideQuickbar();
     els.sprite.classList.add('is-dragging');
     refreshInteractivity();
-    if (!d.win) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
+    if (!d.origin) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
   }
-  updateDragDirection(d, e.screenX);
-  if (!d.win) return;
-  callBridge(() => win.update({ x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy) })).catch((error) => {
+  if (!target) {
+    // No window position: the pet still runs, but nothing can move.
+    updateDragDirection(d, e.clientX);
+    return;
+  }
+  // The window already sits where the pointer wants it: no update, no loop.
+  if (target.x === d.origin.x && target.y === d.origin.y) return;
+  updateDragDirection(d, target.x);
+  const accepted = d.origin;
+  d.origin = target;
+  callBridge(() => win.update({ x: target.x, y: target.y })).catch((error) => {
     const code = errCode(error);
+    // The Host refused the move and kept the window where it was.
+    d.origin = accepted;
     if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
   });
@@ -947,8 +973,8 @@ function updateDragDirection(d, sx) {
       d.dir = 'right';
       d.extreme = sx;
     }
-  } else if (Math.abs(sx - d.startX) > DIRECTION_HYSTERESIS / 2) {
-    d.dir = sx > d.startX ? 'right' : 'left';
+  } else if (Math.abs(sx - d.ref) > DIRECTION_HYSTERESIS / 2) {
+    d.dir = sx > d.ref ? 'right' : 'left';
     d.extreme = sx;
   }
   if (d.dir !== before) {
