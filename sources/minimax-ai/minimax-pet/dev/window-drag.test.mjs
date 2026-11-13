@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
-const handler = source.slice(source.indexOf('function onSpritePointerDown'), source.indexOf('function finishDrag'));
+const handler = source.slice(source.indexOf('function onSpritePointerDown'), source.indexOf('function cancelDrag'));
 
 // The Host keeps the window origin; a pointer inside the window is measured
 // from that origin, so the pointer offset shrinks while the window follows it.
@@ -28,16 +28,19 @@ function harness({ failFirst = 0 } = {}) {
         calls.push(['update', patch.x, patch.y]);
         return new Promise((resolve, reject) => { request = { patch, resolve, reject }; });
       },
+      getState() { return { mode: 'window', window: { ...host, width: 280, height: 340 } }; },
     },
     callBridge: (fn) => { try { return Promise.resolve(fn()); } catch (error) { return Promise.reject(error); } },
     errCode: (error) => error?.code || error?.message || 'result_unknown',
     logError: () => () => {},
     player: { play: (name) => { calls.push(['play', name]); return Promise.resolve(); } },
     noteInteraction() {}, closeMenu() {}, hideQuickbar() {}, stopLook() {}, refreshInteractivity() {},
+    playOneShot() {}, desiredAnimation: () => ({ state: 'idle' }), openWorkbench() {}, applyActivity() {},
+    onWindowState() {},
     DRAG_THRESHOLD: 4, DIRECTION_HYSTERESIS: 12,
     console: { warn() {}, debug() {}, error() {} },
   });
-  vm.runInContext(`${handler}\nglobalThis.dragApi = { onSpritePointerDown, onSpritePointerMove };`, context);
+  vm.runInContext(`${handler}\nglobalThis.dragApi = { onSpritePointerDown, onSpritePointerMove, finishDrag };`, context);
   const api = context.dragApi;
   // screenMode 'local' reproduces the popped-out window, where screenX is the
   // pointer position inside the window instead of a screen coordinate. The
@@ -46,7 +49,7 @@ function harness({ failFirst = 0 } = {}) {
     const clientX = pointer.x - host.x;
     const clientY = pointer.y - host.y;
     return {
-      pointerId: 1, button: 0, buttons: 1, clientX, clientY,
+      pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX, clientY,
       screenX: screenMode === 'absolute' ? pointer.x : clientX,
       screenY: screenMode === 'absolute' ? pointer.y : clientY,
       preventDefault() {},
@@ -77,6 +80,7 @@ function harness({ failFirst = 0 } = {}) {
     calls, app, host,
     press: (pointer, screenMode) => api.onSpritePointerDown(event('pointerdown', pointer, screenMode)),
     move: (pointer, screenMode) => api.onSpritePointerMove(event('pointermove', pointer, screenMode)),
+    release: (pointer, screenMode) => api.finishDrag(event('pointerup', pointer, screenMode), false),
     updates: () => calls.filter((call) => call[0] === 'update'),
     plays: () => calls.filter((call) => call[0] === 'play').map((call) => call[1]),
     applyMove,
@@ -175,6 +179,9 @@ test('a refused update does not roll the origin back past a later accepted one',
   await h.advance();
   // The refused update did not move the window; the accepted one did.
   assert.deepEqual(h.updates(), [['update', 1030, 500], ['update', 1090, 500]]);
+  // The Host applied the accepted update at the next frame, so the pointer is
+  // measured against the window it already moved.
+  h.applyMove();
   pointer.x = 1170;
   h.move(pointer, 'local');
   await h.advance();
@@ -189,9 +196,12 @@ test('a fast drag counts a movement that has not landed yet only once', async ()
   const h = harness();
   const pointer = { x: 1100, y: 700 };
   h.press(pointer, 'local');
-  // The second move arrives before the Host applied the first one.
   pointer.x = 1130;
   h.move(pointer, 'local');
+  // The Host moved the window to 1030 but has not answered the request yet.
+  h.applyMove();
+  // The second move arrives before the answer, measured against the window
+  // the Host already moved.
   pointer.x = 1160;
   h.move(pointer, 'local');
   await h.advance();
@@ -202,20 +212,57 @@ test('a fast drag counts a movement that has not landed yet only once', async ()
   assert.deepEqual(h.host, { x: 1060, y: 500 });
 });
 
-test('a pointermove that arrives while the Host moves the window does not step it back', async () => {
+test('a pending move of one pointer step keeps the target on the pointer', async () => {
+  const h = harness();
+  const pointer = { x: 1100, y: 700 };
+  h.press(pointer, 'local');
+  // s = 10: the update in flight moves the window by one pointer step.
+  pointer.x = 1110;
+  h.move(pointer, 'local');
+  h.applyMove();
+  // v = 10: the pointer moves one more step while the answer is pending.
+  pointer.x = 1120;
+  h.move(pointer, 'local');
+  await h.advance();
+  await h.advance();
+  // The confirmed origin plus the pointer offset is the only target that
+  // holds when the pending move and the pointer step are the same size.
+  assert.deepEqual(h.updates(), [['update', 1010, 500], ['update', 1020, 500]]);
+  assert.deepEqual(h.host, { x: 1020, y: 500 });
+});
+
+test('a pending move of two pointer steps keeps the target on the pointer', async () => {
+  const h = harness();
+  const pointer = { x: 1100, y: 700 };
+  h.press(pointer, 'local');
+  // s = 20: the update in flight moves the window by two pointer steps.
+  pointer.x = 1120;
+  h.move(pointer, 'local');
+  h.applyMove();
+  // v = 10: the pointer moves one step while the answer is pending.
+  pointer.x = 1130;
+  h.move(pointer, 'local');
+  await h.advance();
+  await h.advance();
+  assert.deepEqual(h.updates(), [['update', 1020, 500], ['update', 1030, 500]]);
+  assert.deepEqual(h.host, { x: 1030, y: 500 });
+});
+
+test('the release waits for the update in flight before the final position', async () => {
   const h = harness();
   const pointer = { x: 1100, y: 700 };
   h.press(pointer, 'local');
   pointer.x = 1130;
   h.move(pointer, 'local');
-  // The Host moved the window to 1030 but has not answered the request yet.
   h.applyMove();
-  pointer.x = 1140;
+  pointer.x = 1160;
   h.move(pointer, 'local');
+  // The release happens while the update is still in flight: nothing goes out
+  // yet, the final position waits for the answer.
+  h.release(pointer, 'local');
+  assert.deepEqual(h.updates(), [['update', 1030, 500]]);
   await h.advance();
-  // The pointer is measured against the window the Host already moved to, so
-  // the next target is 1040, not 1010.
-  assert.deepEqual(h.updates(), [['update', 1030, 500], ['update', 1040, 500]]);
   await h.advance();
-  assert.deepEqual(h.host, { x: 1040, y: 500 });
+  assert.deepEqual(h.updates(), [['update', 1030, 500], ['update', 1060, 500]]);
+  assert.deepEqual(h.host, { x: 1060, y: 500 });
 });
