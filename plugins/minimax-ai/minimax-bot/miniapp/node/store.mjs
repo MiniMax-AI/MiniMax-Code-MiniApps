@@ -620,12 +620,18 @@ export class Store {
 
   async deleteChat(chatId) {
     await this.getMessages(chatId);
+    // Empty the transcript only after the state that forgets this chat is on disk. The messages are
+    // the one thing here that cannot be rebuilt: truncating them first means a failed save leaves
+    // the chat listed and the history already gone. In the opposite order a failed save leaves both
+    // intact, so the caller can simply try again. The in-memory entry is dropped only once the write
+    // succeeded, so a failure cannot leave memory ahead of the disk either.
     await this.enqueue(async () => {
+      const { [chatId]: forgotten, ...sessions } = this.state.sessions;
+      await writeJsonAtomic(this.statePath, { ...this.state, sessions });
+      this.state.sessions = sessions;
       await writeJsonAtomic(this.messagePath(chatId), []);
       this.messageCache.set(chatId, []);
-      delete this.state.sessions[chatId];
     });
-    await this.save();
   }
 
   /** Sidebar summary of one chat, read from the warm cache. */
