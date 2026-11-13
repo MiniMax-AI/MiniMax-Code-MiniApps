@@ -821,8 +821,9 @@ html.mode-window .pet-sprite:focus-visible {
   z-index: 5;
   left: 8px;
   right: 8px;
-  bottom: calc(var(--minimax-pet-height, 104px) + 12px);
-  max-height: 216px;
+  bottom: calc(var(--minimax-pet-height, 104px) + 8px);
+  /* Use the space the expanded window provides, up to what the desk leaves above the pet. */
+  max-height: max(216px, calc(100% - var(--minimax-pet-height, 104px) - 24px));
   display: flex;
   flex-direction: column;
   border: 1px solid var(--mcode-border);
@@ -844,6 +845,12 @@ html.mode-window .pet-sprite:focus-visible {
 .compact-button:disabled { opacity: .4; cursor: default; }
 .compact-close { color: var(--mcode-text-muted); margin-left: auto; font-size: 17px; padding: 0 5px; min-width: 32px; min-height: 32px; }
 .compact-body { min-height: 0; overflow: auto; padding: 2px 10px 8px; }
+/* The detail pane owns the height: head and footer are fixed, the reply is the only scroller. */
+.compact-detail { display: flex; flex-direction: column; gap: 4px; min-height: 0; padding: 2px 10px 8px; overflow: hidden; }
+.compact-detail-head { display: flex; align-items: baseline; gap: 6px; flex: none; min-width: 0; }
+.compact-detail-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.compact-detail .compact-footer { flex: none; margin-top: 0; padding-top: 4px; border-top: 1px solid var(--mcode-border); }
+.compact-detail .compact-hint { flex: none; }
 .compact-hint { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--mcode-text-muted); margin: 4px 0; font-size: 12px; line-height: 16px; }
 .compact-hint[data-kind='error'] { color: var(--mcode-danger); }
 .compact-footer { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
@@ -860,9 +867,9 @@ html.mode-window .pet-sprite:focus-visible {
 .pet-notice-open { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--mcode-text); text-align: left; font: inherit; font-size: 12px; line-height: 16px; padding: 0; cursor: pointer; }
 .pet-notice-open strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .pet-notice-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; color: var(--mcode-text-muted); overflow-wrap: anywhere; }
-.compact-detail-title { margin: 0; font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.compact-detail-status { margin: 2px 0 2px 6px; font-size: 12px; line-height: 16px; color: var(--mcode-text-muted); }
-.compact-detail-reply { margin: 5px 0; max-height: 126px; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.compact-detail-title { flex: 1; min-width: 0; margin: 0; font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-detail-status { flex: none; font-size: 12px; line-height: 16px; color: var(--mcode-text-muted); }
+.compact-detail-reply { margin: 0; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 /* The desktop card is 280px wide; keep the same structure at a tighter scale. */
 .compact-detail-reply.md { font-size: 12px; line-height: 17px; text-align: left; }
 .compact-detail-reply.md .md-p,
@@ -1583,6 +1590,46 @@ html.mode-inline body {
 #panel .setting-message {
   grid-column: 1 / -1;
   min-width: 0;
+}
+
+#panel .setting-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#panel .number-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+}
+
+#panel .number-field:focus-within {
+  border-color: var(--mcode-accent);
+}
+
+#panel #notice-timeout {
+  width: 64px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mcode-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+}
+
+#panel #notice-timeout:focus {
+  outline: none;
 }
 
 #panel #muted-list {

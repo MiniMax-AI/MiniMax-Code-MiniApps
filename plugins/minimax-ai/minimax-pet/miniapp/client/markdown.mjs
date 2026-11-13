@@ -3,12 +3,13 @@
 // Nothing here builds an HTML string: every node is created with createElement or
 // createTextNode, so model output can never inject markup.
 import { parseMarkdown } from './vendor/markdown.mjs';
+import { t } from './i18n.mjs';
 
 // A reply is at most a few thousand characters in practice. Keep a ceiling so one
 // pathological response cannot stall the page, and bound the parse cache.
 const MAX_SOURCE = 200_000;
 const MAX_CACHE = 8;
-const TRUNCATED_NOTE = '\n…（内容过长，已截断显示）';
+const truncatedNote = () => `\n${t('markdown.truncated')}`;
 const HEADING_LEVEL_BASE = 2;
 
 const parses = new Map();
@@ -32,7 +33,7 @@ function remember(map, key, value) {
 }
 
 function tree(text) {
-  const source = text.length > MAX_SOURCE ? text.slice(0, MAX_SOURCE) + TRUNCATED_NOTE : text;
+  const source = text.length > MAX_SOURCE ? text.slice(0, MAX_SOURCE) + truncatedNote() : text;
   const hit = parses.get(source);
   if (hit) return hit;
   let parsed;
@@ -79,7 +80,7 @@ function inlineNode(doc, node) {
       // request. Rendering the URL would expose remote hosts to the reply.
       const span = doc.createElement('span');
       span.className = 'md-image';
-      span.textContent = `［图片${node.alt ? `：${node.alt}` : ''}］`;
+      span.textContent = t('markdown.image', { alt: node.alt ? t('markdown.imageAlt', { alt: node.alt }) : '' });
       return span;
     }
     case 'link': {
@@ -180,7 +181,7 @@ function blockNode(doc, node) {
       // Wide tables scroll inside the card instead of widening the page.
       wrap.tabIndex = 0;
       wrap.setAttribute('role', 'region');
-      wrap.setAttribute('aria-label', '任务回复中的表格');
+      wrap.setAttribute('aria-label', t('desk.tableAria'));
       const table = doc.createElement('table');
       const rows = Array.isArray(node.children) ? node.children : [];
       const align = Array.isArray(node.align) ? node.align : [];
@@ -312,7 +313,7 @@ function inlineText(node) {
     case 'inlineHtml':
       return typeof node.value === 'string' ? node.value : '';
     case 'image':
-      return node.alt ? `［图片：${node.alt}］` : '［图片］';
+      return t('markdown.image', { alt: node.alt ? t('markdown.imageAlt', { alt: node.alt }) : '' });
     case 'link':
     case 'strong':
     case 'emphasis':

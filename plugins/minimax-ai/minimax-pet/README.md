@@ -2,18 +2,25 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A lightweight desktop companion for MiniMax Code, by **MiniMax**. It shows visible conversation activity, answer-needed reminders and recent results without creating another chat. The interface is currently in Chinese.
+A lightweight desktop companion for MiniMax Code, by **MiniMax**. It shows visible conversation activity, answer-needed reminders and recent results without creating another chat. The interface is available in Simplified Chinese and English.
 
 ## Features
 
 - **Appearance:** preview and select pets, import compatible pet JSON and spritesheets, and remove imported pets.
 - **Tasks:** recent reminders, visible user conversations, and a scrollable latest reply rendered as Markdown. Desktop cards preview up to five lines. Clicking a card keeps the pet visible; observed `ask_user` calls show “需要你回答” (needs your answer).
 - **Open the conversation:** on MiniMax Code 3.1.11 or later, a task's detail, in the panel and on the desktop, has a **打开对话** (open conversation) button, labelled **去回答** (go answer) while the task needs an answer. It brings the MiniMax Code main window forward on that conversation. Older clients do not show the button.
-- **Settings:** pet size, page-local reminder dismissal and mute, connection status, and reconnect.
+- **Language:** the panel and desktop copy follow the MiniMax Code interface language on 3.1.11 or later, or the system language when the client does not report one, and can be pinned in **Settings**. Older clients fall back to the system language.
+- **Settings:** pet size, interface language, how long desktop cards stay, page-local reminder dismissal and mute, connection status, and reconnect.
 - **Desktop window:** a draggable transparent pet with compact notification cards. Return it to the main panel to use the three tabs.
 - **Theme:** on MiniMax Code 3.1.11 or later the panel and desktop cards follow the client's light or dark theme; older clients follow the system setting.
 
 The pet does not run Agent turns, create independent chats, write to chat inputs, comment on every session, stop tasks, or answer questionnaires. Selecting a task only reads its details; the main window switches only when you click **打开对话** or **去回答**.
+
+Version **0.9.0** adds two settings. **Task notifications** sets how many seconds a desktop card stays after a task finishes or fails, entered as a number and saved on the device; the default is 10 and **0** keeps the card until you close it. A card hiding never marks the task read, cards that need your answer never hide, and pointing at or focusing the cards pauses the countdown. **Language** follows the MiniMax Code interface language by default and can be pinned to 简体中文 or English; the whole panel and desktop copy switch, while conversation titles and replies stay as the Agent wrote them.
+
+Version **0.9.0** also gives the desktop window one fixed size, tall enough for the open card. Earlier versions grew the window when a card opened, which moved it on screen and made the pet jump for a frame; now opening or closing a card only shows or hides it. The area above the pet is transparent and passes clicks through to whatever is behind it.
+
+Version **0.8.1** fixes the desktop card: the title truncates to one line, only the reply scrolls, and the actions stay pinned, so a long title or reply no longer pushes 返回任务 / 打开对话 out of the card. Expanding the card also grows the window instead of squeezing the reply into one line.
 
 Version **0.8.0** aligns the panel with the MiniMax Code design language: 24px page margins and section gaps, 14px/22px body copy with 12px/18px supporting text, 32px minimum control height, 12px cards and 8px controls, 0.5px borders on desktop overlays, and press/focus states. The desktop pet keeps its 280px layout with the same tokens.
 
@@ -39,6 +46,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - **打开对话** / **去回答** uses `host.navigation.open` and the theme uses `host.ui.subscribe`, both added in MiniMax Code **3.1.11**; on 2026-11-10 the macOS and Windows installers of 3.1.11 answered on both production CDNs. Both calls were checked against the MiniMax Code source: opening a conversation the Mini App already holds needs no `hostAccess` and no extra grant, must start inside a click, and brings the main window forward.
 - An earlier UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, and desktop round trips. Version 0.6.0 has Node/DOM tests (including the open and theme paths against a simulated Host), an isolated HTTP smoke test, and a browser check of the panel layout outside the Host.
 - The default atlas is checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The separate octopus icon is checked by PNG decoding and visual review. On 2026-10-26, the packaged Skill was exercised with a real Agent in the macOS development build to create, validate, preview and import a custom v2 pet; all nine animation previews and the four cardinal mouse-look directions were checked. This does not replace released-client acceptance.
+- Version 0.9.0 has Node/DOM tests for the card timer, the preference round trip and the copy of both languages (every key the page uses must exist in both), plus a browser check of the panel and desktop window in both languages against a simulated Host. Not verified for 0.9.0: the language the real client reports on any given install, and both languages inside a real MiniMax Code window.
 - Not verified for 0.6.0: opening a conversation or following the theme inside a real MiniMax Code 3.1.11+ window (panel or desktop pet), any Windows GUI, and released-client installation or GUI acceptance on 3.1.6. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
@@ -49,7 +57,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - **Local files:** the Node service serves packaged assets and stores preferences and user-imported JSON/WebP/PNG spritesheets under opaque `context.dataDir`. Imports, replacement recovery and deletion are limited to that plugin data. Browser storage is used only to migrate old view preferences.
 - **Rendered replies:** the latest reply is parsed as Markdown by the vendored parser and rebuilt as DOM nodes under the page's own stylesheet. Raw HTML in a reply is displayed as literal text, never executed or inserted as markup; links show their target on hover and are not opened; images are not fetched and appear as a text label.
 - **Host navigation:** only when you click **打开对话** or **去回答**, the page calls `host.navigation.open({ id: 'session', sessionId, source: 'local' })` for a conversation it already lists through `session.read`. It does not declare `hostAccess` and never reads which page of MiniMax Code you are on. It writes nothing to chat inputs and sends no message.
-- **Display preferences:** `host.ui.subscribe` reports the client theme, which the page applies; the reported language is ignored. No grant is involved.
+- **Display preferences:** `host.ui.subscribe` reports the client theme and interface language; the page applies the theme and, while the language setting is **Follow MiniMax Code**, the language. Choosing 简体中文 or English overrides it. The preference is stored with the other settings in the plugin data directory. No grant is involved.
 - **Network:** the plugin has no hard-coded external runtime endpoint; its own HTTP requests use its assigned loopback origin.
 - **Microphone, camera and notifications:** not used and not declared.
 - **Processes and Agent turns:** the Host starts one Node process. The plugin spawns no additional runtime process, launches no shell command, offers no MCP server, and never calls `agent.run`.

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "minimax-pet",
   "displayName": "MiniMax Pet",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "轻量桌宠，聚合主窗口可见会话的任务状态、需要回答的提醒和最新结果，支持外观切换及图集导入。",
   "author": "MiniMax",
   "icon": "icon.png",

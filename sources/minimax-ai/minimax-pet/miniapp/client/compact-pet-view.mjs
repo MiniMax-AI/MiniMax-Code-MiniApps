@@ -1,6 +1,8 @@
 import { markdownToPlainText, renderMarkdown, resetMarkdown } from './markdown.mjs';
+import { t } from './i18n.mjs';
 
-const STATUS = { running: '进行中', error: '异常', completed: '已完成', aborted: '已停止', idle: '空闲', needs_answer: '需要你回答' };
+const STATUS_KEYS = { running: 'desk.statusRunning', error: 'status.error', completed: 'status.completed', aborted: 'status.aborted', idle: 'status.idle', needs_answer: 'status.needsAnswer' };
+const statusLabel = (status) => (STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : t('desk.toView'));
 const textOf = (value) => typeof value === 'string' ? value : '';
 const failureCode = (error) => textOf(error?.code) || textOf(error?.message) || textOf(error) || 'result_unknown';
 // A completed live turn returns to raw idle. Only that observed completion
@@ -55,39 +57,45 @@ export function createCompactPetView({
     if (disposed) return;
     api.close(); void call(onClose);
   });
-  closeButton.setAttribute('aria-label', '关闭桌宠快捷面板');
   header.append(state, closeButton);
 
   const tasksPane = element('div', 'compact-tasks compact-body');
   const taskList = element('ul', 'compact-task-list');
-  const empty = element('li', 'compact-empty', '暂无新任务提醒');
+  const empty = element('li', 'compact-empty', t('desk.emptyRecent'));
   const tasksFooter = element('div', 'compact-footer');
-  const allTasks = button('全部任务', 'compact-link', () => api.open('allTasks'));
+  const allTasks = button('', 'compact-link', () => api.open('allTasks'));
   tasksFooter.append(allTasks); tasksPane.append(taskList, tasksFooter);
 
-  const detailPane = element('div', 'compact-detail compact-body');
+  const detailPane = element('div', 'compact-detail');
+  const detailHead = element('div', 'compact-detail-head');
   const detailTitle = element('strong', 'compact-detail-title');
   const detailStatus = element('span', 'compact-detail-status'); detailStatus.setAttribute('role', 'status');
+  detailHead.append(detailTitle, detailStatus);
+  // Only the reply scrolls; the title and the actions stay pinned so a long title or a
+  // long reply can never push the buttons out of the 280px card.
+  const detailBody = element('div', 'compact-detail-body');
   const detailReply = element('div', 'compact-detail-reply md');
-  detailReply.setAttribute('aria-label', '任务最近回复'); detailReply.tabIndex = 0;
+  detailReply.tabIndex = 0;
+  detailBody.append(detailReply);
   const detailFooter = element('div', 'compact-footer');
-  const back = button('返回任务', 'compact-detail-back compact-link', () => api.open(detailBackView));
+  const back = button('', 'compact-detail-back compact-link', () => api.open(detailBackView));
   const openHint = element('p', 'compact-hint'); openHint.setAttribute('role', 'status'); openHint.hidden = true;
   const setHint = (text, kind = 'info') => { setText(openHint, text); openHint.dataset.kind = kind; openHint.hidden = !openHint.textContent; };
   // The Host checks user activation, so the callback must run synchronously inside this click.
-  const openSession = button('打开对话', 'compact-open', () => {
+  const openSession = button(t('tasks.open'), 'compact-open', () => {
     const { id } = selection();
     if (disposed || !id || typeof onOpenSession !== 'function') return;
     const token = ++openToken;
-    openSession.disabled = true; setHint('正在打开对话…');
+    openSession.disabled = true; setHint(t('desk.openHint'));
     void call(onOpenSession, id).then((result) => {
       if (disposed || token !== openToken) return;
       openSession.disabled = false;
       const failed = result?.ok === false;
-      setHint(textOf(result?.text) || (failed ? `没能打开对话（${failureCode(result)}）。` : ''), textOf(result?.kind) || (failed ? 'error' : 'info'));
+      setHint(textOf(result?.text) || (failed ? t('desk.openFailed', { code: failureCode(result) }) : ''), textOf(result?.kind) || (failed ? 'error' : 'info'));
     });
   });
-  detailFooter.append(back, openSession); detailPane.append(detailTitle, detailStatus, detailReply, detailFooter, openHint);
+  detailFooter.append(back, openSession);
+  detailPane.append(detailHead, detailBody, detailFooter, openHint);
   container.append(header, tasksPane, detailPane);
 
   function paintTasks() {
@@ -112,15 +120,15 @@ export function createCompactPetView({
         row.node.append(row.title, row.status, row.preview); rows.set(item.sessionId, row);
       }
       row.item = item;
-      setText(row.title, textOf(item.title) || '未命名任务');
-      row.title.setAttribute('aria-label', `查看任务：${textOf(item.title) || '未命名任务'}`);
-      setText(row.preview, item.needsAnswer === true ? '需要你回答' : markdownToPlainText(textOf(item.previewText))); row.preview.hidden = !row.preview.textContent;
+      setText(row.title, textOf(item.title) || t('desk.untitled'));
+      row.title.setAttribute('aria-label', t('desk.taskAria', { title: textOf(item.title) || t('desk.untitled') }));
+      setText(row.preview, item.needsAnswer === true ? t('status.needsAnswer') : markdownToPlainText(textOf(item.previewText))); row.preview.hidden = !row.preview.textContent;
       const status = taskStatus(item);
-      setText(row.status, STATUS[status] || '待查看'); row.status.dataset.status = status;
+      setText(row.status, statusLabel(status)); row.status.dataset.status = status;
       row.title.disabled = typeof onSelectTask !== 'function';
       if (taskList.children[index] !== row.node) taskList.insertBefore(row.node, taskList.children[index] || null);
     }
-    setText(empty, view === 'allTasks' ? '暂无可见任务' : '暂无新任务提醒');
+    setText(empty, view === 'allTasks' ? t('desk.emptyAll') : t('desk.emptyRecent'));
     allTasks.hidden = view === 'allTasks';
     if (!visible.length && empty.parentNode !== taskList) taskList.append(empty);
   }
@@ -129,19 +137,19 @@ export function createCompactPetView({
     const { id, session, detail, available } = selection();
     const needsAnswer = available && session?.needsAnswer === true;
     const status = taskStatus(session) || taskStatus(detail);
-    setText(detailTitle, textOf(session?.title) || textOf(detail?.title) || '任务回复');
-    setText(detailStatus, !available ? '暂不可用' : STATUS[status] || '待查看');
+    setText(detailTitle, textOf(session?.title) || textOf(detail?.title) || t('desk.reply'));
+    setText(detailStatus, available ? statusLabel(status) : t('desk.unavailableShort'));
     detailStatus.dataset.status = !available ? 'unavailable' : status;
     let text;
-    if (!available) text = '任务信息暂不可用，重新连接后继续查看。';
-    else if (needsAnswer) text = '需要你回答';
+    if (!available) text = t('desk.unavailable');
+    else if (needsAnswer) text = t('status.needsAnswer');
     // A background refresh keeps the matching reply mounted; a short loading
     // placeholder would shrink its scroll range and reset a reader's position.
-    else if (taskSelection.detailLoading && !detail) text = '正在读取任务…';
-    else if (taskSelection.detailError) text = `无法读取任务（${failureCode(taskSelection.detailError)}）。`;
-    else if (!id) text = '选择任务后查看回复。';
-    else if (!detail) text = '正在读取任务…';
-    else text = (detail.status === 'error' && textOf(detail.error)) || textOf(detail.lastAssistantText) || '该任务暂时没有可读取的最后回复。';
+    else if (taskSelection.detailLoading && !detail) text = t('desk.loading');
+    else if (taskSelection.detailError) text = t('desk.replyFailed', { code: failureCode(taskSelection.detailError) });
+    else if (!id) text = t('desk.chooseTask');
+    else if (!detail) text = t('desk.loading');
+    else text = (detail.status === 'error' && textOf(detail.error)) || textOf(detail.lastAssistantText) || t('desk.replyEmpty');
     // Status copy stays plain text; an actual reply is markdown. renderMarkdown keeps
     // the DOM when the text is unchanged and restores the scroll offset when a
     // streaming reply replaces it.
@@ -152,19 +160,27 @@ export function createCompactPetView({
     }
     detailPane.setAttribute('aria-busy', String(available && !needsAnswer && taskSelection.detailLoading === true));
     if (paintedDetailId !== id) {
-      detailReply.scrollTop = 0; detailPane.scrollTop = 0; paintedDetailId = id;
+      detailReply.scrollTop = 0; detailBody.scrollTop = 0; paintedDetailId = id;
       openToken++; openSession.disabled = false; setHint('');
     }
     openSession.hidden = typeof onOpenSession !== 'function' || !available || !id;
-    setText(openSession, needsAnswer ? '去回答' : '打开对话');
-    openSession.setAttribute('aria-label', `${needsAnswer ? '去回答' : '打开对话'}：${textOf(session?.title) || textOf(detail?.title) || '该任务'}`);
+    setText(openSession, needsAnswer ? t('tasks.goAnswer') : t('tasks.open'));
+    openSession.setAttribute('aria-label', t('desk.openAria', {
+      action: needsAnswer ? t('tasks.goAnswer') : t('tasks.open'),
+      title: textOf(session?.title) || textOf(detail?.title) || t('tasks.openFallback'),
+    }));
   }
 
   function paint() {
     if (disposed) return;
+    // Labels follow the interface language, which the page resolves after this view exists.
+    closeButton.setAttribute('aria-label', t('desk.closePanel'));
+    detailReply.setAttribute('aria-label', t('desk.replyAria'));
+    setText(allTasks, t('tasks.all'));
+    setText(back, t('tasks.back'));
     container.hidden = !opened;
     tasksPane.hidden = !['tasks', 'allTasks'].includes(view); detailPane.hidden = view !== 'detail';
-    setText(state, view === 'tasks' ? '最近任务' : view === 'allTasks' ? '全部可见任务' : '任务回复');
+    setText(state, view === 'tasks' ? t('desk.panelState.tasks') : view === 'allTasks' ? t('desk.panelState.allTasks') : t('desk.panelState.detail'));
     paintTasks(); paintDetail();
   }
 

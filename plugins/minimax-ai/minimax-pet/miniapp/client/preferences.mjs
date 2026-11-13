@@ -1,4 +1,9 @@
-export const DEFAULT_PREFERENCES = Object.freeze({ petId: null, scale: 0.75, autoCycle: false, windowPosition: null });
+// noticeTimeout: seconds a desktop notification card stays before it hides itself.
+// 0 keeps the card until the user closes it. The card hiding never dismisses the
+// reminder itself, so the task list keeps showing the same round.
+export const DEFAULT_PREFERENCES = Object.freeze({ petId: null, scale: 0.75, autoCycle: false, windowPosition: null, noticeTimeout: 10, language: 'auto' });
+export const LANGUAGES = Object.freeze(['auto', 'zh-Hans', 'en']);
+export const MAX_NOTICE_TIMEOUT_SECONDS = 3600;
 const KEYS = Object.keys(DEFAULT_PREFERENCES);
 // Read-once compatibility keys from earlier local builds; these are not plugin IDs.
 export const LEGACY_KEYS = Object.freeze({ petId: 'codexPetSpike.selectedPetId', scale: 'codexPetSpike.scale', autoCycle: 'codexPetSpike.demoAutoCycle' });
@@ -12,6 +17,8 @@ export function validatePreferences(raw, { partial = false } = {}) {
     if (key === 'petId' && value !== null && (typeof value !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(value))) throw new Error('invalid_preferences');
     if (key === 'scale' && ![0.5, 0.75, 1].includes(value)) throw new Error('invalid_preferences');
     if (key === 'autoCycle' && typeof value !== 'boolean') throw new Error('invalid_preferences');
+    if (key === 'noticeTimeout' && (!Number.isInteger(value) || value < 0 || value > MAX_NOTICE_TIMEOUT_SECONDS)) throw new Error('invalid_preferences');
+    if (key === 'language' && !LANGUAGES.includes(value)) throw new Error('invalid_preferences');
     if (key === 'windowPosition' && value !== null && (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((name) => !['x', 'y'].includes(name)) || !['x', 'y'].every((name) => Number.isInteger(value[name]) && Math.abs(value[name]) <= 100000))) throw new Error('invalid_preferences');
     result[key] = value;
   }

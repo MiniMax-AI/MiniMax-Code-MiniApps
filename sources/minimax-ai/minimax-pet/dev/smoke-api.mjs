@@ -211,13 +211,13 @@ try {
     const r = await call(port, 'GET', '/api/preferences');
     assert.equal(r.status, 200);
     assert.equal(r.headers['cache-control'], 'no-store');
-    assert.deepEqual(r.json, { preferences: { petId: null, scale: 0.75, autoCycle: false, windowPosition: null }, persisted: false });
+    assert.deepEqual(r.json, { preferences: { petId: null, scale: 0.75, autoCycle: false, windowPosition: null, noticeTimeout: 10, language: 'auto' }, persisted: false });
   });
 
   await test('PATCH preferences persists only supported values, merges concurrent patches', async () => {
     const responses = await Promise.all([patchPreferences(port, { petId: BUNDLED_PET }), patchPreferences(port, { scale: 0.5 }), patchPreferences(port, { autoCycle: true })]);
     for (const r of responses) { assert.equal(r.status, 200); assert.equal(r.json.persisted, true); }
-    assert.deepEqual((await call(port, 'GET', '/api/preferences')).json.preferences, { petId: BUNDLED_PET, scale: 0.5, autoCycle: true, windowPosition: null });
+    assert.deepEqual((await call(port, 'GET', '/api/preferences')).json.preferences, { petId: BUNDLED_PET, scale: 0.5, autoCycle: true, windowPosition: null, noticeTimeout: 10, language: 'auto' });
   });
 
   await test('invalid preferences fail without modifying persisted preferences', async () => {
@@ -276,7 +276,7 @@ try {
   });
 
   await test('production activity, preferences and view modules are served as JavaScript', async () => {
-    for (const name of ['activity.mjs', 'preferences.mjs', 'window-position.mjs', 'pet-presentation.mjs', 'activity-reminders.mjs', 'compact-pet-view.mjs', 'notification-previews.mjs', 'ask-observer.mjs', 'workbench-window.mjs', 'markdown.mjs', 'vendor/markdown.mjs']) {
+    for (const name of ['activity.mjs', 'preferences.mjs', 'window-position.mjs', 'pet-presentation.mjs', 'activity-reminders.mjs', 'compact-pet-view.mjs', 'notification-previews.mjs', 'ask-observer.mjs', 'markdown.mjs', 'vendor/markdown.mjs']) {
       const r = await call(port, 'GET', `/assets/${name}`);
       assert.equal(r.status, 200);
       assert.match(r.headers['content-type'], /^text\/javascript/);
@@ -648,7 +648,7 @@ try {
     const r = await call(restarted.port, 'GET', '/api/preferences');
     assert.equal(r.status, 200);
     assert.equal(r.json.persisted, true);
-    assert.deepEqual(r.json.preferences, { petId: BUNDLED_PET, scale: 0.5, autoCycle: true, windowPosition: null });
+    assert.deepEqual(r.json.preferences, { petId: BUNDLED_PET, scale: 0.5, autoCycle: true, windowPosition: null, noticeTimeout: 10, language: 'auto' });
   });
 } finally { await restarted.lifecycle.dispose(); }
 

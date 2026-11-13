@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPreferenceStore } from '../miniapp/node/preferences-store.mjs';
-import { DEFAULT_PREFERENCES, LEGACY_KEYS, loadPreferences } from '../miniapp/client/preferences.mjs';
+import { DEFAULT_PREFERENCES, LEGACY_KEYS, loadPreferences, validatePreferences } from '../miniapp/client/preferences.mjs';
 
 async function directory(t) { const path = await fs.mkdtemp(join(tmpdir(), 'pet-preferences-test-')); t.after(() => fs.rm(path, { recursive: true, force: true })); return path; }
 
@@ -12,6 +12,7 @@ test('preferences persist across store instances and isolated dataDir keeps defa
   const dataDir = await directory(t);
   const store = createPreferenceStore({ dataDir });
   assert.deepEqual(await store.get(), { preferences: DEFAULT_PREFERENCES, persisted: false });
+  assert.equal(DEFAULT_PREFERENCES.noticeTimeout, 10);
   await store.patch({ petId: 'my-pet', scale: 1 });
   assert.deepEqual(await createPreferenceStore({ dataDir }).get(), { preferences: { ...DEFAULT_PREFERENCES, petId: 'my-pet', scale: 1 }, persisted: true });
   assert.equal((await createPreferenceStore({ dataDir: await directory(t) }).get()).persisted, false);
@@ -28,11 +29,50 @@ test('invalid preferences cannot replace persisted data or inject session/runtim
   assert.equal(await fs.readFile(join(dataDir, 'preferences.json'), 'utf8'), before);
 });
 
+test('language accepts auto, Simplified Chinese and English only', async (t) => {
+  const dataDir = await directory(t);
+  const store = createPreferenceStore({ dataDir });
+  for (const value of ['auto', 'zh-Hans', 'en']) {
+    await store.patch({ language: value });
+    assert.equal((await store.get()).preferences.language, value);
+  }
+  for (const bad of ['EN', 'en-US', 'zh', '', null, 1]) {
+    assert.throws(() => validatePreferences({ language: bad }, { partial: true }), /invalid_preferences/, String(bad));
+    await assert.rejects(store.patch({ language: bad }), { code: 'invalid_preferences' });
+  }
+  assert.equal((await store.get()).preferences.language, 'en');
+});
+
+test('notice timeout accepts whole seconds from 0 to 3600 and nothing else', async (t) => {
+  const dataDir = await directory(t);
+  const store = createPreferenceStore({ dataDir });
+  for (const seconds of [0, 1, 10, 600, 3600]) {
+    await store.patch({ noticeTimeout: seconds });
+    assert.equal((await store.get()).preferences.noticeTimeout, seconds);
+  }
+  for (const bad of [-1, 3601, 10.5, '10', true, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => validatePreferences({ noticeTimeout: bad }, { partial: true }), /invalid_preferences/, String(bad));
+    await assert.rejects(store.patch({ noticeTimeout: bad }), { code: 'invalid_preferences' });
+  }
+  assert.equal((await store.get()).preferences.noticeTimeout, 3600);
+});
+
+test('a file written before noticeTimeout existed still loads with the default', async (t) => {
+  const dataDir = await directory(t);
+  const store = createPreferenceStore({ dataDir });
+  await store.patch({ petId: 'old-pet' });
+  await fs.writeFile(join(dataDir, 'preferences.json'), JSON.stringify({ version: 1, preferences: { petId: 'old-pet', scale: 0.75, autoCycle: false, windowPosition: null } }));
+  const loaded = await createPreferenceStore({ dataDir }).get();
+  assert.equal(loaded.persisted, true);
+  assert.equal(loaded.preferences.noticeTimeout, 10);
+  assert.equal(loaded.preferences.petId, 'old-pet');
+});
+
 test('serialized patches keep independent changes and produce valid final JSON', async (t) => {
   const dataDir = await directory(t);
   const store = createPreferenceStore({ dataDir });
   await Promise.all([store.patch({ petId: 'pet-a' }), store.patch({ scale: 0.5 }), store.patch({ autoCycle: true }), store.patch({ petId: 'pet-b' })]);
-  assert.deepEqual((await store.get()).preferences, { petId: 'pet-b', scale: 0.5, autoCycle: true, windowPosition: null });
+  assert.deepEqual((await store.get()).preferences, { petId: 'pet-b', scale: 0.5, autoCycle: true, windowPosition: null, noticeTimeout: 10, language: 'auto' });
   assert.deepEqual(JSON.parse(await fs.readFile(join(dataDir, 'preferences.json'), 'utf8')).preferences, (await store.get()).preferences);
 });
 
@@ -100,7 +140,7 @@ function migrationHarness({ persisted = false, fail = false } = {}) {
 
 test('legacy preferences migrate only after successful persistence', async () => {
   const h = migrationHarness();
-  assert.deepEqual(await loadPreferences(h.fetchImpl, h.storage), { persisted: true, preferences: { petId: 'old-pet', scale: 0.5, autoCycle: true, windowPosition: null } });
+  assert.deepEqual(await loadPreferences(h.fetchImpl, h.storage), { persisted: true, preferences: { petId: 'old-pet', scale: 0.5, autoCycle: true, windowPosition: null, noticeTimeout: 10, language: 'auto' } });
   assert.equal(h.values.size, 0);
   assert.equal(h.requests.length, 2);
 });

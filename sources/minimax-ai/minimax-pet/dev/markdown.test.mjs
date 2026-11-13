@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { markdownToPlainText, renderMarkdown } from '../miniapp/client/markdown.mjs';
+import { t } from '../miniapp/client/i18n.mjs';
 
 let JSDOM;
 try { ({ JSDOM } = createRequire(import.meta.url)('jsdom')); } catch { /* Supplied through the existing workspace NODE_PATH. */ }
@@ -89,7 +90,7 @@ test('malformed markdown falls back to text instead of throwing', () => {
 
 test('very long input is truncated with a visible note', () => {
   const flat = markdownToPlainText('字'.repeat(250_000));
-  assert.ok(flat.endsWith('…（内容过长，已截断显示）'));
+  assert.ok(flat.endsWith(t('markdown.truncated')), flat.slice(-40));
   assert.ok(flat.length < 210_000);
 });
 

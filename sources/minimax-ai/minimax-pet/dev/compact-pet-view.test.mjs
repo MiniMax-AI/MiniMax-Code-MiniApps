@@ -314,3 +314,25 @@ domTest('a markdown reply renders as structure in the detail, previews stay flat
   h.update({ taskSelection: selection(1, reply) });
   assert.equal(node.querySelector('.md-heading').textContent, '结论');
 });
+
+domTest('a long title truncates on one line and a long reply cannot push the footer out', (t) => {
+  const h = harness(t);
+  const longTitle = '确认 mcode-data-analytics 数据获取状态并核对安全边界与聚合口径的最终结论';
+  const longReply = Array.from({ length: 40 }, (_, n) => `第 ${n + 1} 行很长的回复正文，用来把卡片撑满`).join('\n\n');
+  h.update({ taskSelection: { availability: 'ready', selectedSessionId: 'task-1', session: { sessionId: 'task-1', title: longTitle, status: 'idle' },
+    detail: { sessionId: 'task-1', title: longTitle, status: 'idle', lastAssistantText: longReply } } });
+  h.view.open('detail');
+  const title = h.container.querySelector('.compact-detail-title');
+  const head = h.container.querySelector('.compact-detail-head');
+  const body = h.container.querySelector('.compact-detail-body');
+  const reply = h.container.querySelector('.compact-detail-reply');
+  const footer = h.container.querySelector('.compact-detail .compact-footer');
+  assert.equal(title.textContent, longTitle);
+  assert.equal(head.contains(title) && head.contains(h.container.querySelector('.compact-detail-status')), true);
+  // The title and the footer sit outside the scrolling body, and only the body scrolls.
+  assert.equal(head.parentNode, h.container.querySelector('.compact-detail'));
+  assert.equal(body.contains(reply), true);
+  assert.equal(body.contains(footer), false);
+  assert.equal(footer.parentNode, h.container.querySelector('.compact-detail'));
+  assert.equal(reply.textContent.includes('第 40 行'), true);
+});
