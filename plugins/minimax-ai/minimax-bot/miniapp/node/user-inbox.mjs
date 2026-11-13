@@ -149,7 +149,15 @@ export class UserInbox {
   async resumeHeld(chatId) {
     // Only resend supplements that never started; an uncertain original request is never replayed.
     const history = await this.engine.store.getMessages(chatId);
-    const held = history.filter((message) => message.role === 'user' && message.dispatchState === 'held' && !this.has(message.id));
+    const held = history.filter((message) => {
+      if (message.role !== 'user' || this.has(message.id)) return false;
+      if (message.dispatchState === 'held') return true;
+      // A restart leaves an accepted request `pending` with the queue that owned it gone. It is
+      // recoverable on the same proof the retry path uses: no reply and no durable assistant
+      // placeholder means the request never reached the Host.
+      return message.dispatchState === 'pending'
+        && !history.some((item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
+    });
     if (!held.length || this.busy(chatId) || [...this.engine.tickets].some((ticket) => ticket.chatId === chatId)) {
       throw new this.ErrorType('busy', t('err.messageAlreadyProcessing'));
     }
