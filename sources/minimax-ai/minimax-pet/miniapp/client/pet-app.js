@@ -899,15 +899,18 @@ function onSpritePointerDown(e) {
   const origin = app.winPos ? { ...app.winPos } : null;
   app.drag = {
     pointerId: e.pointerId,
-    // A popped-out window reports screenX relative to its own frame, so the
-    // pointer position inside the window plus the window origin is the only
-    // place the window can go.
+    // The pointer is measured inside the window, so the window goes where the
+    // pointer is, minus the offset it was grabbed at.
     grabX: e.clientX,
     grabY: e.clientY,
     // Window origin at grab time; null when the Host reported no position.
     base: origin,
-    // Window origin the Host confirmed; every target is measured against it.
+    // Window origin the Host confirmed, and the target of the request in
+    // flight. The Host can move the window before it answers the request.
     origin: origin ? { ...origin } : null,
+    inflight: null,
+    // Pointer position on screen, tracked across events.
+    pointer: origin ? { x: origin.x + e.clientX, y: origin.y + e.clientY } : null,
     // Latest target not sent yet, and whether an update is already in flight.
     pending: null,
     sending: false,
@@ -925,10 +928,7 @@ function onSpritePointerMove(e) {
   if (!d || e.pointerId !== d.pointerId) return;
   const dx = e.clientX - d.grabX;
   const dy = e.clientY - d.grabY;
-  // The window follows the pointer, so the pointer offset inside the window
-  // shrinks back to the grab point. The target is measured against the window
-  // origin the Host holds, never against the grab position.
-  const target = d.origin ? { x: Math.round(d.origin.x + dx), y: Math.round(d.origin.y + dy) } : null;
+  const target = d.origin ? dragTarget(d, e) : null;
   if (!d.active) {
     // How far the pointer travelled on screen, not inside the window.
     const travel = target ? { x: target.x - d.base.x, y: target.y - d.base.y } : { x: dx, y: dy };
@@ -948,15 +948,31 @@ function onSpritePointerMove(e) {
     updateDragDirection(d, e.clientX);
     return;
   }
-  // The pointer sits at the grab point inside the window: the window already
-  // is where the pointer wants it, so there is nothing to send.
-  if (dx === 0 && dy === 0) {
-    d.pending = null;
-    return;
-  }
   // Keep only the latest target; one update is in flight at a time.
   d.pending = target;
   flushDrag(d);
+}
+
+// Where the window belongs: the pointer position minus the grab offset. The
+// pointer is measured inside the window, so its position needs the origin of
+// the frame it was measured in: the origin the Host confirmed, or the target
+// the Host already moved to while the answer is still pending. The pointer
+// moves a few pixels between events, a window move is bigger than that, so
+// the pointer itself tells which frame the event used.
+function dragTarget(d, e) {
+  const frames = d.inflight ? [d.origin, d.inflight] : [d.origin];
+  let pointer = null;
+  let nearest = Infinity;
+  for (const frame of frames) {
+    const p = { x: frame.x + e.clientX, y: frame.y + e.clientY };
+    const moved = d.pointer ? Math.hypot(p.x - d.pointer.x, p.y - d.pointer.y) : 0;
+    if (moved < nearest) {
+      nearest = moved;
+      pointer = p;
+    }
+  }
+  d.pointer = pointer;
+  return { x: Math.round(pointer.x - d.grabX), y: Math.round(pointer.y - d.grabY) };
 }
 
 // One window update at a time. The Host answers with the position it holds,
@@ -968,9 +984,11 @@ function flushDrag(d) {
   d.pending = null;
   if (target.x === d.origin.x && target.y === d.origin.y) return;
   d.sending = true;
+  d.inflight = target;
   updateDragDirection(d, target.x);
   callBridge(() => win.update({ x: target.x, y: target.y })).then((state) => {
     d.sending = false;
+    d.inflight = null;
     const moved = state?.window;
     if (moved) {
       d.origin = { x: moved.x, y: moved.y };
@@ -979,6 +997,7 @@ function flushDrag(d) {
     flushDrag(d);
   }, (error) => {
     d.sending = false;
+    d.inflight = null;
     // The Host refused the move and kept the window where it was.
     if (app.winPos) d.origin = { ...app.winPos };
     const code = errCode(error);
