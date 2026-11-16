@@ -95,6 +95,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 
 - The approval claim in **Agent turns** mixed the plugin's own behaviour with the Host's. The plugin never approves a call by itself — that part was true and stays true — but whether approval is asked for at all is decided by the Host's permission mode, and a Host that never asks for approval never shows the card. The old sentence stated the first half as if it also settled the second, so it read as a promise about an outcome the plugin does not control. It now names the Host condition, and keeps the plugin's own side: when approval is needed, the plugin never approves it by itself.
 
+## 0.7.28 A reset that cannot be saved keeps the transcript
+
+- **Start new chat**, deleting a Bot and deleting a group all empty the transcript and then write the state that forgets the chat. When that state write failed, the empty transcript was already on disk: the request reported a failure, the chat was still listed, and its history was gone for good.
+- The state is now written first, and the in-memory session entry is dropped only after that write succeeded. A failure leaves the chat, its messages and its session cursor as they were, so the same action can simply be tried again.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
