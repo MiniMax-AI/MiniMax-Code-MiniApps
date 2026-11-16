@@ -4,7 +4,7 @@ description: Use this skill when the user wants to build or change a team of Min
 license: Apache-2.0
 metadata:
   author: antianqi
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # MiniMax Bot 团队搭建
