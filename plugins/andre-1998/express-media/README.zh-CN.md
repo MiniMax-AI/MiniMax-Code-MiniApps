@@ -19,6 +19,8 @@
 在右侧面板的 Mini App 入口打开，或直接让 Agent 打开「急件 · 平台限制速查」。页面读的是插件自带的
 `data/platforms.json` —— 和 skill、命令行用的是同一份表，全程不联网。
 
+![平台限制速查页](docs/screenshot-limits.png)
+
 ## skill
 
 ```text
@@ -66,8 +68,10 @@ https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/andre-1998
 - Windows 11，Node.js 24，ffmpeg 9.0.2（`express doctor` 报告 `libx264`、`aac`、`gif`、`sidedata` 均可用）。
 - 命令行与 skill 用真实视频跑过：96 个单测、63 个端到端测试全过；每个产物都用 `ffprobe` 独立量过体积，
   分段结果逐段核对了真实时长。
-- Mini App 用桩 Host 上下文在本机跑过：Node 入口能起来，`/limits` 与 `/api/platforms` 都正常返回平台表。
-  **尚未在 MiniMax Code 宿主里打开过**，宿主内的实际观感未经验证。
+- Mini App 在 MiniMax Code 宿主里发布并打开过（Windows 11 上的 MiniMax Code 3.1.14 Insider）：
+  页面完整渲染出 10 个平台，搜索框输入「微信」能筛到 3 条，
+  页面控制台没有报错也没有警告。Node 入口也用桩 Host 上下文跑过，`/limits` 与 `/api/platforms` 都正常返回
+  平台表，未知路由返回 404。
 
 ## 数据与权限
 

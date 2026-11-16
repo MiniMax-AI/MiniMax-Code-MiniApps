@@ -23,6 +23,8 @@ Open it from the Mini App entry in the right panel, or ask the Agent to open
 "急件 · 平台限制速查". The page reads the bundled `data/platforms.json` — the same table the skill
 and the CLI use — and never touches the network.
 
+![The platform limit lookup page](docs/screenshot-limits.png)
+
 ## The skill
 
 ```text
@@ -76,9 +78,11 @@ the `sidedata` filter. The limits page needs neither.
 - The CLI and the skill were exercised on real video: 96 unit tests and 63 end-to-end tests pass,
   every compressed output was measured with `ffprobe`, and the split path was checked by summing
   the real duration of every segment.
-- The Mini App was exercised locally against a stub Host context: the Node entry started, served
-  `/limits` and `/api/platforms`, and returned the platform table. It has **not** been opened
-  inside the MiniMax Code Host in this environment, so the in-Host look is unverified.
+- The Mini App was published and opened inside the MiniMax Code Host (MiniMax Code 3.1.14 Insider,
+  Windows 11): the page rendered the full table of 10 platforms, typing 微信 in the search box
+  narrowed it to the 3 WeChat entries, and the page console reported no errors and no warnings.
+  The Node entry was also exercised against a stub Host context, where `/limits` and
+  `/api/platforms` returned the platform table and an unknown route returned 404.
 
 ## Data & access
 
