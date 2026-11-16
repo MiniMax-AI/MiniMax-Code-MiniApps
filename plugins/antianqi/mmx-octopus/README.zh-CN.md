@@ -86,7 +86,10 @@ English | [简体中文](README.zh-CN.md)
   `agentAccess: ["session.read", "session.run"]`，比 3.1.6 老的客户端会直接拒装整个包，
   而不是只装一半。
 - 需要支持 MiniApp 与 Agent 轮次的桌面客户端。
-- 附带的自检脚本需要 Node 22 或更高。
+- 附带的测试需要 Node 22 或更高。在包目录里跑：
+  `node --test tests/petaware-default-off.test.mjs`
+  它会真起一套 server 配一个假宿主，断言跨会话感知**默认是关的**，而且关掉之后
+  真的不再采集（不调 `observe`、不调 `sessions()`）。
 
 ## 数据与访问
 

@@ -112,7 +112,11 @@ it like the rest of the port.
   `agentAccess: ["session.read", "session.run"]`, and a client older than
   3.1.6 rejects the whole package rather than installing half of it.
 - A desktop client that supports MiniApps and Agent turns.
-- The bundled self-check script needs Node 22 or later.
+- The bundled tests need Node 22 or later. Run them from the package directory:
+  `node --test tests/petaware-default-off.test.mjs`
+  It starts a real server against a mock host and asserts that cross-session
+  awareness is **off by default**, and that turning it off really stops the
+  collection (no `observe`, no `sessions()`).
 
 ## Data & access
 
