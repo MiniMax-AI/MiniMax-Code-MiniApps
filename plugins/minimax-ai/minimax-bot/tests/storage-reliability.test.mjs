@@ -101,6 +101,30 @@ test('a reset that cannot be saved leaves the transcript on disk instead of empt
   assert.equal(onDisk.filter((message) => message.id === kept.id).length, 1);
 });
 
+test('a session created while another chat is being deleted survives in memory and on disk', async (t) => {
+  const { dir, store } = await fixture(t);
+  const bot = store.state.bots[0];
+  const doomed = `bot:${bot.id}`;
+  const other = 'bot:session-race';
+  await store.setSession(doomed, bot.id, { sessionId: 'session-doomed' });
+  await store.writeChain;
+
+  // A reset for `doomed` is in flight; a first `setSession` for `other` lands before its write
+  // finishes. Replacing the whole map with the snapshot would drop the entry the second call made.
+  const deleting = store.deleteChat(doomed);
+  await Promise.resolve();
+  await Promise.resolve();
+  await store.setSession(other, bot.id, { sessionId: 'session-other' });
+  await deleting;
+  await store.writeChain;
+
+  assert.equal(store.getSession(doomed, bot.id), undefined);
+  assert.equal(store.getSession(other, bot.id)?.sessionId, 'session-other');
+  const restored = new Store(dir);
+  await restored.init();
+  assert.equal(restored.getSession(other, bot.id)?.sessionId, 'session-other');
+});
+
 test('legacy sequence migration preserves text/tool order and stable cursors across restarts', async (t) => {
   const { dir, store, chat } = await fixture(t);
   const parts = [{ type: 'text', text: 'The current conclusion: ' }, { type: 'tool', name: 'build', state: 'ok' }, { type: 'text', text: 'The current conclusion: publish after the build passes.' }];

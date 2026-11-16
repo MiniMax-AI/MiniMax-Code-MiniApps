@@ -623,12 +623,16 @@ export class Store {
     // Empty the transcript only after the state that forgets this chat is on disk. The messages are
     // the one thing here that cannot be rebuilt: truncating them first means a failed save leaves
     // the chat listed and the history already gone. In the opposite order a failed save leaves both
-    // intact, so the caller can simply try again. The in-memory entry is dropped only once the write
-    // succeeded, so a failure cannot leave memory ahead of the disk either.
+    // intact, so the caller can simply try again.
+    //
+    // The session entry is removed from the live object rather than by swapping in the snapshot: a
+    // `setSession` for another chat can land while this write is in flight, and replacing the object
+    // would drop the entry it just created, in memory and then on disk. For the same reason a failed
+    // write leaves the live object untouched.
     await this.enqueue(async () => {
       const { [chatId]: forgotten, ...sessions } = this.state.sessions;
       await writeJsonAtomic(this.statePath, { ...this.state, sessions });
-      this.state.sessions = sessions;
+      delete this.state.sessions[chatId];
       await writeJsonAtomic(this.messagePath(chatId), []);
       this.messageCache.set(chatId, []);
     });
