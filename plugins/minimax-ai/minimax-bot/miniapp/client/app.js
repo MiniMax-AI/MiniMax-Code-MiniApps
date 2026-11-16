@@ -792,7 +792,14 @@ function userDelivery(message) {
   const status = message.dispatchState;
   if (!status || status === 'processing' || status === 'delivered') return null;
   const key = `${message.chatId}:${message.id}`;
-  const button = status === 'held' ? h('button', {
+  // A restart leaves an accepted request pending with no queue left to send it and nothing running.
+  // Offer the same resume on the proof the server uses: nothing was ever written back for it.
+  // dispatchRevision is only written when a delivery state changes, so a request this page just
+  // sent has none yet and never offers to resume itself.
+  const stranded = status === 'pending' && message.dispatchRevision > 0 && !state.busy.has(message.chatId)
+    && !(state.messages.get(message.chatId) ?? []).some(
+      (item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
+  const button = status === 'held' || stranded ? h('button', {
     type: 'button', class: 'btn sm', disabled: deliveryActions.has(key),
     onclick: async (event) => {
       if (deliveryActions.has(key)) return;
