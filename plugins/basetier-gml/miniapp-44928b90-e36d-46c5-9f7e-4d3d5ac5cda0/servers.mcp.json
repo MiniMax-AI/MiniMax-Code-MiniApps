@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "gml-notes": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/gml-notes",
+      "headers": {},
+      "description": "读取与整理 GML 练习存档：项目列表、记录内容、API 库、跨项目搜索。",
+      "timeout": 30000
+    }
+  }
+}

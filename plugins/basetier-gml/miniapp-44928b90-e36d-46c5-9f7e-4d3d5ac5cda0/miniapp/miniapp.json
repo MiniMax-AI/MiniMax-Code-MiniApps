@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/app",
+    "window": {
+      "width": 1180,
+      "height": 820,
+      "minWidth": 480,
+      "minHeight": 360,
+      "resizable": true
+    }
+  },
+  "mcpEndpoints": [
+    {
+      "server": "gml-notes",
+      "path": "/mcp/gml-notes"
+    }
+  ],
+  "engines": {
+    "mcode": ">=3.1.11"
+  }
+}
