@@ -1,0 +1,10 @@
+{
+  "name": "express-media",
+  "version": "1.1.0",
+  "description": "急件 — 视频太大发不出去？按平台限制实测收敛地压好、封好、发出去。本地处理，不上传。",
+  "type": "module",
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-10-01",
+  "disclaimer": "平台限制经常变，而且同一个平台不同入口（聊天 / 朋友圈 / 网页投稿）的限制并不一样。本表每条都带来源与置信度：confidence=official 表示官方文档或厂商客服明确写出，community 表示社区实测或第三方汇总（可能已过期或因版本而异）。判定「能不能发」以 maxBytes 为准，压缩时以 suggestedMaxBytes 为目标并留出余量。",
+  "confidenceLevels": {
+    "official": "官方文档 / 厂商客服明确写出",
+    "community": "社区实测 / 第三方汇总，可能随版本变化",
+    "mixed": "存在互相矛盾的口径，已在 variants 里全部列出，取最保守值作为 maxBytes"
+  },
+  "targets": [
+    {
+      "id": "wechat-chat",
+      "label": "微信 · 聊天窗口",
+      "maxBytes": 26214400,
+      "suggestedMaxBytes": 18874368,
+      "maxDurationSec": 300,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "mixed",
+      "notes": [
+        "不勾选「原画 / 原视频」时微信会自己压缩，容易被压成糊画质；勾了又常常直接超限发不出去",
+        "社区实测约 25MB 开始失败；厂商客服口径是聊天支持 1GB 以下视频传输",
+        "两侧口径不一致，这里取更保守的 25MB 作为硬上限"
+      ],
+      "variants": [
+        { "maxBytes": 1073741824, "note": "厂商客服口径：微信聊天仅支持 1GB 以下的视频传输" }
+      ],
+      "sources": [
+        { "url": "https://club.honor.com/cn/forum.php?mod=viewthread&tid=29334258", "note": "厂商客服回复：微信聊天仅支持 1GB 以下的视频传输" },
+        { "url": "https://www.wyouhua.com/case/show/1633.html", "note": "社区汇总：聊天窗口约 25MB、朋友圈更严，建议压到 18MB 以内" }
+      ]
+    },
+    {
+      "id": "wechat-moments",
+      "label": "微信 · 朋友圈",
+      "maxBytes": 10485760,
+      "suggestedMaxBytes": 8388608,
+      "maxDurationSec": 30,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": [
+        "时长限制比体积更早触发：超过 30 秒需要先发视频号再转发",
+        "2025 年起朋友圈灰度支持 5 分钟长视频，未全量放开，这里按 30 秒保守判定"
+      ],
+      "sources": [
+        { "url": "https://m.gmw.cn/2025-03/11/content_1303988124.htm", "note": "朋友圈由 30 秒放宽到 5 分钟，仍处灰度放量" },
+        { "url": "https://vibbit.ai/zh-CN/blog/video-export-settings-guide", "note": "第三方汇总：朋友圈建议不超过 25MB、10MB 以内更稳" }
+      ]
+    },
+    {
+      "id": "telegram-bot",
+      "label": "Telegram · Bot API",
+      "maxBytes": 52428800,
+      "suggestedMaxBytes": 50331648,
+      "maxDurationSec": null,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "official",
+      "notes": [
+        "官方原文：bot 目前只能发送不超过 50MB 的文件，该限制未来可能变更",
+        "超 200MB 的视频有些第三方集成会「原样透传」然后被 Telegram 拒收"
+      ],
+      "sources": [
+        { "url": "https://core.telegram.org/bots/faq", "note": "官方 FAQ：Bots can currently send files of any type of up to 50 MB in size" }
+      ]
+    },
+    {
+      "id": "discord-free",
+      "label": "Discord · 免费账号",
+      "maxBytes": 20971520,
+      "suggestedMaxBytes": 19922944,
+      "maxDurationSec": null,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "mixed",
+      "notes": [
+        "2026-08-17 官方把免费账号单文件上限从 10MB 提到 20MB",
+        "部分账号仍在 A/B 测试 25MB，别按 25MB 规划",
+        "图片超过约 8MB 会退化成下载链接，不内嵌显示"
+      ],
+      "variants": [{ "maxBytes": 26214400, "note": "部分账号 A/B 测试中的 25MB" }],
+      "sources": [
+        { "url": "https://baike.baidu.com/item/Nitro/68368766", "note": "2026-08-17 Discord 将免费账号单文件上传上限从 10MB 提高至 20MB" },
+        { "url": "https://discordtexttools.com/blog/discord-file-size-limit", "note": "2026 免费账号 20MB，仍在 A/B 测试，可能再次变动" }
+      ]
+    },
+    {
+      "id": "discord-nitro",
+      "label": "Discord · Nitro Basic / Nitro",
+      "maxBytes": 52428800,
+      "suggestedMaxBytes": 50331648,
+      "maxDurationSec": null,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": ["Nitro Basic 50MB；完整 Nitro 最高 500MB，服务器 Boost 还能叠加"],
+      "variants": [{ "maxBytes": 524288000, "note": "完整 Nitro 500MB" }],
+      "sources": [
+        { "url": "https://filesize.org/limits/discord/", "note": "Nitro Basic 50MB / Nitro 500MB" }
+      ]
+    },
+    {
+      "id": "gmail",
+      "label": "Gmail 附件",
+      "maxBytes": 26214400,
+      "suggestedMaxBytes": 24000000,
+      "maxDurationSec": null,
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": [
+        "超过约 25MB 会变成 Google Drive 链接而不是附件",
+        "不少企业邮件网关自行压到 20MB 甚至更小，按 20MB 更稳"
+      ],
+      "sources": [
+        { "url": "https://support.google.com/mail/answer/6580", "note": "Gmail 附件上限 25MB，超出自动转 Drive 链接" }
+      ]
+    },
+    {
+      "id": "xiaohongshu",
+      "label": "小红书",
+      "maxBytes": 1073741824,
+      "suggestedMaxBytes": 1006632960,
+      "maxDurationSec": 900,
+      "aspect": "3:4 或 9:16",
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": [
+        "体积上限很宽松（1GB），真正的痛点是竖屏比例和首帧封面",
+        "3:4（1080×1440）在信息流里显示面积比 9:16 更大，推荐优先"
+      ],
+      "sources": [
+        { "url": "https://vibbit.ai/zh-CN/blog/video-export-settings-guide", "note": "小红书：1080×1440 或 1080×1920、≤1GB、5 秒至 15 分钟" },
+        { "url": "https://www.secaiyun.com/docs/social-media-video-size-specification-guide-2026-08-28.html", "note": "小红书 3:4 封面推荐，时长 15 分钟" }
+      ]
+    },
+    {
+      "id": "douyin",
+      "label": "抖音",
+      "maxBytes": 75497472,
+      "suggestedMaxBytes": 71303168,
+      "maxDurationSec": 900,
+      "aspect": "9:16",
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": [
+        "安卓端上传上限约 72MB，iOS 端约 287MB，取小的那个",
+        "9:16 竖屏 1080×1920，15–60 秒表现最佳"
+      ],
+      "variants": [{ "maxBytes": 301989888, "note": "iOS 端约 287.6MB" }],
+      "sources": [
+        { "url": "https://vibbit.ai/zh-CN/blog/video-export-settings-guide", "note": "抖音：iOS 不超过 287.6MB，安卓不超过 72MB" }
+      ]
+    },
+    {
+      "id": "bilibili",
+      "label": "B 站",
+      "maxBytes": 8589934592,
+      "suggestedMaxBytes": 2147483648,
+      "maxDurationSec": 36000,
+      "aspect": "16:9",
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": [
+        "投稿上限很宽松：来源明确写的是文件不超过 8GB、最长 10 小时，这里按 8GB / 10 小时取",
+        "真正的成本是二压：上传码率给足比事后补救划算",
+        "封面推荐 1146×717（16:10），和视频 16:9 不是一回事，要单独做"
+      ],
+      "variants": [
+        { "maxBytes": 10737418240, "note": "部分第三方汇总写成 10GB，与来源的 8GB 不一致，取更保守的 8GB" }
+      ],
+      "sources": [
+        { "url": "https://vibbit.ai/zh-CN/blog/video-export-settings-guide", "note": "B 站：文件不超过 8GB，最长 10 小时" },
+        { "url": "https://www.secaiyun.com/docs/social-media-video-size-specification-guide-2026-08-28.html", "note": "B 站封面 1146×717，建议码率 20-30Mbps" }
+      ]
+    },
+    {
+      "id": "shipinhao",
+      "label": "微信视频号",
+      "maxBytes": 1073741824,
+      "suggestedMaxBytes": 1006632960,
+      "maxDurationSec": 1800,
+      "aspect": "9:16 或 1:1",
+      "container": "mp4",
+      "video": "h264",
+      "audio": "aac",
+      "confidence": "community",
+      "notes": ["视频号转码较狠，码率建议给到 6–10Mbps 再上传"],
+      "sources": [
+        { "url": "https://www.secaiyun.com/docs/social-media-video-size-specification-guide-2026-08-28.html", "note": "视频号 1080×1920、30 分钟、16-20Mbps" },
+        { "url": "https://cutfa.st/blog/how-to-resize-mp4-online-free-2026-cutfast-guide", "note": "视频号 1:1 或 9:16 均可，时长上限 60 分钟" }
+      ]
+    }
+  ]
+}
