@@ -180,7 +180,15 @@ export class Team {
     if (avatar) bot.avatar = await this.saveAvatar(avatar);
     this.store.state.bots.push(bot);
     this.store.bumpRoster();
-    await this.store.save();
+    try {
+      await this.store.save();
+    } catch (error) {
+      // Same rule as updateBot: a rejected request leaves no trace. Without this the Bot stays in
+      // memory after a failed save, and the next unrelated save publishes what the user was told
+      // had failed.
+      this.store.state.bots = this.store.state.bots.filter((item) => item.id !== bot.id);
+      throw error;
+    }
     this.changed();
     return bot;
   }
@@ -379,7 +387,14 @@ export class Team {
     };
     this.store.state.groups.push(group);
     this.store.bumpRoster();
-    await this.store.save();
+    try {
+      await this.store.save();
+    } catch (error) {
+      // A rejected request leaves no trace: a group kept in memory after a failed save would be
+      // published by the next unrelated save, under a name the user was told was refused.
+      this.store.state.groups = this.store.state.groups.filter((item) => item.id !== group.id);
+      throw error;
+    }
     const welcome = await this.store.appendMessage(`group:${group.id}`, {
       role: 'system',
       key: 'notice.groupCreated',
@@ -595,6 +610,9 @@ export class Team {
     }
     if (kind === 'once' && !runAt) throw new EngineError('invalid', t('err.scheduleInMinutes'));
     const schedule = existing ?? { id: newId('sch'), createdAt: Date.now() };
+    // The previous values, so a failed save can put the object back: a schedule left in memory
+    // would be published by the next unrelated save, at a time the user was told was refused.
+    const before = existing ? { ...existing } : undefined;
     if (!existing) list.push(schedule);
     Object.assign(schedule, {
       name: String(input.name ?? '').trim().slice(0, 40) || prompt.slice(0, 20),
@@ -607,7 +625,13 @@ export class Team {
       enabled: input.enabled !== false,
     });
     schedule.nextRunAt = nextRun(schedule, Date.now());
-    await this.store.save();
+    try {
+      await this.store.save();
+    } catch (error) {
+      if (before) Object.assign(schedule, before);
+      else this.store.state.schedules = this.store.state.schedules.filter((item) => item.id !== schedule.id);
+      throw error;
+    }
     this.changed();
     return schedule;
   }
