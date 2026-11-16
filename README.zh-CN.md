@@ -91,6 +91,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [额度瓶](plugins/7723qqq/quota-bottle/README.zh-CN.md) | 一只悬浮在桌面上的章鱼形玻璃瓶，用你自己配置的登录读取 Token Plan 剩余额度；液面与透明度按剩余占比走，拿不到实时额度时回退到设备码登录或手填总额与可选的本机本月用量 | [7723qqq](https://github.com/7723qqq) |
 | [Site QA](plugins/lonelyguy-se1/site-qa/) | 检查本地 HTML/robots/sitemap 的 SEO / 无障碍问题，再让 Agent 修复（Mini App + skill/CLI）。需要 MiniMax Code 3.1.6 或更高版本（说明文档为英文） | [LonelyGuySE1](https://github.com/LonelyGuy-SE1) |
 | [H3-Image-Executor](plugins/liddalidd/h3-image-executor/README.zh-CN.md) | 把一句话需求跑成经过校验的 4K 图片：规划分镜、检索参考图、生成、看图评审、色偏校正、有限次修正，最后交付图片和验收报告；多图任务会先生成角色设定图锁定主体外观。需要自备 H3-Image 接口地址和 Key。需要 MiniMax Code 3.1.6 或更高版本 | [liddalidd](https://github.com/liddalidd) |
+| [GML 练习记录 · 项目存档管理器](plugins/basetier-gml/miniapp-44928b90-e36d-46c5-9f7e-4d3d5ac5cda0/) | 在 MiniMax Code 里管理多本 GameMaker（GML）练习笔记：每个项目一份独立存档，带 API 库、按顺序排列的代码载体、回收站与备份；随包附带的托管 MCP 让 Agent 直接列出、读取和检索你的笔记 | [basetier-gml](https://github.com/basetier-gml) |
 
 <details>
 <summary>预览：Cutline</summary>

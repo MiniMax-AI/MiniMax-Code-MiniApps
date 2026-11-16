@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title data-i18n="GML 练习记录 · 项目存档管理器">GML 练习记录 · 项目存档管理器</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234a90e2'/%3E%3Ctext x='32' y='45' font-size='38' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app/manager.css">
+</head>
+<body>
+
+<!-- ============ 回收站 ============ -->
+<div class="overlay" id="trashOverlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="trashTitle">
+    <div class="sheet-head">
+      <h2 id="trashTitle" data-i18n="🗑 回收站">🗑 回收站</h2>
+      <p id="trashHeadInfo">删除的项目会被移进这里，可随时恢复。</p>
+    </div>
+    <div class="sheet-body" id="trashList"></div>
+    <div class="sheet-foot">
+      <button class="btn danger" id="btnClearTrash" data-i18n="清空回收站">清空回收站</button>
+      <button class="btn primary" id="btnCloseTrash" data-i18n="完成">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 存档管理页 ============ -->
+<section id="view-manager" class="view">
+  <header class="topbar">
+    <div class="topbar-in">
+      <div class="logo">G</div>
+      <div class="brand-txt">
+        <h1 data-i18n="GML 练习记录 · 项目存档管理器">GML 练习记录 · 项目存档管理器</h1>
+        <p data-i18n="多本互不干扰的练习笔记；每次自动保存都会写回当前项目文件">多本互不干扰的练习笔记；每次自动保存都会写回当前项目文件</p>
+      </div>
+      <div class="top-actions">
+        <div class="lang-sw" data-lang-switch role="group" aria-label="语言 / Language"><button type="button" data-lang-set="zh" class="on" aria-pressed="true">中文</button><button type="button" data-lang-set="en" aria-pressed="false">EN</button></div>
+        <button class="chip" id="fsChip" title="查看保存位置" data-i18n-title="查看保存位置"><i></i><span id="fsChipText">读取保存位置…</span></button>
+        <button class="btn" id="btnTrash"><span data-i18n="🗑 回收站">🗑 回收站</span> <span id="trashCount">0</span></button>
+        <button class="btn" id="btnExportAll" data-i18n="导出全部">导出全部</button>
+        <button class="btn" id="btnImport" data-i18n="导入存档">导入存档</button>
+        <button class="btn primary" id="btnNew" data-i18n="＋ 新建项目">＋ 新建项目</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="intro">
+      <h2 data-i18n="它怎么工作">它怎么工作</h2>
+      <ul class="intro-list">
+        <li data-i18n-html="intro_1"><b>自动保存：</b>练习应用每次自动存档都会写回当前项目文件，数据存在 Mini App 的数据目录里。</li>
+        <li data-i18n-html="intro_2"><b>默认是空的：</b>没有存档文件就是 0 个项目，不自动创建。</li>
+        <li data-i18n-html="intro_3"><b>回收站：</b>删除的项目移入回收站，并登记在「trash-index.json」清单里，可随时恢复。</li>
+      </ul>
+      <div class="fsloc" id="fsloc"></div>
+    </div>
+
+    <div class="appcard" id="appCard">
+      <h2><span>📦</span><span data-i18n="app_title">练习应用版本</span><span class="avert" id="appVerTag">—</span></h2>
+      <p class="aintro" data-i18n-html="app_intro">练习应用内置在 Mini App 里，可以单独更新版本。</p>
+      <div class="avgrid">
+        <div class="avcell"><span data-i18n="app_src_label">来源地址</span><em id="appSrcText">—</em></div>
+        <div class="avcell"><span data-i18n="app_ver_label">版本</span><em id="appVerText">—</em></div>
+        <div class="avcell"><span data-i18n="app_fetched_label">抓取于</span><em id="appFetchedText">—</em></div>
+        <div class="avcell"><span data-i18n="app_size_label">大小</span><em id="appSizeText">—</em></div>
+      </div>
+      <div class="avacts">
+        <button class="btn mini" id="btnAppSource" data-i18n="app_btn_source">更换来源</button>
+        <button class="btn mini primary" id="btnAppFetch" data-i18n="app_btn_fetch">⇩ 抓取最新版本</button>
+        <button class="btn mini" id="btnAppBuiltin" data-i18n="app_btn_builtin">恢复内置版</button>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <h2 data-i18n="项目列表">项目列表</h2><span id="saveCount">0 个项目</span>
+      <span id="storeInfo" style="color:var(--ink3);font-size:12px"></span>
+      <span class="right" id="listHint" style="color:var(--ink3);font-size:12px">点「打开项目」开始练习</span>
+    </div>
+    <div id="scanBanner" class="scan-banner" hidden></div>
+    <div id="saveGrid" class="grid"></div>
+    <div id="emptyState" class="empty" hidden>
+      <div class="big">▤</div>
+      <h3>还没有项目</h3>
+      <p>默认就是空项目。新建一个空白项目开始练习，或导入存档 <code>.json</code> 文件。</p>
+      <button class="btn primary" id="btnNew2" style="margin-top:14px" data-i18n="＋ 新建项目">＋ 新建项目</button>
+    </div>
+    <div class="foot">
+      <span data-i18n-html="foot_note">删除不会立刻抹掉数据：项目文件会被移进「回收站」，并登记在「trash-index.json」清单里。</span>
+      <span data-i18n-html="foot_site">练习应用来源：<a href="https://basetier-gml.github.io/gml-practice-log/" target="_blank" rel="noopener">basetier-gml.github.io/gml-practice-log</a></span>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 项目页 ============ -->
+<section id="view-project" class="view" hidden>
+  <div class="project-bar">
+    <button class="btn ghost" id="btnBack" data-i18n="← 项目管理">← 项目管理</button>
+    <div class="pname" id="projName">—</div>
+    <div class="pstatus" id="pstatus"><i></i><span id="statusText">准备中</span></div>
+    <div class="spacer"></div>
+    <div class="lang-sw" data-lang-switch role="group" aria-label="语言 / Language"><button type="button" data-lang-set="zh" class="on" aria-pressed="true">中文</button><button type="button" data-lang-set="en" aria-pressed="false">EN</button></div>
+    <button class="btn" id="btnSaveNow" data-i18n="立即保存">立即保存</button>
+    <button class="btn hide-sm" id="btnFork" data-i18n="另存为新项目">另存为新项目</button>
+    <button class="btn hide-sm" id="btnRename" data-i18n="重命名">重命名</button>
+    <button class="btn hide-sm" id="btnExportPm" data-i18n="导出">导出</button>
+    <button class="btn hide-sm" id="btnExportSite" data-i18n="网站存档格式">网站存档格式</button>
+    <button class="btn hide-sm" id="btnImportBackup" data-i18n="导入备份">导入备份</button>
+  </div>
+  <div id="stage">
+    <div class="loading" id="loading"><div class="spinner"></div><div id="loadingText" data-i18n="正在载入网页与项目…">正在载入网页与项目…</div></div>
+  </div>
+</section>
+
+<!-- ============ 通用弹层 ============ -->
+<div class="overlay" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle">标题</h3>
+    <p id="modalDesc" hidden></p>
+    <label id="modalLabel" for="modalInput">名称</label>
+    <input id="modalInput" type="text" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel" data-i18n="取消">取消</button>
+      <button class="btn primary" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="fileInput" accept=".json,application/json,text/plain" hidden tabindex="-1" aria-label="选择要导入的存档文件">
+
+<!-- ============ 打卡网页来源弹层 ============ -->
+<div class="overlay" id="appSrcOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appSrcTitle">
+    <h3 id="appSrcTitle" data-i18n="app_dialog_title">练习应用来源</h3>
+    <p id="appSrcDesc" data-i18n-html="app_dialog_desc">填写一个可公开访问的练习应用网页地址。抓取后缓存到 Mini App 数据目录，删除缓存即可回到内置版。</p>
+    <label for="appSrcInput" data-i18n="app_url_hint">网页地址</label>
+    <input id="appSrcInput" type="text" autocomplete="off" spellcheck="false">
+    <div class="modal-actions">
+      <button class="btn" id="appSrcCancel" data-i18n="取消">取消</button>
+      <button class="btn primary" id="appSrcOk" data-i18n="确定">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app/i18n.js"></script>
+<script src="/app/i18n-extra.js"></script>
+<script src="/app/manager.js"></script>
+</body>
+</html>

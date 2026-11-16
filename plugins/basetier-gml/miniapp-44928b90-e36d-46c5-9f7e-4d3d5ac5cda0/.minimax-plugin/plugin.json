@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "miniapp-44928b90-e36d-46c5-9f7e-4d3d5ac5cda0",
+  "displayName": "GML 练习记录",
+  "version": "1.1.0",
+  "description": "GameMaker（GML）代码学习笔记：多本互不干扰的练习存档，打卡记录、API 库与代码载体随写随存，并能全文搜索回溯。",
+  "author": "basetier-gml",
+  "icon": "icon.png",
+  "category": "Education",
+  "exampleQueries": [
+    "打开我的 GML 练习记录。",
+    "新建一本 GML 学习笔记。",
+    "搜索我的 GML 练习里关于云层特效的代码。"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": [
+    "skills/gml-practice-notes/SKILL.md"
+  ]
+}
