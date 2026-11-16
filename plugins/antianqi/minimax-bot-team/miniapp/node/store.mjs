@@ -601,12 +601,17 @@ export class Store {
 
   async deleteChat(chatId) {
     await this.getMessages(chatId);
+    // The transcript is the one thing here that cannot be rebuilt, so the state that
+    // forgets this chat goes to disk first. A failed state write then leaves the chat and
+    // its messages both as they were, and the caller can simply try again.
     await this.enqueue(async () => {
+      const sessions = { ...this.state.sessions };
+      delete sessions[chatId];
+      await writeJsonAtomic(this.statePath, { ...this.state, sessions });
+      delete this.state.sessions[chatId];
       await this.writeMessages(chatId, []);
       this.messageCache.set(chatId, []);
-      delete this.state.sessions[chatId];
     });
-    await this.save();
   }
 
   /** Sidebar summary of one chat, read from the warm cache. */

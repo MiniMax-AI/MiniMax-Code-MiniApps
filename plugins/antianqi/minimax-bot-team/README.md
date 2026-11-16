@@ -7,7 +7,7 @@ Bot Team gives you a team instead: members with different skills and different
 temperaments, each guarding one field, and they can sit down together and argue about the
 same question from different angles.
 
-Author: [antianqi](https://github.com/antianqi) - Version: `1.0.0`
+Author: [antianqi](https://github.com/antianqi) - Version: `1.0.1`
 
 ## What it does
 

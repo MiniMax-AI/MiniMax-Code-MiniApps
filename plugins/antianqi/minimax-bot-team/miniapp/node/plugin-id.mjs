@@ -12,4 +12,4 @@
 export const PLUGIN_ID = 'minimax-bot-team';
 
 /** The version the Host and the MCP tools report. */
-export const PLUGIN_VERSION = '1.0.0';
+export const PLUGIN_VERSION = '1.0.1';
