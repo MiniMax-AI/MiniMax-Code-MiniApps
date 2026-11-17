@@ -23,8 +23,8 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
    `scripts/migrate.py` and its DeepSeek source adapter.
 3. In MiniMax Code, ask the Agent to install this Mini App directory.
 4. Open **DeepSeek Chat Migration**, then choose the ZIP downloaded from DeepSeek.
-5. Review the restored conversations and select those to migrate. **Select all** picks every
-   conversation not yet imported; **Select none** clears the selection.
+5. Review the restored conversations and select those to migrate. The **全选** checkbox in
+   the toolbar selects or clears every conversation not yet imported.
 6. Sessions are always imported into `~/.minimax` for the `mavis` agent; there is nothing to configure.
 7. Choose **Import as MCode sessions**. Review the generated plan, then confirm the apply step.
    The result lists success or failure for every selected DeepSeek session.

@@ -59,7 +59,22 @@ function filtered() {
   return state.conversations.filter((conversation) => JSON.stringify(conversation).toLowerCase().includes(query));
 }
 
+function selectable() {
+  return state.conversations.filter((item) => !state.imported.has(item.stableId));
+}
+
+function renderSelectAll() {
+  const total = selectable().length;
+  const count = selectable().filter((item) => state.selected.has(item.stableId)).length;
+  const box = $('#select-all');
+  box.checked = total > 0 && count === total;
+  box.indeterminate = count > 0 && count < total;
+  box.disabled = total === 0;
+  $('#select-label').textContent = count ? `已选 ${count}` : '全选';
+}
+
 function render() {
+  renderSelectAll();
   $('#list').innerHTML = filtered().map((conversation) => {
     const imported = state.imported.has(conversation.stableId);
     const date = conversation.updatedAt ? new Date(conversation.updatedAt).toLocaleDateString() : 'Unknown date';
@@ -182,12 +197,10 @@ function setStatus(message, error = false) {
 
 $('#file').addEventListener('change', (event) => event.target.files[0] && openFile(event.target.files[0]).catch((error) => setStatus(error.message, true)));
 $('#search').addEventListener('input', render);
-$('#select-all').addEventListener('click', () => {
-  state.selected = new Set(state.conversations.filter((item) => !state.imported.has(item.stableId)).map((item) => item.stableId));
-  render();
-});
-$('#select-none').addEventListener('click', () => {
-  state.selected = new Set();
+$('#select-all').addEventListener('change', (event) => {
+  state.selected = event.target.checked
+    ? new Set(selectable().map((item) => item.stableId))
+    : new Set();
   render();
 });
 $('#import').addEventListener('click', planImport);

@@ -130,7 +130,8 @@ export async function start(context) {
       context.logger.warn(`request failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       if (!response.headersSent) {
         const code = typeof error?.code === 'string' ? error.code : 'request_failed';
-        json(response, code === 'BODY_TOO_LARGE' || code === 'body_too_large' ? 413 : 400, { error: code });
+        const message = error instanceof Error && error.message !== code ? error.message : undefined;
+        json(response, code === 'BODY_TOO_LARGE' || code === 'body_too_large' ? 413 : 400, { error: code, message });
       }
       else response.end();
     }

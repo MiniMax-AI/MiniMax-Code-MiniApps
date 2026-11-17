@@ -99,7 +99,15 @@ export async function runMigrationCommand({
     report = JSON.parse(await readFile(reportPath, 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') {
+      if (/invalid choice: 'deepseek'/.test(processResult.stderr || '')) {
+        throw migrationError('deepseek_source_unsupported', {
+          message: 'agent-session-migration 还不支持 DeepSeek 来源，请先更新这个插件。',
+          exitCode: processResult.exitCode,
+          stderr: processResult.stderr,
+        });
+      }
       throw migrationError('migration_report_missing', {
+        message: `迁移脚本没有生成报告（exit ${processResult.exitCode}）。${(processResult.stderr || '').trim().split('\n').slice(-1)[0] || ''}`,
         exitCode: processResult.exitCode,
         stderr: processResult.stderr,
       });
@@ -243,8 +251,9 @@ function spawnAndWait(command, args, signal) {
 }
 
 function migrationError(code, details = {}) {
-  const error = new Error(code);
+  const { message, ...rest } = details;
+  const error = new Error(message || code);
   error.code = code;
-  Object.assign(error, details);
+  Object.assign(error, rest);
   return error;
 }

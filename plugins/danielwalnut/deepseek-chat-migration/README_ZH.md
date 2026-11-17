@@ -21,7 +21,7 @@ DeepSeek 会话迁移专门处理 DeepSeek 网页版的官方导出包。它会�
 3. 在 MiniMax Code 里让 Agent 安装这个 Mini App。
 4. 打开 **DeepSeek Chat Migration**，选择刚才下载的 DeepSeek ZIP。
 5. 预览恢复结果，勾选要迁移的会话。
-6. 会话固定导入到 `~/.minimax` 下的 `mavis` agent，不需要额外配置。可以用「全选」勾上所有还没导入的对话，用「全不选」清空。
+6. 会话固定导入到 `~/.minimax` 下的 `mavis` agent，不需要额外配置。列表顶部的「全选」复选框可以一次勾上或清空所有还没导入的对话。
 7. 点 **导入为 MCode 会话**。先看迁移计划，确认后再执行；结果会逐条列出成功或失败。
 
 有索引文件时，列表顺序和标题以 `chat_session_index.json` 为准。对话分支按
