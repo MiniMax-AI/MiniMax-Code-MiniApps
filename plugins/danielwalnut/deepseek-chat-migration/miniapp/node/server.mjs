@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { extname, join } from 'node:path';
 
 const MAX_BODY = 32 * 1024 * 1024;
-const ASSETS = new Set(['app.js', 'styles.css', 'adapters.js', 'archive.js', 'distill.js']);
+const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js', 'distill.js']);
 
 export async function start(context) {
   await mkdir(context.dataDir, { recursive: true });
@@ -16,7 +16,7 @@ export async function start(context) {
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? '/', 'http://miniapp.local');
-      if (request.method === 'GET' && url.pathname === '/context-ark') return sendFile(response, join(clientRoot, 'index.html'));
+      if (request.method === 'GET' && url.pathname === '/deepseek-chat-migration') return sendFile(response, join(clientRoot, 'index.html'));
       if (request.method === 'GET' && url.pathname.startsWith('/assets/')) {
         const name = url.pathname.slice('/assets/'.length);
         if (!ASSETS.has(name)) return json(response, 404, { error: 'not_found' });
@@ -53,7 +53,7 @@ export async function start(context) {
   });
 
   await listen(server, context.listen.host, context.listen.port);
-  context.logger.info('context-ark.runtime.listening');
+  context.logger.info('deepseek-chat-migration.runtime.listening');
   let disposed = false;
   const dispose = async () => {
     if (disposed) return;

@@ -10,7 +10,7 @@
     "lifecycle": "on-demand"
   },
   "surface": {
-    "path": "/context-ark",
+    "path": "/deepseek-chat-migration",
     "window": {
       "width": 1100,
       "height": 760,

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "deepseek-chat-migration",
+  "displayName": "DeepSeek Chat Migration",
+  "version": "0.1.0",
+  "description": "Parse official DeepSeek chat exports locally, restore conversation branches and attachments, and distill selected threads into reusable handoff documents.",
+  "author": "DanielWalnut",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open DeepSeek Chat Migration",
+    "导入我的 DeepSeek 导出记录"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

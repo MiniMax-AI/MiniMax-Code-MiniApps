@@ -1,4 +1,4 @@
-import { activeBranch } from './adapters.js';
+import { activeBranch } from './deepseek.js';
 
 export const HANDOFF_HEADINGS = ['聊过什么', '已确定的要求', '排除过的方案', '未完成事项', '关键事实与偏好'];
 

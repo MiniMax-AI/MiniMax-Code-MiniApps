@@ -1,4 +1,4 @@
-import { parseExport } from './adapters.js';
+import { parseDeepSeekExport } from './deepseek.js';
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -13,18 +13,76 @@ async function inflate(bytes) {
 
 export async function readInput(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (file.name.toLowerCase().endsWith('.json')) return parseExport(JSON.parse(decoder.decode(bytes)));
-  if (!file.name.toLowerCase().endsWith('.zip')) throw new Error('Choose a .zip or .json export.');
+  if (file.name.toLowerCase().endsWith('.json')) return parseDeepSeekExport(JSON.parse(decoder.decode(bytes)));
+  if (!file.name.toLowerCase().endsWith('.zip')) throw new Error('Choose the ZIP or JSON exported by DeepSeek.');
   const entries = await readZip(bytes);
+  const byName = new Map(entries);
+  const manifest = byName.get('manifest.json');
+  if (manifest) {
+    const version = JSON.parse(decoder.decode(manifest))?.export_format_version;
+    if (version !== 3) throw new Error(`Unsupported DeepSeek export format version: ${version ?? 'missing'}.`);
+  }
   const sessionEntries = entries.filter(([name]) => /^chat_sessions\/[^/]+\.json$/.test(name));
   if (sessionEntries.length) {
-    const parsed = [];
-    for (const [, content] of sessionEntries) parsed.push(...parseExport(JSON.parse(decoder.decode(content))));
-    return parsed;
+    const sessions = new Map();
+    for (const [, content] of sessionEntries) {
+      for (const conversation of parseDeepSeekExport(JSON.parse(decoder.decode(content)))) {
+        sessions.set(conversation.sourceId, conversation);
+      }
+    }
+    const indexBytes = byName.get('chat_session_index.json');
+    const indexValue = indexBytes ? JSON.parse(decoder.decode(indexBytes)) : [];
+    const index = Array.isArray(indexValue) ? indexValue : Array.isArray(indexValue?.sessions) ? indexValue.sessions : [];
+    const ordered = [];
+    for (const item of index) {
+      const conversation = sessions.get(String(item?.id ?? ''));
+      if (!conversation) continue;
+      if (typeof item.title === 'string' && item.title) conversation.title = item.title;
+      if (typeof item.inserted_at === 'string') conversation.createdAt = item.inserted_at;
+      if (typeof item.updated_at === 'string') conversation.updatedAt = item.updated_at;
+      ordered.push(conversation);
+      sessions.delete(conversation.sourceId);
+    }
+    ordered.push(...sessions.values());
+    for (const conversation of ordered) attachFiles(conversation, byName);
+    return ordered;
   }
   const legacy = entries.find(([name]) => name === 'conversations.json');
-  if (!legacy) throw new Error('No supported conversation JSON was found in this ZIP.');
-  return parseExport(JSON.parse(decoder.decode(legacy[1])));
+  if (!legacy) throw new Error('No DeepSeek conversation JSON was found in this ZIP.');
+  return parseDeepSeekExport(JSON.parse(decoder.decode(legacy[1])));
+}
+
+function attachFiles(conversation, entries) {
+  const prefix = `chat_sessions/${conversation.sourceId}_files/`;
+  const archived = [];
+  const used = new Set();
+  for (const message of conversation.messages) {
+    for (const block of message.blocks) {
+      if (block.type !== 'attachment') continue;
+      for (const file of block.files) {
+        let sourcePath = file.sourcePath && entries.has(file.sourcePath) ? file.sourcePath : '';
+        if (!sourcePath) {
+          sourcePath = [...entries.keys()].find((name) =>
+            name.startsWith(prefix) && !used.has(name)
+            && ((file.id && name.includes(file.id)) || (file.name && name.endsWith(`_${file.name}`))),
+          ) || '';
+        }
+        if (!sourcePath) continue;
+        const data = entries.get(sourcePath);
+        const archiveName = `${safeName(file.id || 'file')}-${safeName(file.name || sourcePath.split('/').at(-1))}`;
+        file.available = true;
+        file.archivePath = `attachments/${safeName(conversation.sourceId)}/${archiveName}`;
+        archived.push({ name: file.archivePath, data });
+        used.add(sourcePath);
+      }
+    }
+  }
+  Object.defineProperty(conversation, 'archiveFiles', {
+    value: archived,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
 }
 
 export async function readZip(bytes) {
@@ -76,13 +134,17 @@ export function markdownFor(conversation, handoff = '') {
       if (block.type === 'text') lines.push(block.text, '');
       if (block.type === 'reasoning') lines.push('<details><summary>Reasoning</summary>', '', block.text, '', '</details>', '');
       if (block.type === 'search') {
-        lines.push('<details><summary>Web search</summary>', '');
+        lines.push('<details><summary>Sources</summary>', '');
         for (const result of block.results || []) lines.push(`- [${result.title || result.url}](${result.url || '#'}) — ${result.snippet || ''}`);
         lines.push('', '</details>', '');
       }
       if (block.type === 'attachment') {
         lines.push('<details><summary>Attachment references</summary>', '');
-        for (const file of block.files || []) lines.push(`- ${file.name || file.id} (${file.size || 0} bytes; binary ${file.available ? 'included in source export' : 'not available'})`);
+        for (const file of block.files || []) {
+          const label = file.name || file.id;
+          const linked = file.available && file.archivePath ? `[${label}](../${file.archivePath})` : label;
+          lines.push(`- ${linked} (${file.size || 0} bytes; binary ${file.available ? 'included' : 'not available in the export'})`);
+        }
         lines.push('', '</details>', '');
       }
       if (block.type === 'notice') lines.push(`> ${block.label}: ${block.text}`, '');
@@ -117,27 +179,35 @@ function safeName(value) {
 }
 
 export function buildArchive(conversations, handoffs = {}) {
-  const files = conversations.map((conversation, index) => ({
+  const conversationFiles = conversations.map((conversation, index) => ({
     name: `conversations/${String(index + 1).padStart(3, '0')}-${safeName(conversation.title)}-${conversation.sourceId.slice(0, 8)}.md`,
     data: encoder.encode(markdownFor(conversation, handoffs[conversation.stableId] || '')),
   }));
   const index = [
-    '# Conversation archive', '',
+    '# DeepSeek conversation archive', '',
     'Open `search.html` for local full-text search.', '',
-    ...files.map((file, index) => `- [${conversations[index].title}](${file.name})`),
+    ...conversationFiles.map((file, index) => `- [${conversations[index].title}](${file.name})`),
   ].join('\n');
   const searchData = conversations.map((conversation, index) => ({
-    title: conversation.title, file: files[index].name,
+    title: conversation.title, file: conversationFiles[index].name,
     text: markdownFor(conversation, handoffs[conversation.stableId] || ''),
   }));
-  files.unshift({ name: 'index.md', data: encoder.encode(index) });
+  const files = [{ name: 'index.md', data: encoder.encode(index) }, ...conversationFiles];
+  const attachmentNames = new Set();
+  for (const conversation of conversations) {
+    for (const attachment of conversation.archiveFiles || []) {
+      if (attachmentNames.has(attachment.name)) continue;
+      files.push(attachment);
+      attachmentNames.add(attachment.name);
+    }
+  }
   files.push({ name: 'search.html', data: encoder.encode(searchPage(searchData)) });
   return zipStore(files);
 }
 
 function searchPage(data) {
   const safe = JSON.stringify(data).replace(/</g, '\\u003c');
-  return `<!doctype html><meta charset="utf-8"><title>Archive search</title><style>body{font:16px system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#faf8f2;color:#24231f}input{width:100%;padding:14px;font:inherit;border:1px solid #aaa;border-radius:10px}article{padding:18px 0;border-bottom:1px solid #ddd}a{color:#1e6758}</style><h1>Archive search</h1><input id="q" autofocus placeholder="Search every conversation"><main id="r"></main><script>const data=${safe};const q=document.querySelector('#q'),r=document.querySelector('#r');function draw(){const s=q.value.toLowerCase().trim();r.innerHTML=data.filter(x=>!s||x.text.toLowerCase().includes(s)).slice(0,100).map(x=>'<article><a href="'+x.file+'"><b>'+x.title.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</b></a></article>').join('')}q.oninput=draw;draw()</script>`;
+  return `<!doctype html><meta charset="utf-8"><title>DeepSeek archive search</title><style>body{font:16px system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#faf8f2;color:#24231f}input{width:100%;padding:14px;font:inherit;border:1px solid #aaa;border-radius:10px}article{padding:18px 0;border-bottom:1px solid #ddd}a{color:#1e6758}</style><h1>DeepSeek archive search</h1><input id="q" autofocus placeholder="Search every conversation"><main id="r"></main><script>const data=${safe};const q=document.querySelector('#q'),r=document.querySelector('#r');function draw(){const s=q.value.toLowerCase().trim();r.innerHTML=data.filter(x=>!s||x.text.toLowerCase().includes(s)).slice(0,100).map(x=>'<article><a href="'+x.file+'"><b>'+x.title.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</b></a></article>').join('')}q.oninput=draw;draw()</script>`;
 }
 
 function zipStore(files) {

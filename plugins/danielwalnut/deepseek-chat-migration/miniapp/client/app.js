@@ -23,16 +23,16 @@ async function loadState() {
 }
 
 async function openFile(file) {
-  setStatus('Parsing export locally…');
+  setStatus('Parsing DeepSeek export locally…');
   const parsed = await readInput(file);
-  state.conversations = parsed.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  state.conversations = parsed;
   state.selected = new Set(parsed.filter((item) => !state.imported.has(item.stableId)).map((item) => item.stableId));
   state.active = parsed[0]?.stableId || null;
   $('#workspace').classList.remove('hidden');
   $('#count').textContent = `${parsed.length} conversation${parsed.length === 1 ? '' : 's'}`;
   $('#meta').textContent = `${parsed.filter((item) => state.imported.has(item.stableId)).length} already imported`;
   render();
-  setStatus(`Parsed ${parsed.length} conversations. Choose what to keep.`);
+  setStatus(`Parsed ${parsed.length} DeepSeek conversations. Choose what to migrate.`);
 }
 
 function filtered() {
@@ -83,8 +83,8 @@ function renderPreview() {
 function renderBlock(block) {
   if (block.type === 'text') return `<div>${esc(block.text)}</div>`;
   if (block.type === 'reasoning') return `<details><summary>Reasoning${block.elapsedSecs ? ` · ${block.elapsedSecs}s` : ''}</summary><div>${esc(block.text)}</div></details>`;
-  if (block.type === 'search') return `<details><summary>Web search · ${(block.results || []).length} results</summary>${(block.results || []).map((result) => `<p><b>${esc(result.title || result.url)}</b><br>${esc(result.snippet)}</p>`).join('')}</details>`;
-  if (block.type === 'attachment') return `<details><summary>Attachments · ${(block.files || []).length}</summary>${(block.files || []).map((file) => `<p>${esc(file.name || file.id)} · ${file.size || 0} bytes</p>`).join('')}</details>`;
+  if (block.type === 'search') return `<details><summary>Sources · ${(block.results || []).length} results</summary>${(block.results || []).map((result) => `<p><b>${esc(result.title || result.url)}</b><br>${esc(result.snippet)}</p>`).join('')}</details>`;
+  if (block.type === 'attachment') return `<details><summary>Attachments · ${(block.files || []).length}</summary>${(block.files || []).map((file) => `<p>${esc(file.name || file.id)} · ${file.size || 0} bytes · ${file.available ? 'included in export' : 'reference only'}</p>`).join('')}</details>`;
   return `<details><summary>${esc(block.label || 'Notice')}</summary>${esc(block.text)}</details>`;
 }
 
@@ -127,7 +127,7 @@ function exportArchive() {
   if (!conversations.length) return;
   const link = document.createElement('a');
   link.href = URL.createObjectURL(buildArchive(conversations, state.handoffs));
-  link.download = 'context-ark-archive.zip';
+  link.download = 'deepseek-chat-archive.zip';
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }

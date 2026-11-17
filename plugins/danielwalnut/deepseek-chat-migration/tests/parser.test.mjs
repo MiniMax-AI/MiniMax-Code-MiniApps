@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { activeBranch, parseExport, stableHash } from '../miniapp/client/adapters.js';
+import { activeBranch, parseDeepSeekExport, stableHash } from '../miniapp/client/deepseek.js';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/official-v3-session.json', import.meta.url), 'utf8'));
 
 test('parses official v3 blocks without mixing reasoning and search into answers', () => {
-  const [conversation] = parseExport(fixture);
+  const [conversation] = parseDeepSeekExport(fixture);
   assert.equal(conversation.title, 'Launch brief');
   assert.equal(conversation.turnCount, 2);
   assert.equal(conversation.branchCount, 1);
@@ -16,22 +16,22 @@ test('parses official v3 blocks without mixing reasoning and search into answers
 });
 
 test('reconstructs the selected branch and preserves regenerated alternatives', () => {
-  const [conversation] = parseExport(fixture);
+  const [conversation] = parseDeepSeekExport(fixture);
   assert.deepEqual(activeBranch(conversation).map((message) => message.id), ['1', '2', '3', '5']);
   assert.equal(conversation.messages.find((message) => message.id === '4').blocks[0].text, 'First version: a dense comparison table.');
 });
 
 test('stable identity dedupes identical exports and changes with content', () => {
-  const first = parseExport(fixture)[0].stableId;
-  const second = parseExport(structuredClone(fixture))[0].stableId;
+  const first = parseDeepSeekExport(fixture)[0].stableId;
+  const second = parseDeepSeekExport(structuredClone(fixture))[0].stableId;
   const changed = structuredClone(fixture);
   changed.messages[4].fragments[0].content += ' Updated.';
   assert.equal(first, second);
-  assert.notEqual(first, parseExport(changed)[0].stableId);
+  assert.notEqual(first, parseDeepSeekExport(changed)[0].stableId);
   assert.equal(stableHash('same'), stableHash('same'));
 });
 
-test('parses legacy mapping and flat message adapters', () => {
+test('parses legacy DeepSeek mapping and flat message schemas', () => {
   const legacy = {
     id: 'legacy-1', title: 'Legacy', current_node: 'a2',
     mapping: {
@@ -41,11 +41,11 @@ test('parses legacy mapping and flat message adapters', () => {
       a2: { id: 'a2', parent: 'u1', children: [], message: { fragments: [{ type: 'THINK', content: 'Reason' }, { type: 'RESPONSE', content: 'New' }] } }
     }
   };
-  const mapped = parseExport([legacy])[0];
+  const mapped = parseDeepSeekExport([legacy])[0];
   assert.equal(mapped.messages[0].role, 'user');
   assert.deepEqual(activeBranch(mapped).map((message) => message.id), ['u1', 'a2']);
 
-  const flat = parseExport({
+  const flat = parseDeepSeekExport({
     chat_session: { id: 'flat-1', title: 'Flat', current_message_id: 'm2' },
     chat_messages: [
       { message_id: 'm1', parent_id: null, role: 'user', content: 'Hi' },

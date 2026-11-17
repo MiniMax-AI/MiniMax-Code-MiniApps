@@ -20,7 +20,7 @@ function fragmentBlock(fragment) {
   const type = text(fragment?.type).toUpperCase();
   if (type === 'REQUEST' || type === 'RESPONSE') return { type: 'text', text: text(fragment.content) };
   if (type === 'THINK') return { type: 'reasoning', text: text(fragment.content), elapsedSecs: fragment.elapsed_secs ?? null };
-  if (type === 'TOOL_SEARCH' || type === 'TOOL_IMAGE_SEARCH') {
+  if (type === 'TOOL_SEARCH' || type === 'TOOL_IMAGE_SEARCH' || type === 'SEARCH') {
     return {
       type: 'search',
       queries: Array.isArray(fragment.queries) ? fragment.queries.map(text) : [],
@@ -35,7 +35,8 @@ function fragmentBlock(fragment) {
   if (type === 'FILE') {
     return { type: 'attachment', files: Array.isArray(fragment.files) ? fragment.files.map((file) => ({
       id: text(file?.id), name: text(file?.file_name || file?.name), size: Number(file?.file_size || 0),
-      available: Boolean(file?.export_path),
+      sourcePath: text(file?.export_path),
+      available: false,
     })) : [] };
   }
   if (fragment?.content != null) return { type: 'notice', label: type || 'UNKNOWN', text: text(fragment.content) };
@@ -69,11 +70,11 @@ function normalizeMessage(raw, fallbackId) {
   };
 }
 
-function finalize(raw, messages, adapter) {
+function finalize(raw, messages, sourceSchema) {
   const id = text(raw?.id || raw?.chat_session?.id) || stableHash(raw);
   const currentMessageId = raw?.current_message_id ?? raw?.chat_session?.current_message_id ?? null;
   const conversation = {
-    adapter,
+    sourceSchema,
     sourceId: id,
     title: text(raw?.title || raw?.chat_session?.title) || 'Untitled conversation',
     createdAt: numberTime(raw?.inserted_at || raw?.created_at || raw?.chat_session?.inserted_at),
@@ -81,7 +82,7 @@ function finalize(raw, messages, adapter) {
     currentMessageId: currentMessageId == null ? null : String(currentMessageId),
     messages,
   };
-  conversation.stableId = `${adapter}:${id}:${stableHash(messages.map((message) => [message.id, message.parentId, message.blocks]))}`;
+  conversation.stableId = `${sourceSchema}:${id}:${stableHash(messages.map((message) => [message.id, message.parentId, message.blocks]))}`;
   conversation.approxChars = messages.reduce((sum, message) => sum + JSON.stringify(message.blocks).length, 0);
   conversation.turnCount = messages.filter((message) => message.role === 'user').length;
   conversation.branchCount = countBranches(messages);
@@ -114,7 +115,7 @@ export function activeBranch(conversation) {
   return path.reverse();
 }
 
-const officialV3 = {
+const officialV3Parser = {
   id: 'deepseek-v3',
   detect(value) {
     return value?.export_format_version === 3 || (value?.id && Array.isArray(value?.messages) && value.messages.some((item) => Array.isArray(item?.fragments)));
@@ -126,7 +127,7 @@ const officialV3 = {
   },
 };
 
-const legacyMapping = {
+const legacyMappingParser = {
   id: 'deepseek-mapping',
   detect(value) {
     const sample = Array.isArray(value) ? value[0] : value?.conversations?.[0] ?? value;
@@ -145,7 +146,7 @@ const legacyMapping = {
   },
 };
 
-const apiFlat = {
+const legacyFlatParser = {
   id: 'deepseek-flat',
   detect(value) {
     const sample = Array.isArray(value) ? value[0]?.data ?? value[0] : value?.data?.biz_data ?? value;
@@ -159,16 +160,11 @@ const apiFlat = {
   },
 };
 
-export const adapters = [officialV3, legacyMapping, apiFlat];
+const deepSeekParsers = [officialV3Parser, legacyMappingParser, legacyFlatParser];
 
-export function parseExport(value) {
-  for (const adapter of adapters) {
-    if (adapter.detect(value)) return adapter.parse(value);
+export function parseDeepSeekExport(value) {
+  for (const parser of deepSeekParsers) {
+    if (parser.detect(value)) return parser.parse(value);
   }
-  throw new Error('Unsupported export schema. No adapter recognized this JSON.');
+  throw new Error('This JSON does not match a supported DeepSeek conversation export.');
 }
-
-export const adapterContract = Object.freeze({
-  detect: '(unknown) => boolean',
-  parse: '(unknown) => NormalizedConversation[]',
-});

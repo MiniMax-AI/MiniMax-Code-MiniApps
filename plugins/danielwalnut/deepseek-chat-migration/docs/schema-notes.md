@@ -29,14 +29,22 @@ include `REQUEST`, `RESPONSE`, `THINK`, `TOOL_SEARCH`, `TOOL_OPEN`, `TOOL_FIND`,
 
 The app does not use the scraping or authenticated-fetch paths found in some community tools.
 
+## Observed production export
+
+An export inspected on 2026-11-17 contained 177 sessions, 326 user turns and seven sessions with
+branches. It included request, response, thinking, search and file fragments. ZIP local headers
+used the data-descriptor flag (`0x08`), so the reader takes compressed sizes and offsets from the
+central directory. No user data from that export is included in this repository.
+
 ## Unconfirmed or intentionally unsupported
 
 - Whether every production account has moved from `conversations.json` to format version 3.
 - Whether production ZIPs ever use data descriptors, ZIP64, encryption, or compression methods
   beyond STORE and DEFLATE. The official implementation currently writes STORE.
 - Semantics of unknown future fragment types. They are ignored rather than mixed into answers.
-- Attachment availability outside version-3 image entries. Metadata is preserved, but this
-  prototype does not copy binaries into its generated archive.
+- Attachment availability outside version-3 image entries. Metadata is preserved; binaries found
+  under the official session `_files` path are copied into generated archives, while absent
+  binaries remain references.
 - The exact meaning and stability of API-era `status`, `feedback`, token-usage, and file fields.
-- Legacy `mapping` exports do not consistently expose an explicit role; the adapter infers it from
+- Legacy `mapping` exports do not consistently expose an explicit role; the parser infers it from
   `REQUEST` and `RESPONSE` fragments when needed.
