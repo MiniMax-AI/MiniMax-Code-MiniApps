@@ -3473,7 +3473,7 @@ test('a picture becomes a video in three different ways, and the provider is ask
   const firstLast = await submitWith('firstLast');
   assert.deepEqual(firstLast.input_image, { url: 'https://cdn.example.com/first.png' });
   assert.deepEqual(firstLast.last_frame_image, { url: 'https://cdn.example.com/last.png' });
-  assert.equal(firstLast.reference_type, 'last_frame');
+  assert.equal(firstLast.reference_type, 'first_frame');
   assert.equal(firstLast.ratio, 'adaptive');
   assert.equal(firstLast.reference_images, undefined);
 
@@ -12077,4 +12077,44 @@ test('an audio the provider would refuse is converted before it goes up', async 
   const workDir = join(h.dataDir, 'work');
   const leftovers = await readdir(workDir).catch(() => []);
   assert.deepEqual(leftovers.filter((name) => name.endsWith('.mp3')), [], 'the converted copy was left behind');
+});
+
+test('the first and last frame request declares one ending only', async (t) => {
+  // The provider takes ONE ending. When last_frame_image stands beside
+  // input_image, input_image has to be declared the first frame — declaring
+  // it the last one there is two endings, and the provider refuses the
+  // request outright.
+  const connector = createMockHostConnector(undefined, { videoState: 'succeeded' });
+  const h = await createHarness({ hostConnector: connector });
+  t.after(() => h.cleanup());
+
+  const started = await fetch(`${h.base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      nodeId: 'n_both_frames',
+      mode: 'video',
+      prompt: '一只猫在跑',
+      modelKey: 'MiniMax-H3',
+      params: { resolution: '768P', duration: 6 },
+      path: 'firstLast',
+      frames: [
+        { id: 'n_first', kind: 'image', role: 'first', url: 'https://cdn.example.com/first.png' },
+        { id: 'n_last', kind: 'image', role: 'last', url: 'https://cdn.example.com/last.png' },
+      ],
+      references: [
+        { id: 'n_first', title: '首帧', kind: 'image', text: '', media: [{ url: 'https://cdn.example.com/first.png', kind: 'image' }] },
+        { id: 'n_last', title: '末帧', kind: 'image', text: '', media: [{ url: 'https://cdn.example.com/last.png', kind: 'image' }] },
+      ],
+    }),
+  });
+  assert.equal(started.status, 202);
+  await waitForCall(connector.calls, (call) => call.toolRef.endsWith('submit-video-generation'));
+  const calls = connector.calls.filter((call) => call.toolRef.endsWith('submit-video-generation'));
+  const args = calls[calls.length - 1].args;
+  // The first picture is the first frame, and it says so.
+  assert.deepEqual(args.input_image, { url: 'https://cdn.example.com/first.png' });
+  assert.equal(args.reference_type, 'first_frame');
+  // The ending rides in its own field, so the two never both claim the end.
+  assert.deepEqual(args.last_frame_image, { url: 'https://cdn.example.com/last.png' });
 });
