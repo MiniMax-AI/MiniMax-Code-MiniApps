@@ -644,7 +644,8 @@ export class Engine {
             task.sessionId = event.sessionId;
             void this.tasks.save().catch((error) => this.logger.warn('minimax_bot.task_save_failed', { taskId: task.id, code: error?.code ?? 'unknown' }));
           }
-          void this.store.setSession(chatId, bot.id, { sessionId: event.sessionId });
+          void this.store.setSession(chatId, bot.id, { sessionId: event.sessionId })
+            .catch((error) => this.logger.warn('minimax_bot.session_save_failed', { chatId, code: error?.code ?? 'unknown' }));
           flush(true);
           break;
         case 'text.delta':
@@ -1624,9 +1625,12 @@ export class Engine {
 
   // ------------------------------------------------------------------ schedules
   startScheduler() {
-    this.scheduleTimer = setInterval(() => void this.tickSchedules(), 30_000);
+    // A failed save inside the tick must not become an unhandled rejection: the Host turns one of
+    // those into a failed Mini App process, so a bad disk would take every running turn with it.
+    const tick = () => this.tickSchedules().catch((error) => this.logger.warn('minimax_bot.schedule_tick_failed', { code: error?.code ?? 'unknown' }));
+    this.scheduleTimer = setInterval(() => void tick(), 30_000);
     this.scheduleTimer.unref?.();
-    void this.tickSchedules();
+    void tick();
   }
 
   async tickSchedules() {
