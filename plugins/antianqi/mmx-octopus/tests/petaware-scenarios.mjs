@@ -14,7 +14,7 @@
  * 覆盖评审（上游 issue #136）点名的三组：**首次启动**、**切换开关**、**重启**。
  */
 
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -103,7 +103,7 @@ function makeMockAgent({ observeImpl, sessionList = [] } = {}) {
 }
 
 /** 起一套独立的 server（独立端口 ＋ 独立 dataDir）。 */
-async function startHarness({ agent, dataDir, boardIntervalMs = 200 }) {
+async function startHarness({ agent, dataDir, boardIntervalMs = 200, startFn }) {
   const dir = dataDir || (await makeTempDir('mmx-petaware-'));
   const ctrl = new AbortController();
   const ctx = {
@@ -116,7 +116,7 @@ async function startHarness({ agent, dataDir, boardIntervalMs = 200 }) {
     capabilities: { has: () => true },
     agent,
   };
-  const life = await start(ctx, { boardIntervalMs });
+  const life = await (startFn || start)(ctx, { boardIntervalMs });
   liveServers.push(life);
   const base = `http://127.0.0.1:${life.port}`;
   return {
@@ -148,6 +148,37 @@ async function importBadNode(fileName, mutate) {
   await writeFile(join(dir, fileName), bad);
   return import(pathToFileURL(join(dir, fileName)).href);
 }
+
+/**
+ * 把整个 node 目录复制一份并改坏其中一个模块，然后**独立导入**那一份 server。
+ *
+ * ⚠️ **为什么复制整个目录**：负向注入要落在**装配后的行为**上 ——
+ *   只复制一个模块的话，server 还在用真模块跑，注入根本碰不到真实路径。
+ *   目录里的模块都按 pluginRoot 找资源（不按自身目录找），所以复制一份
+ *   照样能跑起来（context.pluginRoot 仍然指真包）。
+ */
+async function importBadServer(mutate) {
+  const dir = await makeTempDir('mmx-petaware-badserver-');
+  for (const name of await readdir(NODE_DIR)) {
+    if (!name.endsWith('.mjs')) continue;
+    await writeFile(join(dir, name), await readFile(join(NODE_DIR, name), 'utf8'));
+  }
+  const src = await readFile(join(NODE_DIR, 'state.mjs'), 'utf8');
+  const bad = mutate(src);
+  if (bad === src) return null;
+  await writeFile(join(dir, 'state.mjs'), bad);
+  return import(pathToFileURL(join(dir, 'server.mjs')).href);
+}
+
+/**
+ * **旧规则**（1.9.0 之前的写法）：读回存档里存着的值就算数。
+ * 负向注入用它替换真规则 ⇒ 判据必须红。
+ */
+const LEGACY_MIGRATION = [
+  'export function migratePetAware(saved) {',
+  '  return { petAware: !!(saved && saved.petAware === true), petAwareOptIn: false, petAwareReset: false };',
+  '}',
+].join('\n');
 
 const SESSIONS = [{ sessionId: 's-other', title: '别人的活', status: 'running' }];
 
@@ -315,6 +346,133 @@ async function runScenariosInner() {
         badFresh.petAware === true,
         `坏副本默认是开的（petAware=${String(badFresh.petAware)}）⇒ 真判据会红`
       );
+    }
+  }
+
+  // ---------- ⑦ 升级迁移：旧存档里那个「开」不算用户同意过 ----------
+  //
+  // ⚠️ **评审原话**（官方插件市场 2026-11-17，PR #138）：
+  //   "an existing state.json with petAware: true retains that value after
+  //    upgrading, so cross-session collection continues without a new opt-in"
+  //   → 旧存档没有 opt-in 标记 ⇒ **一律重置为关**，并请用户重新打开。
+  const legacyDir = await makeTempDir('mmx-petaware-legacy-');
+  await writeFile(
+    join(legacyDir, 'state.json'),
+    JSON.stringify({ mood: 'idle', petAware: true, heart: 50, intimacy: 0 }),
+    'utf8'
+  );
+  const agentLegacy = makeMockAgent({ sessionList: SESSIONS });
+  const hLegacy = await startHarness({ agent: agentLegacy, dataDir: legacyDir });
+  const legacySnap = await hLegacy.state();
+  push(
+    '旧存档里的 petAware:true 升级后被重置为关（1.9.0 的默认值不算用户同意）',
+    legacySnap.petAware === false,
+    'petAware=' + String(legacySnap.petAware)
+  );
+  await sleep(1200);
+  push(
+    '旧存档升级后一个 observe 都不订阅',
+    agentLegacy.calls.observe === 0,
+    'observe 被调 ' + agentLegacy.calls.observe + ' 次'
+  );
+  push(
+    '旧存档升级后一次 sessions() 都不调',
+    agentLegacy.calls.sessions === 0,
+    'sessions 被调 ' + agentLegacy.calls.sessions + ' 次'
+  );
+  push(
+    '旧存档升级后面板留着「请重新打开」的提示',
+    legacySnap.petAwareReset === true,
+    'petAwareReset=' + String(legacySnap.petAwareReset)
+  );
+  // 用户明确打开 ⇒ 采集恢复
+  await fetch(hLegacy.base + '/api/petaware', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled: true }),
+  });
+  await sleep(1200);
+  push(
+    '用户明确打开之后订阅恢复了',
+    agentLegacy.calls.observe >= 1,
+    'observe 被调 ' + agentLegacy.calls.observe + ' 次'
+  );
+  push(
+    '用户明确打开之后看板恢复了',
+    agentLegacy.calls.sessions >= 1,
+    'sessions 被调 ' + agentLegacy.calls.sessions + ' 次'
+  );
+  await hLegacy.life.dispose();
+
+  // 重启：明确 opt-in 过 ⇒ 仍然是开的
+  const agentLegacy2 = makeMockAgent({ sessionList: SESSIONS });
+  const hLegacy2 = await startHarness({ agent: agentLegacy2, dataDir: legacyDir });
+  const legacySnap2 = await hLegacy2.state();
+  push(
+    '明确打开过之后重启仍然是开的（opt-in 被记住）',
+    legacySnap2.petAware === true,
+    'petAware=' + String(legacySnap2.petAware)
+  );
+  await sleep(1200);
+  push(
+    '明确打开过之后重启继续采集',
+    agentLegacy2.calls.observe >= 1,
+    'observe 被调 ' + agentLegacy2.calls.observe + ' 次'
+  );
+  await hLegacy2.life.dispose();
+
+  // ---------- ⑧ 旧存档压根没这个字段 ⇒ 仍然是关的 ----------
+  {
+    const oldDir = await makeTempDir('mmx-petaware-old-');
+    await writeFile(join(oldDir, 'state.json'), JSON.stringify({ mood: 'idle' }), 'utf8');
+    const agentOld = makeMockAgent({ sessionList: SESSIONS });
+    const hOld = await startHarness({ agent: agentOld, dataDir: oldDir });
+    const oldSnap = await hOld.state();
+    push(
+      '旧存档里压根没有这个字段时仍然是关的',
+      oldSnap.petAware === false,
+      'petAware=' + String(oldSnap.petAware)
+    );
+    await sleep(1200);
+    push(
+      '旧存档里没有这个字段时也不采集',
+      agentOld.calls.observe === 0 && agentOld.calls.sessions === 0,
+      'observe=' + agentOld.calls.observe + ' sessions=' + agentOld.calls.sessions
+    );
+    await hOld.life.dispose();
+  }
+
+  // ---------- ⑨ 负向注入③：把迁移规则改回「读回旧值」⇒ 判据必须红 ----------
+  {
+    const bad = await importBadServer((s) => {
+      const m = s.match(/export function migratePetAware\(saved\) \{[\s\S]*?\n\}/);
+      if (!m) return s;
+      return s.replace(m[0], LEGACY_MIGRATION);
+    });
+    if (!bad) {
+      push('负向注入｜把迁移规则改回「读回旧值」时判据必须红', false, '注入没生效');
+    } else {
+      const badDir = await makeTempDir('mmx-petaware-badlegacy-');
+      await writeFile(
+        join(badDir, 'state.json'),
+        JSON.stringify({ mood: 'idle', petAware: true }),
+        'utf8'
+      );
+      const badAgent = makeMockAgent({ sessionList: SESSIONS });
+      const badH = await startHarness({
+        agent: badAgent,
+        dataDir: badDir,
+        startFn: bad.start,
+      });
+      const badSnap = await badH.state();
+      await sleep(1200);
+      push(
+        '负向注入｜把迁移规则改回「读回旧值」时判据必须红',
+        badSnap.petAware === true && badAgent.calls.observe > 0,
+        '坏副本把旧值读回来了（petAware=' + String(badSnap.petAware)
+          + ' observe=' + badAgent.calls.observe + '）⇒ 真判据会红'
+      );
+      await badH.life.dispose();
     }
   }
 

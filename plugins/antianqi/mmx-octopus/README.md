@@ -180,6 +180,9 @@ it like the rest of the port.
   summarise the turn; the board in the panel then lists the running sessions and
   refreshes every 30 seconds. Turning it off again stops the subscription and
   the reads — nothing about your other sessions is collected while it is off.
+  **Upgrading from 1.9.0**: the switch starts **off** — 1.9.0 wrote `true` into
+  the saved state because that was its default value, and a saved `true` does not
+  show that you ever turned it on. Turn it on again in the panel if you want it.
 - **Agent turns it runs** — it declares `session.run`, and it runs **one Agent
   turn per message you send her in the chat area**, in her own session. The
   turn runs through the Host Agent, so it carries the capabilities the Host
@@ -220,6 +223,16 @@ it like the rest of the port.
   for no browser permission.
 - **State location** — `context.dataDir`. Treat it as opaque: it may move
   between versions, so do not hard-code it.
+
+### Upgrading from 1.9.0
+
+1.10.0 changes one thing about your saved state: the cross-session awareness switch
+(「她知道我在忙什么」 / 「She knows what I am busy with」) is **reset to off**.
+1.9.0 wrote `true` into the state file because that was its default value, and a
+saved `true` does not show that you ever turned it on — so the package now starts
+with the switch off and stays off until you turn it on again in the panel
+(Settings → 「她知道我在忙什么」). Until then nothing about your other sessions is
+read or collected.
 
 ### Upgrading from 1.8.0
 

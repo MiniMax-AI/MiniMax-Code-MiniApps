@@ -55,7 +55,7 @@ function runScenarios() {
   });
 }
 
-test('petAware：默认关，关的时候真的不采集（首启 / 切换 / 重启）', async () => {
+test('petAware：默认关 + 旧存档升级后重置为关（首启 / 切换 / 重启 / 升级）', async () => {
   const run = await runScenarios();
   assert.equal(
     run.timedOut,
@@ -70,5 +70,11 @@ test('petAware：默认关，关的时候真的不采集（首启 / 切换 / 重
     [],
     failed.map((f) => f.name + ' -> ' + f.detail).join('; ')
   );
-  assert.ok(results.length >= 12, '场景数不对：' + results.length);
+  assert.ok(results.length >= 20, '场景数不对：' + results.length);
+  // ⚠️ **升级迁移那几条必须真的跑到**（官方评审 2026-11-17 点名的回归测试）：
+  //   旧存档（petAware:true）→ 升级后是关的 → 显式打开后采集恢复。
+  assert.ok(
+    results.some((r) => r.name.includes('旧存档')),
+    '升级迁移的场景没跑到（results 里没有「旧存档」那几条）'
+  );
 });

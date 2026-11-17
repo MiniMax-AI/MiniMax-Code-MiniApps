@@ -1963,6 +1963,8 @@
               <b>默认关。</b>开着的话，她会订阅你的会话事件、列出你的会话，
               并把其它会话的标题、运行状态和最终回复写进她的提示词；
               关掉这些一概不采、也不进提示词。
+              <b id="petaware-reset-note" hidden>从 1.9.0 升上来的：那个「开」是旧默认值、
+              不是你自己选的，已经重置为关；需要的话请手动打开。</b>
             </p>
           </section>
 
@@ -3456,6 +3458,12 @@
                 ? 'true'
                 : 'false'
             );
+          }
+          // ⚠️ **升级提示**（官方评审 2026-11-17）：旧存档里那个「开」是 1.9.0 的
+          //   默认值、不是用户选的 ⇒ 升级后已重置为关，并在这里请用户重新打开。
+          var petAwareResetNote = document.getElementById('petaware-reset-note');
+          if (petAwareResetNote) {
+            petAwareResetNote.hidden = snapshot.petAwareReset !== true;
           }
           // 诊断与看板
           renderTracking(snapshot);
