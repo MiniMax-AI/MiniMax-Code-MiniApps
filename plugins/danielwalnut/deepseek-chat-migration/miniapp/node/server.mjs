@@ -21,7 +21,7 @@ import { openFolder } from './open-folder.mjs';
 
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_ZIP_BODY = 1024 * 1024 * 1024;
-const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js']);
+const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js', 'icon.png']);
 
 export async function start(context) {
   await mkdir(context.dataDir, { recursive: true });
@@ -333,8 +333,9 @@ function requestError(code) {
 
 async function sendFile(response, path) {
   const body = await readFile(path);
-  const type = ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' })[extname(path)] || 'application/octet-stream';
-  response.writeHead(200, { 'content-type': `${type}; charset=utf-8`, 'x-content-type-options': 'nosniff' });
+  const type = ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' })[extname(path)] || 'application/octet-stream';
+  const charset = type.startsWith('text/') ? '; charset=utf-8' : '';
+  response.writeHead(200, { 'content-type': `${type}${charset}`, 'x-content-type-options': 'nosniff' });
   response.end(body);
 }
 

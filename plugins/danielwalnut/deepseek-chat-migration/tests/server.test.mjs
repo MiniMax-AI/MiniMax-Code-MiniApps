@@ -66,6 +66,10 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
     return { status: response.status, body: await response.json() };
   };
 
+  const icon = await fetch(`${base}/assets/icon.png`);
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/png');
+
   // On a fresh page load, before any upload, the header button already has a target.
   const fresh = await call('/api/project');
   assert.equal(fresh.status, 200);
