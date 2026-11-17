@@ -7,19 +7,23 @@ The checkpointed job below is adapted from the team's agent-session-migration pl
   import_deepseek.py scan  --source <export.zip>
   import_deepseek.py plan  --source <export.zip> (--session ID... | --all) --report <job.json>
   import_deepseek.py apply --source <export.zip> (--session ID... | --all) --report <job.json>
+  import_deepseek.py undo  (--report <job.json> | --run <undo.json>) [--force]
+  import_deepseek.py project   (read-only: DeepSeek project session count + latest id)
 
 Defaults: --data-dir ~/.minimax, --agent mavis, --workspace ~/DeepSeek (created when
 missing; mkdir only). `plan` writes a preview report and changes nothing else.
 `apply` resumes that report; given a report path that does not exist yet, it previews
-into it first. Before its first write, an apply run takes one verified online backup
-of the database; each batch then commits in its own transaction, a failed session never
-blocks the others, and re-running is idempotent.
+into it first. There is no full database copy: before each batch writes, inside its
+transaction, the run's undo journal (~/.minimax/deepseek-migration/<run>/undo.json)
+records what the batch will add and the before-image of the one existing row it may
+update; each batch commits in its own transaction and is read back, a failed session
+never blocks the others, and re-running is idempotent. `undo` removes exactly what one
+run added and refuses if those sessions were used since (unless --force).
 
 Exit codes: 0 completed, 2 completed with per-session errors, 1 configuration or
-contract error, 130 interrupted. A one-line JSON summary goes to stdout, progress
+contract error, 3 undo refused (sessions used since import), 130 interrupted. A one-line JSON summary goes to stdout, progress
 and errors to stderr; the report file holds per-session status. During apply, stderr
-carries one JSON line per step: {"event":"start","total":N}, {"event":"backup"} and,
-after each batch, {"event":"progress","done":n,"total":N,"sessions":[{sourceId,status}]}.
+carries one JSON line per step: {"event":"start","total":N} and, after each batch, {"event":"progress","done":n,"total":N,"sessions":[{sourceId,status}]}.
 Statuses:
   ready | already-imported | imported | incompatible | failed | running
 """
@@ -30,7 +34,6 @@ import json
 import os
 import sqlite3
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -44,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deepseek_core as m  # noqa: E402
 import deepseek_export as ds  # noqa: E402
+import deepseek_undo as undo_journal  # noqa: E402
 
 VERSION = 1
 DONE = {"imported", "already-imported"}
@@ -74,7 +78,7 @@ def summary(report, path):
         "counts": counts,
         "discoveryErrors": len(report["discoveryErrors"]),
         "sourceBytes": report["sourceBytes"],
-        "estimatedBackupBytes": report.get("estimatedBackupBytes", 0),
+        "undo": report.get("undo"),
     }
 
 
@@ -188,10 +192,6 @@ def recover(job, entry, committed_only=False):
 def preview(job, path, ids, batch_size):
     with m.connect(job["target"] / "v2/sqlite/runtime-state.sqlite") as db:
         m.check_target(db, job["config"]["agent"])
-        database_bytes = (
-            db.execute("PRAGMA page_count").fetchone()[0]
-            * db.execute("PRAGMA page_size").fetchone()[0]
-        )
     data = ds.inventory(job["source"])
     selected = set(ids or [])
     preview_ids = sorted(data["ids"] if not ids else selected)
@@ -228,9 +228,6 @@ def preview(job, path, ids, batch_size):
             except ERRORS as exc:
                 entry.update(status="incompatible", error=str(exc))
             report["sessions"].append(entry)
-    ready = sum(e["status"] == "ready" for e in report["sessions"])
-    # One backup per apply run, taken only when something is ready to write.
-    report["estimatedBackupBytes"] = database_bytes if ready else 0
     report["state"] = "planned"
     save(path, report)
     return report
@@ -246,6 +243,8 @@ def load_report(job, path):
         raise m.MigrationError(
             "Report source/target/options mismatch; preview again with the same options"
         )
+    if report.get("state") == "undone":
+        raise m.MigrationError("This import was undone; generate a new preview")
     if report.get("state") not in (
         "planned",
         "running",
@@ -306,28 +305,18 @@ def run_apply(job, path, report, batch_size, retry_failed, fail_after=None):
         ]
 
         emit("start", total=len(pending))
-        run_backup = []
+        run_journal = []
 
-        def backup():
-            # Taken once, under the lock, right before this run's first write. Later
-            # batches are covered by it: they only add sessions this run imports.
-            if not run_backup:
-                emit("backup")
-                directory = m.safe_directory(
-                    job["target"],
-                    m.LOCK_DIR
-                    + "/"
-                    + str(int(time.time() * 1000))
-                    + "-run-"
-                    + uuid.uuid4().hex[:8],
+        def journal():
+            # One undo journal per apply run, created right before its first write.
+            if not run_journal:
+                run_journal.append(
+                    undo_journal.Journal.create(
+                        job["target"], config["agent"], job["source"]
+                    )
                 )
-                directory.mkdir(mode=0o700)
-                snapshot = m.backup_database(
-                    job["target"] / "v2/sqlite/runtime-state.sqlite", directory
-                )
-                report["backup"] = str(snapshot)
-                run_backup.append(snapshot)
-            return run_backup[0]
+                report["undo"] = str(run_journal[0].path)
+            return run_journal[0]
 
         def commit(entries, items):
             for entry in entries:
@@ -343,14 +332,10 @@ def run_apply(job, path, report, batch_size, retry_failed, fail_after=None):
                     workspace=config["workspace"],
                     restore_projects=config["restoreProjects"],
                     fail_after=fail_after,
-                    backup=backup(),
+                    journal=journal(),
                 )
                 report["batches"].append(
-                    {
-                        k: result[k]
-                        for k in ("status", "backup", "report")
-                        if k in result
-                    }
+                    {k: result[k] for k in ("status", "undo", "report") if k in result}
                 )
                 for entry in entries:
                     entry["status"] = (
@@ -440,7 +425,58 @@ def prepare_workspace(value):
     return str(path.resolve())
 
 
+def run_undo(args):
+    target = m.target_path(args.data_dir)
+    if bool(args.report) == bool(args.run):
+        raise m.MigrationError(
+            "undo needs exactly one of --report <job.json> or --run <undo.json>"
+        )
+    report_path = None
+    if args.report:
+        report_path = Path(args.report).expanduser().absolute()
+        report = json.loads(m.regular(report_path).read_text(encoding="utf-8"))
+        journal_path = report.get("undo") if isinstance(report, dict) else None
+        if not journal_path:
+            raise m.MigrationError("This report has no import to undo")
+    else:
+        journal_path = args.run
+    result = undo_journal.undo(target, journal_path, force=args.force)
+    if report_path is not None:
+        report["state"] = "undone"
+        save(report_path, report)
+    return 0, result
+
+
+def project(args):
+    """Read-only: the DeepSeek project's session count and most recently active session."""
+    target = m.target_path(args.data_dir)
+    workspace = str(Path(args.workspace).expanduser().absolute().resolve())
+    with m.connect(target / "v2/sqlite/runtime-state.sqlite") as db:
+        where = (
+            " FROM local_runtime_sessions WHERE agent_name=? AND workspace_dir=?"
+            " AND columnar_version=3 AND archived=0"
+        )
+        count = db.execute(
+            "SELECT COUNT(*)" + where, (args.agent, workspace)
+        ).fetchone()[0]
+        latest = db.execute(
+            "SELECT session_id" + where + " ORDER BY updated_at_ms DESC LIMIT 1",
+            (args.agent, workspace),
+        ).fetchone()
+    return 0, {
+        "workspace": workspace,
+        "sessionCount": count,
+        "latestSessionId": latest[0] if latest else None,
+    }
+
+
 def execute(args, fail_after=None):
+    if args.command == "undo":
+        return run_undo(args)
+    if args.command == "project":
+        return project(args)
+    if not args.source:
+        raise m.MigrationError("scan/plan/apply require --source <export.zip>")
     source = ds.source_path(args.source)
     if args.command == "scan":
         return 0, {"source": str(source), "sessions": ds.overview(source, args.session)}
@@ -502,10 +538,8 @@ def parser():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("command", choices=["scan", "plan", "apply"])
-    p.add_argument(
-        "--source", required=True, help="DeepSeek export zip or unpacked folder"
-    )
+    p.add_argument("command", choices=["scan", "plan", "apply", "undo", "project"])
+    p.add_argument("--source", help="DeepSeek export zip or unpacked folder")
     p.add_argument(
         "--session", action="append", help="DeepSeek session id (repeatable)"
     )
@@ -516,6 +550,12 @@ def parser():
     p.add_argument("--workspace", default=str(Path.home() / "DeepSeek"))
     p.add_argument("--batch-size", type=int, default=20)
     p.add_argument("--retry-failed", action="store_true")
+    p.add_argument("--run", help="undo: the run's undo.json (or its directory)")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="undo: also remove sessions that were used after import",
+    )
     p.add_argument(
         "--restore-projects",
         action="store_true",
@@ -528,6 +568,12 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         code, result = execute(args)
+    except undo_journal.UndoRefused as exc:
+        m.print_result(
+            {"error": str(exc), "type": "UndoRefused", "modified": exc.sessions},
+            file=sys.stderr,
+        )
+        return 3
     except ERRORS as exc:
         m.print_result({"error": str(exc), "type": type(exc).__name__}, file=sys.stderr)
         return 1

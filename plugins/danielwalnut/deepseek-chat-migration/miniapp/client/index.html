@@ -9,7 +9,10 @@
   <body>
     <header>
       <div class="brand"><span class="mark">DS</span><div><b>DeepSeek Chat Migration</b><small>DeepSeek 会话迁移</small></div></div>
-      <div class="privacy">DeepSeek export · local parsing</div>
+      <div class="header-actions">
+        <div class="privacy">DeepSeek export · local parsing</div>
+        <button id="header-open" class="open-project" type="button" title="打开 DeepSeek 项目"><span>打开 DeepSeek 项目</span><i id="header-count" hidden></i></button>
+      </div>
     </header>
     <main>
       <section class="hero">
@@ -53,7 +56,14 @@
       </div>
       <ul id="result-list" class="result-list"></ul>
       <pre id="result-stderr" hidden></pre>
+      <div id="undo-confirm" class="undo-confirm" hidden>
+        <span id="undo-text"></span>
+        <button id="undo-no" class="link" type="button">取消</button>
+        <button id="undo-yes" class="quiet danger" type="button">确认撤销</button>
+        <button id="undo-force" class="quiet danger" type="button" hidden>仍然撤销</button>
+      </div>
       <div class="dialog-actions">
+        <button id="undo-import" class="link undo" type="button" hidden>撤销本次导入</button>
         <form method="dialog"><button class="quiet">Close</button></form>
         <button id="open-project" hidden>打开 DeepSeek 项目</button>
         <button id="confirm-import">Confirm import</button>

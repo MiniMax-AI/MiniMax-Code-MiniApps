@@ -2,8 +2,9 @@
 
 Python 3.9+, standard library only. Adapted from the storage core of MiniMax Code's
 agent-session-migration plugin (author: Insider), reduced to the DeepSeek source:
-the migration lock, online backup before writing, single write transaction, rollback,
-post-commit read-back and first-turn history initialization are kept as they were.
+the migration lock, single write transaction, rollback, post-commit read-back and
+first-turn history initialization are kept as they were. The plugin's full database
+backup is replaced by a per-run undo journal (deepseek_undo.py).
 Target identities, marker files and the lock directory match that plugin's DeepSeek
 source so imports from either tool are recognized by the other.
 """
@@ -16,7 +17,6 @@ import os
 import sqlite3
 import time
 import unicodedata
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -798,28 +798,6 @@ def apply(
         )
 
 
-def backup_database(dbfile, directory):
-    """Online backup of the whole target DB into directory, verified twice: once on
-    the backup connection and once reopened read-only from disk."""
-    path = directory / "runtime-state.before.sqlite"
-    with connect(dbfile) as original:
-        backup = sqlite3.connect(path)
-        try:
-            original.backup(backup)
-            mode = backup.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
-            if mode.lower() != "delete":
-                raise MigrationError("Could not finalize standalone database backup")
-            if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                raise MigrationError("Target backup integrity check failed")
-        finally:
-            backup.close()
-    os.chmod(path, 0o600)
-    with connect(path) as backup_check:
-        if backup_check.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-            raise MigrationError("Target backup integrity check failed")
-    return path
-
-
 def _apply_locked(
     source,
     key,
@@ -829,10 +807,11 @@ def _apply_locked(
     workspace=None,
     restore_projects=False,
     fail_after=None,
-    backup=None,
+    journal=None,
 ):
-    # backup: a verified backup this apply run already took under the same lock.
-    # Without one, each call backs up the database before its transaction.
+    # journal: the run's undo journal (deepseek_undo.Journal). No full database copy:
+    # an import only adds rows keyed by its own target ids, so the journal records
+    # those ids and the before-image of the one existing row it may update.
     # Files precede the DB commit. A failed/crashed import never publishes partial DB rows.
     # Orphan files are retained with an explicit recovery report, never mistaken for success.
     lock = safe_directory(target, LOCK_DIR)
@@ -840,7 +819,9 @@ def _apply_locked(
     created_dirs = []
     committed = False
     committing = False
+    prepared = False
     report_file = None
+    new = []
     try:
         rows = plan(source, key, target, agent, items, workspace, restore_projects)
         new = [r for r in rows if r["status"] == "new"]
@@ -848,8 +829,11 @@ def _apply_locked(
         # the Mini App accepts that by default and reports it as a warning.
         if not new:
             return {"status": "unchanged", "sessions": public_plan(rows)}
-        batch = lock / (str(int(time.time() * 1000)) + "-" + uuid.uuid4().hex[:8])
-        batch.mkdir(mode=0o700)
+        if journal is None:
+            import deepseek_undo
+
+            journal = deepseek_undo.Journal.create(target, agent, source)
+        batch = journal.batch_dir()
         report_file = batch / "report.json"
         report = {
             "format": FORMAT,
@@ -861,13 +845,12 @@ def _apply_locked(
         }
         private_write(report_file, compact(report) + "\n")
         dbfile = target / "v2/sqlite/runtime-state.sqlite"
-        if backup is None:
-            backup = backup_database(dbfile, batch)
-        elif not Path(backup).is_file() or is_link(Path(backup)):
-            raise MigrationError("Run backup is missing: " + str(backup))
         with connect(dbfile, True) as db:
             db.execute("BEGIN IMMEDIATE")
             check_target(db, agent)
+            # Under the write lock and before any write: intent and before-images.
+            journal.prepare(db, target, new)
+            prepared = True
             checked_projects = set()
             for r in new:
                 if db.execute(
@@ -898,6 +881,7 @@ def _apply_locked(
                         "sourceType": SOURCE_TYPE,
                         "source": str(source),
                         "importedAtMs": int(time.time() * 1000),
+                        "undoRun": journal.run_id,
                     }
                 )
                 private_write(directory / MARKER, compact(provenance) + "\n")
@@ -1071,15 +1055,21 @@ def _apply_locked(
                 ).fetchone():
                     raise MigrationError("Committed session missing during readback")
                 row["status"] = "already-imported"
+            journal.committed(check, target, new)
         verified = rows
         return {
             "status": "imported",
             "imported": len(new),
-            "backup": str(backup),
+            "undo": str(journal.path),
             "report": str(report_file),
             "sessions": public_plan(verified),
         }
     except BaseException as exc:
+        if prepared and not committed and not committing:
+            try:
+                journal.rolled_back(new)
+            except OSError:
+                pass
         if not committed and not committing:
             # Only remove files this invocation just created, never historical/user-owned dirs.
             for directory in reversed(created_dirs):

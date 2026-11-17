@@ -160,13 +160,13 @@ export function parseMigrationReport(report, requestedIds = []) {
       failed: count('failed'),
     },
     state: typeof report?.state === 'string' ? report.state : '',
-    // One backup per apply run; every batch of that run names the same file.
-    backups: [...new Set([report?.backup, ...(Array.isArray(report?.batches) ? report.batches.map((batch) => batch?.backup) : [])].filter((value) => typeof value === 'string' && value))],
+    // No database copy: one small undo journal per apply run.
+    undo: typeof report?.undo === 'string' && report.undo ? report.undo : null,
   };
 }
 
 /**
- * One stderr line from `apply`: `{"event":"start"|"backup"|"progress", ...}`.
+ * One stderr line from `apply`: `{"event":"start"|"progress", ...}`.
  * Anything else (summaries, tracebacks) is not progress and yields null.
  */
 export function parseProgressLine(line) {
@@ -179,7 +179,6 @@ export function parseProgressLine(line) {
   if (!value || typeof value !== 'object') return null;
   const count = (n) => Number.isInteger(n) && n >= 0 ? n : 0;
   if (value.event === 'start') return { event: 'start', total: count(value.total) };
-  if (value.event === 'backup') return { event: 'backup' };
   if (value.event !== 'progress') return null;
   const sessions = (Array.isArray(value.sessions) ? value.sessions : [])
     .filter((item) => item && typeof item.sourceId === 'string')
@@ -197,8 +196,6 @@ export function applyProgressEvent(progress, event) {
   if (event.event === 'start') {
     progress.phase = 'starting';
     progress.total = event.total;
-  } else if (event.event === 'backup') {
-    progress.phase = 'backup';
   } else if (event.event === 'progress') {
     progress.phase = 'importing';
     progress.done = Math.min(event.done, event.total);
@@ -243,16 +240,94 @@ function validateAgentName(value) {
   return value.trim();
 }
 
-function spawnAndWait(command, args, signal, onLine) {
+/**
+ * Undoes one apply run from its journal. Resolves with the importer's summary; rejects
+ * with `undo_refused` (and the changed sessions) when sessions were used since import.
+ */
+export async function runUndoCommand({
+  python = defaultPython(),
+  scriptPath = IMPORTER_SCRIPT,
+  journalPath,
+  targetDataDir = defaultTargetDataDir(),
+  force = false,
+  signal,
+}) {
+  if (typeof journalPath !== 'string' || !journalPath || journalPath.startsWith('-')) throw migrationError('invalid_arguments', { message: 'journalPath is required' });
+  const args = [scriptPath, 'undo', '--run', journalPath, '--data-dir', targetDataDir, ...(force ? ['--force'] : [])];
+  const result = await spawnAndWait(python, args, signal, null, true);
+  if (result.exitCode === 3) {
+    const detail = lastJson(result.stderr);
+    const modified = Array.isArray(detail?.modified) ? detail.modified : [];
+    throw migrationError('undo_refused', {
+      message: `有 ${modified.length} 个导入的会话在导入后又用过（比如继续聊了），这次没有撤销任何内容。`,
+      modified: modified.map((item) => ({ targetSessionId: String(item?.targetId ?? ''), sessionId: String(item?.sourceId ?? ''), changed: Array.isArray(item?.changed) ? item.changed.map(String) : [] })),
+    });
+  }
+  if (result.exitCode !== 0) {
+    throw migrationError('undo_failed', { message: importerError(result.stderr) || `撤销失败（exit ${result.exitCode}）。` });
+  }
+  const summary = lastJson(result.stdout);
+  if (!summary || summary.status !== 'undone') throw migrationError('undo_failed', { message: '撤销脚本没有返回结果。' });
+  return {
+    removed: Number.isInteger(summary.removed) ? summary.removed : 0,
+    alreadyAbsent: Number.isInteger(summary.alreadyAbsent) ? summary.alreadyAbsent : 0,
+    forced: Number.isInteger(summary.forced) ? summary.forced : 0,
+    keptDirectories: Array.isArray(summary.keptDirectories) ? summary.keptDirectories.map(String) : [],
+    warnings: Array.isArray(summary.warnings) ? summary.warnings.map(String) : [],
+    sessions: (Array.isArray(summary.sessions) ? summary.sessions : []).map((item) => ({ sessionId: String(item?.sourceId ?? ''), targetSessionId: String(item?.targetId ?? '') })),
+  };
+}
+
+/**
+ * The DeepSeek project as the runtime DB sees it: how many sessions it holds and the
+ * most recently active one, so the page can open it before any upload.
+ */
+export async function readProject({
+  python = defaultPython(),
+  scriptPath = IMPORTER_SCRIPT,
+  targetDataDir = defaultTargetDataDir(),
+  workspace = defaultWorkspace(),
+  signal,
+} = {}) {
+  const result = await spawnAndWait(python, [scriptPath, 'project', '--data-dir', targetDataDir, '--workspace', workspace], signal, null, true);
+  const summary = lastJson(result.stdout);
+  if (result.exitCode !== 0 || !summary) throw migrationError('project_unavailable', { message: importerError(result.stderr) || 'project lookup failed' });
+  return {
+    sessionCount: Number.isInteger(summary.sessionCount) ? summary.sessionCount : 0,
+    latestSessionId: typeof summary.latestSessionId === 'string' ? summary.latestSessionId : null,
+  };
+}
+
+function lastJson(text = '') {
+  const lines = String(text).trim().split('\n').filter(Boolean).reverse();
+  for (const line of lines) {
+    try {
+      const value = JSON.parse(line);
+      if (value && typeof value === 'object') return value;
+    } catch {
+      // not JSON
+    }
+  }
+  return null;
+}
+
+function spawnAndWait(command, args, signal, onLine, captureStdout = false) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       shell: false,
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', captureStdout ? 'pipe' : 'ignore', 'pipe'],
       windowsHide: true,
       signal,
     });
     let stderr = '';
+    let stdout = '';
     let pending = '';
+    if (captureStdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        if (stdout.length < MAX_OUTPUT) stdout += chunk.slice(0, MAX_OUTPUT - stdout.length);
+      });
+    }
     const deliver = (line) => {
       if (!onLine || !line) return;
       try {
@@ -282,7 +357,7 @@ function spawnAndWait(command, args, signal, onLine) {
     });
     child.once('close', (exitCode) => {
       deliver(pending);
-      resolvePromise({ exitCode: exitCode ?? -1, stderr: stderr.trim() });
+      resolvePromise({ exitCode: exitCode ?? -1, stderr: stderr.trim(), stdout: stdout.trim() });
     });
   });
 }

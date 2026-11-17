@@ -26,7 +26,7 @@ function freePort() {
   });
 }
 
-test('apply exposes live progress, keeps landed rows, and opens the folder only when it exists', async (context) => {
+test('apply exposes live progress and landed rows; the project lookup and undo work through the runtime', async (context) => {
   const root = await mkdtemp(join(tmpdir(), 'deepseek-server-'));
   const home = join(root, 'home');
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, PATH: process.env.PATH };
@@ -66,10 +66,10 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
     return { status: response.status, body: await response.json() };
   };
 
-  // Before any import, ~/DeepSeek does not exist: the fallback refuses instead of guessing.
-  const early = await call('/api/workspace/open', { method: 'POST' });
-  assert.equal(early.status, 400);
-  assert.equal(early.body.error, 'folder_missing');
+  // On a fresh page load, before any upload, the header button already has a target.
+  const fresh = await call('/api/project');
+  assert.equal(fresh.status, 200);
+  assert.deepEqual([fresh.body.sessionCount, fresh.body.latestSessionId, fresh.body.source], [0, null, 'database']);
 
   assert.equal((await call('/api/source', { method: 'POST', headers: { 'content-type': 'application/zip' }, body: await readFile(zip) })).status, 200);
   const sessions = [{ id: BRANCHY, stableId: 'stable-a' }, { id: FILES, stableId: 'stable-b' }];
@@ -103,5 +103,21 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
   const state = JSON.parse(await readFile(join(dataDir, 'state.json'), 'utf8'));
   assert.match(state.imported['stable-a'].targetSessionId, /^mvs_[0-9a-f]{32}$/);
   assert.deepEqual((await call('/api/state')).body.imported.sort(), ['stable-a', 'stable-b']);
-  assert.deepEqual(logs.filter((line) => !line.includes('没有找到文件夹')), []);
+  assert.ok(applied.body.runId);
+  assert.match(applied.body.undo, /undo\.json$/);
+
+  const project = await call('/api/project');
+  assert.equal(project.body.sessionCount, 2);
+  assert.ok(applied.body.sessions.map((item) => item.targetSessionId).includes(project.body.latestSessionId));
+
+  const undone = await call('/api/migration/undo', { method: 'POST', body: JSON.stringify({ runId: applied.body.runId }) });
+  assert.equal(undone.status, 200);
+  assert.equal(undone.body.removed, 2);
+  assert.deepEqual(undone.body.undone.sort(), ['stable-a', 'stable-b']);
+  assert.deepEqual((await call('/api/state')).body.imported, []);
+  assert.equal((await call('/api/project')).body.sessionCount, 0);
+  const again = await call('/api/migration/undo', { method: 'POST', body: JSON.stringify({ runId: applied.body.runId }) });
+  assert.equal(again.status, 409);
+  assert.equal(again.body.error, 'run_not_found');
+  assert.deepEqual(logs, []);
 });

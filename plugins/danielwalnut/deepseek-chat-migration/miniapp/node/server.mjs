@@ -12,7 +12,9 @@ import {
   createProgress,
   defaultTargetDataDir,
   defaultWorkspace,
+  readProject,
   runMigrationCommand,
+  runUndoCommand,
   TARGET_AGENT,
 } from './migration.mjs';
 import { openFolder } from './open-folder.mjs';
@@ -31,6 +33,7 @@ export async function start(context) {
   // planId -> live apply progress; the page polls it while apply runs.
   const progressByPlan = new Map();
   let persisting = Promise.resolve();
+  let undoing = false;
   const persist = () => {
     persisting = persisting.then(() => saveState(statePath, state)).catch((error) => {
       context.logger.warn(`state save failed: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -60,6 +63,24 @@ export async function start(context) {
           targetDataDir: defaultTargetDataDir(),
           agentName: TARGET_AGENT,
           workspace: defaultWorkspace(),
+          lastRun: lastUndoableRun(state),
+        });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/project') {
+        // What 「打开 DeepSeek 项目」 opens: the runtime DB is authoritative, state.json
+        // (sessions this Mini App imported) is the fallback when Python is unavailable.
+        let project = null;
+        try {
+          project = await readProject({ signal: context.signal });
+        } catch {
+          project = null;
+        }
+        const remembered = latestImported(state);
+        return json(response, 200, {
+          workspace: defaultWorkspace(),
+          sessionCount: project ? project.sessionCount : Object.keys(state.imported).length,
+          latestSessionId: project ? project.latestSessionId : remembered,
+          source: project ? 'database' : 'state',
         });
       }
       if (request.method === 'POST' && url.pathname === '/api/source') {
@@ -146,7 +167,41 @@ export async function start(context) {
         progress.done = progress.total;
         progress.imported = imported;
         pendingPlans.delete(body.planId);
-        return json(response, 200, { imported, ...result });
+        let runId = null;
+        if (result.undo && result.summary.succeeded > 0) {
+          runId = body.planId;
+          state.runs.push({
+            runId,
+            journal: result.undo,
+            at: new Date().toISOString(),
+            stableIds: result.sessions
+              .filter((item) => item.status === 'success')
+              .map((item) => bySource.get(item.sessionId)?.stableId)
+              .filter(Boolean),
+          });
+          state.runs = state.runs.slice(-20);
+          await persist();
+        }
+        return json(response, 200, { imported, runId, ...result });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/migration/undo') {
+        const body = await readJson(request);
+        const run = state.runs.find((item) => item.runId === body.runId && !item.undoneAt);
+        if (!run) return json(response, 409, { error: 'run_not_found', message: '找不到这次导入，可能已经撤销过了。' });
+        if (undoing) return json(response, 409, { error: 'undo_running', message: '正在撤销。' });
+        undoing = true;
+        try {
+          const result = await runUndoCommand({ journalPath: run.journal, force: body.force === true, signal: context.signal });
+          for (const stableId of run.stableIds) delete state.imported[stableId];
+          run.undoneAt = new Date().toISOString();
+          await persist();
+          return json(response, 200, { undone: run.stableIds, ...result });
+        } catch (error) {
+          if (error?.code === 'undo_refused') return json(response, 409, { error: 'undo_refused', message: error.message, modified: error.modified });
+          throw error;
+        } finally {
+          undoing = false;
+        }
       }
       if (request.method === 'GET' && url.pathname === '/api/migration/progress') {
         const progress = progressByPlan.get(url.searchParams.get('planId') ?? '');
@@ -160,7 +215,9 @@ export async function start(context) {
         });
       }
       if (request.method === 'POST' && url.pathname === '/api/workspace/open') {
-        // Fallback when the Host cannot open the imported session itself.
+        // Fallback when the Host cannot open an imported session itself. The importer
+        // creates ~/DeepSeek anyway, so a fresh install gets the (empty) folder too.
+        await mkdir(defaultWorkspace(), { recursive: true });
         await openFolder(defaultWorkspace());
         return json(response, 200, { opened: true, path: defaultWorkspace() });
       }
@@ -207,11 +264,28 @@ function readSelections(value) {
 async function loadState(path) {
   try {
     const value = JSON.parse(await readFile(path, 'utf8'));
-    return { imported: value.imported && typeof value.imported === 'object' ? value.imported : {} };
+    return {
+      imported: value.imported && typeof value.imported === 'object' ? value.imported : {},
+      runs: Array.isArray(value.runs) ? value.runs.filter((run) => run && typeof run.runId === 'string' && typeof run.journal === 'string' && Array.isArray(run.stableIds)) : [],
+    };
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    return { imported: {} };
+    return { imported: {}, runs: [] };
   }
+}
+
+function latestImported(state) {
+  let latest = null;
+  for (const entry of Object.values(state.imported)) {
+    if (!entry?.targetSessionId) continue;
+    if (!latest || String(entry.importedAt) > String(latest.importedAt)) latest = entry;
+  }
+  return latest?.targetSessionId ?? null;
+}
+
+function lastUndoableRun(state) {
+  const run = [...state.runs].reverse().find((item) => !item.undoneAt);
+  return run ? { runId: run.runId, at: run.at, count: run.stableIds.length } : null;
 }
 
 async function saveState(path, state) {

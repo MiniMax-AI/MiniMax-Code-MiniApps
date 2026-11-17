@@ -282,7 +282,51 @@ class ImporterTests(unittest.TestCase):
         )
         self.assertNotIn("user-42", json.dumps(marker))
 
-    def test_one_verified_backup_precedes_the_whole_run(self):
+    def counts(self):
+        tables = (
+            "local_runtime_sessions",
+            "local_runtime_message_rows",
+            "local_runtime_session_fts_keys",
+            "local_runtime_sessions_fts",
+            "local_runtime_pi_history_file_migrations",
+        )
+        with self.db() as db:
+            result = {
+                t: db.execute("SELECT COUNT(*) FROM " + t).fetchone()[0] for t in tables
+            }
+            result["projects"] = [
+                tuple(r)
+                for r in db.execute(
+                    "SELECT project_id,workspace_dir,hidden,extra_data_json,session_count,latest_activity_at_ms FROM local_runtime_projects ORDER BY project_id"
+                )
+            ]
+            result["integrity"] = db.execute("PRAGMA integrity_check").fetchone()[0]
+        result["files"] = (
+            sorted(
+                str(p.relative_to(self.target))
+                for p in (self.target / "v2/sessions").rglob("*")
+            )
+            if (self.target / "v2/sessions").exists()
+            else []
+        )
+        return result
+
+    def undo(self, report, **options):
+        values = dict(
+            command="undo",
+            source=None,
+            session=None,
+            all=False,
+            report=str(report),
+            run=None,
+            data_dir=str(self.target),
+            force=False,
+        )
+        values.update(options)
+        with contextlib.redirect_stderr(io.StringIO()):
+            return importer.execute(SimpleNamespace(**values))
+
+    def test_no_database_copy_one_undo_journal_per_run(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             code, result = importer.execute(
@@ -292,15 +336,125 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"imported": 3})
         report = json.loads(Path(result["report"]).read_text())
         self.assertEqual(len(report["batches"]), 3)
-        backups = {batch["backup"] for batch in report["batches"]}
-        self.assertEqual(backups, {report["backup"]})
-        with contextlib.closing(sqlite3.connect(report["backup"])) as db:
-            # Taken before the first batch: only the seeded session, none imported.
-            self.assertEqual(
-                db.execute("SELECT COUNT(*) FROM local_runtime_sessions").fetchone()[0],
-                1,
+        self.assertEqual({b["undo"] for b in report["batches"]}, {report["undo"]})
+        journal = Path(report["undo"])
+        self.assertEqual(journal.parent.parent, self.target / "deepseek-migration")
+        data = json.loads(journal.read_text())
+        self.assertEqual([e["status"] for e in data["sessions"]], ["committed"] * 3)
+        self.assertTrue(all(e["rows"]["messageRowIds"] for e in data["sessions"]))
+        self.assertTrue(all(e["rows"]["ftsRowids"] for e in data["sessions"]))
+        # The project did not exist before: no before-image, created by this run.
+        project = data["projects"][str((self.home / "DeepSeek").resolve())]
+        self.assertFalse(project["existed"])
+        databases = [
+            p
+            for p in self.target.rglob("*")
+            if p.suffix == ".sqlite" and p.name != "runtime-state.sqlite"
+        ]
+        self.assertEqual(databases, [])
+
+    def test_undo_removes_exactly_the_run_and_is_idempotent(self):
+        before = self.counts()
+        _, result, report = self.run_job("apply", [BRANCHY, FILES, CUT])
+        self.assertEqual(result["counts"], {"imported": 3})
+        self.assertNotEqual(self.counts(), before)
+        code, undone = self.undo(result["report"])
+        self.assertEqual(code, 0)
+        self.assertEqual((undone["removed"], undone["alreadyAbsent"]), (3, 0))
+        self.assertEqual(self.counts(), before)
+        again = self.undo(result["report"])[1]
+        self.assertEqual((again["removed"], again["alreadyAbsent"]), (0, 3))
+        self.assertEqual(self.counts(), before)
+        # The undone report cannot be resumed; a fresh preview imports again.
+        with self.assertRaises(m.MigrationError):
+            importer.execute(self.args("apply", [BRANCHY], report=result["report"]))
+        old_report = result["report"]
+        _, result, _ = self.run_job("apply", [BRANCHY, FILES, CUT])
+        self.assertEqual(result["counts"], {"imported": 3})
+        imported = self.counts()
+        # Undoing the old run again must not touch the later run's sessions.
+        stale = self.undo(old_report)[1]
+        self.assertEqual((stale["removed"], stale["alreadyAbsent"]), (0, 3))
+        self.assertEqual(self.counts(), imported)
+
+    def test_undo_restores_the_project_before_image(self):
+        workspace = str((self.home / "DeepSeek").resolve())
+        (self.home / "DeepSeek").mkdir()
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO local_runtime_projects(project_kind,workspace_dir,created_at_ms,updated_at_ms,hidden,extra_data_json) VALUES('workspace',?,1,1,1,'{\"note\":1}')",
+                (workspace,),
             )
-            self.assertEqual(db.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            db.commit()
+        before = self.counts()
+        _, result, _ = self.run_job("apply", [BRANCHY, CUT], restore_projects=True)
+        self.assertEqual(result["counts"], {"imported": 2})
+        with self.db() as db:
+            hidden, count = db.execute(
+                "SELECT hidden,session_count FROM local_runtime_projects"
+            ).fetchone()
+        self.assertEqual((hidden, count), (0, 2))
+        self.undo(result["report"])
+        self.assertEqual(self.counts(), before)
+
+    def test_undo_refuses_sessions_used_after_import_unless_forced(self):
+        before = self.counts()
+        _, result, report = self.run_job("apply", [BRANCHY, CUT])
+        plan = report["sessions"][0]["plan"]
+        directory = self.target / "v2/sessions" / plan["historyRelativeDir"]
+        # Continue the conversation: one more row and history line, plus a new file.
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO local_runtime_message_rows(session_id,msg_id,role,created_at_ms,data_json) VALUES(?,?,?,?,?)",
+                (plan["targetId"], "msg-later", "user", 1, "{}"),
+            )
+            db.commit()
+        with open(directory / "messages.jsonl", "a") as history:
+            history.write('{"later":true}\n')
+        (directory / "reports").mkdir()
+        with self.assertRaises(importer.undo_journal.UndoRefused) as refused:
+            self.undo(result["report"])
+        self.assertEqual(
+            [s["targetId"] for s in refused.exception.sessions], [plan["targetId"]]
+        )
+        self.assertIn("messageRows", refused.exception.sessions[0]["changed"])
+        self.assertTrue(directory.exists())
+        with self.db() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM local_runtime_sessions WHERE title LIKE '[From DeepSeek]%'"
+                ).fetchone()[0],
+                2,
+            )
+        _, forced = self.undo(result["report"], force=True)
+        self.assertEqual((forced["removed"], forced["forced"]), (2, 1))
+        # Later writes are kept aside in the run directory, never deleted.
+        self.assertEqual(len(forced["keptDirectories"]), 1)
+        self.assertTrue(Path(forced["keptDirectories"][0], "reports").is_dir())
+        after = self.counts()
+        self.assertEqual(
+            {k: v for k, v in after.items() if k != "files"},
+            {k: v for k, v in before.items() if k != "files"},
+        )
+
+    def test_cli_undo_exit_codes(self):
+        _, result, report = self.run_job("apply", [BRANCHY])
+        plan = report["sessions"][0]["plan"]
+        with self.db() as db:
+            db.execute(
+                "UPDATE local_runtime_sessions SET title='renamed' WHERE session_id=?",
+                (plan["targetId"],),
+            )
+            db.commit()
+        base = ["undo", "--report", result["report"], "--data-dir", str(self.target)]
+        refused = self.cli(*base)
+        self.assertEqual(refused.returncode, 3)
+        error = json.loads(refused.stderr.decode().strip().splitlines()[-1])
+        self.assertEqual(error["type"], "UndoRefused")
+        self.assertEqual(error["modified"][0]["changed"], ["title"])
+        forced = self.cli(*base, "--force")
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertEqual(json.loads(forced.stdout)["removed"], 1)
 
     def test_apply_reports_progress_after_every_batch(self):
         stderr = io.StringIO()
@@ -312,27 +466,28 @@ class ImporterTests(unittest.TestCase):
             if "event" in value:
                 events.append(value)
         self.assertEqual(
-            [e["event"] for e in events], ["start", "backup", "progress", "progress"]
+            [e["event"] for e in events], ["start", "progress", "progress"]
         )
         self.assertEqual(events[0]["total"], 3)
         self.assertEqual(
-            [(e["done"], e["total"]) for e in events[2:]], [(2, 3), (3, 3)]
+            [(e["done"], e["total"]) for e in events[1:]], [(2, 3), (3, 3)]
         )
-        landed = [s for e in events[2:] for s in e["sessions"]]
+        landed = [s for e in events[1:] for s in e["sessions"]]
         self.assertEqual(
             sorted(s["sourceId"] for s in landed), sorted([BRANCHY, FILES, CUT])
         )
         self.assertEqual({s["status"] for s in landed}, {"imported"})
 
-    def test_nothing_to_write_takes_no_backup(self):
+    def test_nothing_to_write_opens_no_journal(self):
         self.run_job("apply", [BRANCHY])
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             _, result = importer.execute(self.args("apply", [BRANCHY]))
         report = json.loads(Path(result["report"]).read_text())
         self.assertEqual(result["counts"], {"already-imported": 1})
-        self.assertNotIn("backup", report)
-        self.assertNotIn('"event":"backup"', stderr.getvalue())
+        self.assertIsNone(report.get("undo"))
+        # Only the first import's journal exists.
+        self.assertEqual(len(list((self.target / "deepseek-migration").iterdir())), 1)
 
     def test_idempotent_even_when_the_same_export_is_uploaded_again(self):
         first, _, _, _ = self.imported()

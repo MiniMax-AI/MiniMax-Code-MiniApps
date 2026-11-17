@@ -18,7 +18,9 @@ import {
   importerError,
   parseMigrationReport,
   parseProgressLine,
+  readProject,
   runMigrationCommand,
+  runUndoCommand,
 } from '../miniapp/node/migration.mjs';
 import { folderOpener, openFolder } from '../miniapp/node/open-folder.mjs';
 
@@ -59,7 +61,8 @@ test('builds the bundled importer command without a shell or plugin lookup', () 
 test('maps importer statuses and reads the target id from the plan', () => {
   const result = parseMigrationReport({
     state: 'completed-with-errors',
-    batches: [{ status: 'imported', backup: '/b/runtime-state.before.sqlite' }],
+    undo: '/d/deepseek-migration/run/undo.json',
+    batches: [{ status: 'imported', undo: '/d/deepseek-migration/run/undo.json' }],
     sessions: [
       { sourceId: 'new', status: 'imported', plan: { targetId: 'mvs_new', title: '[From DeepSeek] a', messageCount: 4, warnings: ['w'] } },
       { sourceId: 'old', status: 'already-imported', plan: { targetId: 'mvs_old' } },
@@ -74,9 +77,8 @@ test('maps importer statuses and reads the target id from the plan', () => {
   assert.equal(result.sessions[1].targetSessionId, 'mvs_old');
   assert.equal(result.sessions[3].message, 'invalid branch');
   assert.deepEqual(result.summary, { total: 6, planned: 1, succeeded: 1, skipped: 1, failed: 3 });
-  assert.deepEqual(result.backups, ['/b/runtime-state.before.sqlite']);
-  // One backup per run even when several batches name it.
-  assert.deepEqual(parseMigrationReport({ backup: '/run/b.sqlite', batches: [{ backup: '/run/b.sqlite' }, { backup: '/run/b.sqlite' }], sessions: [] }).backups, ['/run/b.sqlite']);
+  assert.equal(result.undo, '/d/deepseek-migration/run/undo.json');
+  assert.equal(parseMigrationReport({ sessions: [] }).undo, null);
 });
 
 test('parses importer progress lines and folds them into page progress', () => {
@@ -86,8 +88,8 @@ test('parses importer progress lines and folds them into page progress', () => {
   const progress = createProgress();
   applyProgressEvent(progress, parseProgressLine('{"event":"start","total":3}'));
   assert.deepEqual([progress.phase, progress.done, progress.total], ['starting', 0, 3]);
-  applyProgressEvent(progress, parseProgressLine('{"event":"backup"}'));
-  assert.equal(progress.phase, 'backup');
+  // Old importers printed a backup step; it is no longer a phase.
+  assert.equal(parseProgressLine('{"event":"backup"}'), null);
   applyProgressEvent(progress, parseProgressLine('{"event":"progress","done":2,"total":3,"sessions":[{"sourceId":"a","status":"imported"},{"sourceId":"b","status":"already-imported"}]}'));
   assert.deepEqual([progress.phase, progress.done, progress.total], ['importing', 2, 3]);
   applyProgressEvent(progress, parseProgressLine('{"event":"progress","done":9,"total":3,"sessions":[{"sourceId":"c","status":"failed"}]}'));
@@ -159,14 +161,17 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
   const events = [];
   const applied = await runMigrationCommand({ ...common, action: 'apply', batchSize: 1, onProgress: (event) => events.push(event) });
   assert.equal(applied.ok, true);
-  // Each row is reported as soon as its batch commits, after one up-front backup.
-  assert.deepEqual(events.map((event) => event.event), ['start', 'backup', 'progress', 'progress']);
-  assert.deepEqual(events.slice(2).map((event) => [event.done, event.total]), [[1, 2], [2, 2]]);
-  assert.deepEqual(events.slice(2).flatMap((event) => event.sessions.map((item) => item.status)), ['success', 'success']);
+  // Each row is reported as soon as its batch commits; there is no backup step.
+  assert.deepEqual(events.map((event) => event.event), ['start', 'progress', 'progress']);
+  assert.deepEqual(events.slice(1).map((event) => [event.done, event.total]), [[1, 2], [2, 2]]);
+  assert.deepEqual(events.slice(1).flatMap((event) => event.sessions.map((item) => item.status)), ['success', 'success']);
   assert.equal(applied.state, 'completed');
   assert.deepEqual(applied.summary, { total: 2, planned: 0, succeeded: 2, skipped: 0, failed: 0 });
   assert.match(applied.sessions[0].targetSessionId, /^mvs_[0-9a-f]{32}$/);
-  assert.equal(applied.backups.length, 1);
+  assert.match(applied.undo, /deepseek-migration[\\/][^\\/]+[\\/]undo\.json$/);
+  const project = await readProject({ python, targetDataDir, workspace });
+  assert.equal(project.sessionCount, 2);
+  assert.ok(applied.sessions.map((item) => item.targetSessionId).includes(project.latestSessionId));
 
   // A second upload of the same export gets a fresh report and is skipped, not failed.
   const again = await runMigrationCommand({ ...common, action: 'apply', reportPath: join(root, 'upload', 'job-2.json') });
@@ -174,6 +179,23 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
   assert.deepEqual(again.summary, { total: 2, planned: 0, succeeded: 0, skipped: 2, failed: 0 });
   assert.deepEqual(again.sessions.map((item) => item.targetSessionId), applied.sessions.map((item) => item.targetSessionId));
   assert.match(await readFile(reportPath, 'utf8'), /"state":"completed"/);
+
+  // Undo the run from its journal: both sessions go, a second undo is a no-op.
+  const undone = await runUndoCommand({ python, journalPath: applied.undo, targetDataDir });
+  assert.deepEqual([undone.removed, undone.alreadyAbsent, undone.forced], [2, 0, 0]);
+  assert.equal((await readProject({ python, targetDataDir, workspace })).sessionCount, 0);
+  const twice = await runUndoCommand({ python, journalPath: applied.undo, targetDataDir });
+  assert.deepEqual([twice.removed, twice.alreadyAbsent], [0, 2]);
+
+  // A continued session blocks undo unless forced.
+  const redo = await runMigrationCommand({ ...common, action: 'apply', reportPath: join(root, 'upload', 'job-3.json') });
+  assert.equal(redo.summary.succeeded, 2);
+  execFileSync(python, ['-c', 'import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); d.execute("UPDATE local_runtime_sessions SET title=? WHERE session_id=?", ("continued", sys.argv[2])); d.commit()',
+    join(targetDataDir, 'v2', 'sqlite', 'runtime-state.sqlite'), redo.sessions[0].targetSessionId]);
+  await assert.rejects(runUndoCommand({ python, journalPath: redo.undo, targetDataDir }),
+    (error) => error.code === 'undo_refused' && error.modified.length === 1 && error.modified[0].changed.includes('title'));
+  const forced = await runUndoCommand({ python, journalPath: redo.undo, targetDataDir, force: true });
+  assert.deepEqual([forced.removed, forced.forced], [2, 1]);
 });
 
 test('surfaces contract errors as a readable message', async (context) => {

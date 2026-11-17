@@ -44,21 +44,54 @@ temporary path under `context.dataDir`, runs `import_deepseek.py plan` into a fr
 displays it, and runs `apply` on the same report only after explicit confirmation. The command is
 spawned directly as `python3` with an argument array and no shell.
 
-`apply` takes one verified online backup per run, right before its first write (none when nothing
-is ready), then commits batches of `--batch-size` sessions (the Mini App passes 10). A preview, and
+`apply` does not copy the database. Each run opens an undo journal at
+`<data-dir>/deepseek-migration/<run>/undo.json` (format `deepseek-undo/1`) on its first write, then
+commits batches of `--batch-size` sessions (the Mini App passes 10). A preview, and
 each batch's re-check, share one open ZIP and one read snapshot of the target; the snapshot is
 closed before the batch writes. stderr carries one JSON line per step:
-`{"event":"start","total":N}`, `{"event":"backup"}` and, after every batch,
+`{"event":"start","total":N}` and, after every batch,
 `{"event":"progress","done":n,"total":N,"sessions":[{"sourceId","status"}]}`. The Node runtime folds
 these into `GET /api/migration/progress?planId=`, which the page polls every 500 ms, and records
 rows in `state.json` as they land.
 
-After an import, **打开 DeepSeek 项目** uses the Host navigation API documented in
-`docs/client.md` (MiniMax Code 3.1.11+): `host.navigation.open({ id: 'session', sessionId,
-source: 'local' })` from the click handler, with the first imported target session id. The Host
-has no project or folder target, so the conversation is the closest thing to "the DeepSeek
-project". Without that API, or when it rejects (other than `result_unknown`), the page calls
-`POST /api/workspace/open`, which opens `~/DeepSeek` with `open`, `explorer.exe` or `xdg-open`.
+### What one import writes, and how undo reverses it
+
+Per new session, inside the batch transaction:
+
+| Target | Change | Undo |
+| --- | --- | --- |
+| `local_runtime_projects` | INSERT the `~/DeepSeek` project only if it does not exist; otherwise UPDATE its `hidden` (to 0, `--restore-projects`) and `extra_data_json` (restore marker) | delete it if this run created it and it is empty; otherwise put back the journaled before-image of `hidden` and `extra_data_json`, unless something else changed them since |
+| `local_runtime_sessions` | INSERT | DELETE |
+| trigger `trg_local_runtime_project_session_insert_v5` | sets the session's `project_id`, updates the project's `latest_activity_at_ms` and `session_count` | the delete trigger recomputes both |
+| `local_runtime_session_fts_keys`, `local_runtime_sessions_fts` | INSERT one key row and one FTS row | DELETE by the journaled rowids |
+| `local_runtime_message_rows` | INSERT the history rows | DELETE by the journaled ids |
+| `local_runtime_pi_history_file_migrations` | INSERT | DELETE |
+| `v2/sessions/<dated dir>/` | `messages.jsonl`, `manifest.json`, `deepseek-source.json`, `deepseek-migration.json` (marker, with `undoRun`), plus any parent folders it had to create | removed when only these files remain; anything else is moved to `deepseek-migration/<run>/undone/` |
+
+No other existing row is updated. `sqlite_sequence` counters are left advanced. Before each batch
+commits, its journal entries are `pending`; after the read-back they become `committed` with the
+message-row and FTS rowids and a fingerprint (record hash, `updated_at_ms`, title, archive state,
+message-row count and last id, history hash, file list). A failed batch marks its entries
+`rolled-back`.
+
+`import_deepseek.py undo --report <job.json>` (or `--run <undo.json>`) takes the same write lock,
+compares every session with its fingerprint, and refuses with exit code 3 and the changed fields
+if any was used since the import, unless `--force`. It deletes in one transaction, reads back that
+no row is left, cleans up files, then marks the journal `undone` and the report `undone`, so a
+stale report cannot be applied again. Running it twice reports everything as already absent. A
+session re-imported by a later run carries that run's `undoRun` and is left alone.
+
+### Opening the DeepSeek project
+
+`docs/client.md` (MiniMax Code 3.1.11+) lists `host.navigation.open` targets `home`, `plugins`,
+`schedule`, `settings` (with a section) and `{ id: 'session', sessionId, source: 'local' }`. There
+is no project or workspace target and no session-list filter. So **打开 DeepSeek 项目**, in the
+header at all times and in the result dialog, opens the most recent session of the DeepSeek
+project from the click handler. `GET /api/project` finds it with `import_deepseek.py project`
+(a read-only query on the `mavis` agent and the `~/DeepSeek` workspace), falling back to the
+latest row in `state.json`. With nothing imported, without that API, or when it rejects (other
+than `result_unknown`), the page calls `POST /api/workspace/open`, which creates `~/DeepSeek` if
+needed and opens it with `open`, `explorer.exe` or `xdg-open`.
 
 Report entries are `{sourceId, status, error?, plan}` with status `ready`, `already-imported`,
 `imported`, `incompatible`, `failed` or `running`; the UI shows them as ready, skipped, imported

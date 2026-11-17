@@ -8,6 +8,8 @@ const state = {
   planId: null,
   busy: false,
   openTarget: null,
+  project: null,
+  lastRunId: null,
 };
 const POLL_MS = 500;
 const LABELS = { planned: 'ready', success: 'imported', skipped: 'already imported · skipped', failed: 'failed' };
@@ -154,6 +156,7 @@ async function planImport() {
     renderProgress(null);
     $('#confirm-import').disabled = !result.summary.planned;
     $('#confirm-import').hidden = false;
+    showUndo(false);
     $('#migration-result').showModal();
     setStatus(result.summary.planned
       ? `${result.summary.planned} ready to import. Review the plan before importing.`
@@ -168,7 +171,6 @@ async function planImport() {
 }
 
 function progressLabel(progress) {
-  if (progress.phase === 'backup') return '正在备份数据库…';
   if (progress.phase === 'importing' || progress.phase === 'done') return `导入中 ${progress.done}/${progress.total}`;
   return '准备导入…';
 }
@@ -249,6 +251,9 @@ async function applyImport() {
       || (result.sessions || []).find((item) => item.status === 'skipped' && item.targetSessionId);
     state.openTarget = landed?.targetSessionId || null;
     showOpenProject(Boolean(landed));
+    state.lastRunId = result.runId || null;
+    showUndo(Boolean(state.lastRunId), result.summary.succeeded);
+    void refreshProject();
     const skipped = result.summary.skipped ? `, ${result.summary.skipped} already imported` : '';
     setStatus(result.summary.failed
       ? `Imported ${result.summary.succeeded}${skipped}, ${result.summary.failed} failed.`
@@ -263,6 +268,65 @@ async function applyImport() {
     state.busy = false;
     setBusy($('#confirm-import'), false);
     $('#import').disabled = false;
+  }
+}
+
+function showUndo(visible, count = 0) {
+  $('#undo-import').hidden = !visible;
+  $('#undo-confirm').hidden = true;
+  $('#undo-import').dataset.count = String(count);
+}
+
+function askUndo() {
+  const count = Number($('#undo-import').dataset.count || 0);
+  $('#undo-text').textContent = `会从 MiniMax Code 里删掉这次导入的 ${count} 个会话，其他会话不受影响。确定撤销吗？`;
+  $('#undo-force').hidden = true;
+  $('#undo-yes').hidden = false;
+  $('#undo-confirm').hidden = false;
+  $('#undo-import').hidden = true;
+}
+
+async function undoImport(force = false) {
+  if (!state.lastRunId || state.busy) return;
+  state.busy = true;
+  const button = force ? $('#undo-force') : $('#undo-yes');
+  setBusy(button, true, '撤销中…');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/migration/undo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runId: state.lastRunId, force }),
+    });
+    const body = await response.json();
+    if (response.status === 409 && body.error === 'undo_refused') {
+      $('#undo-text').textContent = `${body.message}仍然撤销会把这些会话导入后的新内容一起删掉（新增的文件会另存在撤销记录里）。`;
+      $('#undo-yes').hidden = true;
+      $('#undo-force').hidden = false;
+      return;
+    }
+    if (!response.ok) throw new Error(body.message || body.error || `Request failed (${response.status})`);
+    for (const stableId of body.undone || []) state.imported.delete(stableId);
+    state.lastRunId = null;
+    state.openTarget = null;
+    render({ preview: false });
+    $('#undo-confirm').hidden = true;
+    showOpenProject(false);
+    $('#result-title').textContent = 'Import undone';
+    $('#result-summary').textContent = `已撤销本次导入：删除了 ${body.removed} 个会话`;
+    for (const row of document.querySelectorAll('#result-list li.success')) {
+      row.className = 'undone';
+      row.querySelector('span').textContent = 'undone';
+    }
+    setStatus(`已撤销本次导入（${body.removed} 个会话）。`);
+    void refreshProject();
+  } catch (error) {
+    setStatus(error.message, true);
+    $('#undo-text').textContent = error.message;
+  } finally {
+    setBusy(button, false);
+    button.disabled = false;
+    state.busy = false;
   }
 }
 
@@ -285,9 +349,31 @@ async function openWorkspaceFolder() {
  * user gesture. Older clients, or a Host that cannot open it, get ~/DeepSeek in the
  * file manager instead.
  */
+async function refreshProject() {
+  try {
+    state.project = await api('/api/project');
+  } catch {
+    state.project = null;
+  }
+  const count = state.project?.sessionCount || 0;
+  const hostCanOpen = typeof window.mcode?.miniapp?.host?.navigation?.open === 'function';
+  $('#header-count').textContent = count ? String(count) : '';
+  $('#header-count').hidden = !count;
+  $('#header-open').title = count && hostCanOpen
+    ? `在 MiniMax Code 里打开 DeepSeek 项目中最近的会话（共 ${count} 个）`
+    : `在文件管理器里打开 ${state.project?.workspace || '~/DeepSeek'}`;
+}
+
+/**
+ * Opens the DeepSeek project, from the header at any time or after an import: the
+ * Host (MiniMax Code 3.1.11+) opens the latest imported session, which lives in that
+ * project. Must run straight from the click: the Host checks the user gesture. With
+ * nothing imported, an older client, or a Host that cannot open it, ~/DeepSeek opens
+ * in the file manager instead.
+ */
 function openProject() {
   const host = window.mcode?.miniapp?.host;
-  const sessionId = state.openTarget;
+  const sessionId = state.openTarget || state.project?.latestSessionId || null;
   if (typeof host?.navigation?.open !== 'function' || !sessionId) return void openWorkspaceFolder();
   host.navigation.open({ id: 'session', sessionId, source: 'local' }).then((result) => {
     if (result?.status === 'opened') {
@@ -347,8 +433,14 @@ $('#archive').addEventListener('click', exportArchive);
 $('#confirm-import').addEventListener('click', applyImport);
 $('#open-project').addEventListener('click', openProject);
 $('#footer-open').addEventListener('click', openProject);
+$('#header-open').addEventListener('click', openProject);
+$('#undo-import').addEventListener('click', askUndo);
+$('#undo-yes').addEventListener('click', () => undoImport(false));
+$('#undo-force').addEventListener('click', () => undoImport(true));
+$('#undo-no').addEventListener('click', () => showUndo(true, Number($('#undo-import').dataset.count || 0)));
 for (const eventName of ['dragenter', 'dragover']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.add('drag'); });
 for (const eventName of ['dragleave', 'drop']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.remove('drag'); });
 $('#drop').addEventListener('drop', (event) => event.dataTransfer.files[0] && openFile(event.dataTransfer.files[0]).catch((error) => setStatus(error.message, true)));
 
 await loadState();
+await refreshProject();

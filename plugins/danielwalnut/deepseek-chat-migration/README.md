@@ -31,10 +31,16 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
 7. While importing, the dialog and the footer show a progress bar and 「导入中 12/50」; each row
    flips to imported as soon as its batch is written. The result lists every selected session as
    imported, already imported (skipped) or failed.
-8. Choose **打开 DeepSeek 项目** to go straight to what you imported. On MiniMax Code 3.1.11 or
-   later the Host opens an imported conversation, which sits in the `DeepSeek` project of the
-   sidebar. On older clients, or if the Host cannot open it, the Mini App opens the `~/DeepSeek`
-   folder in Finder, Explorer or the Linux file manager instead.
+8. Choose **打开 DeepSeek 项目** to go straight to what you imported. The button sits in the
+   page header at all times, even on a fresh page before any upload, and shows how many DeepSeek
+   sessions MiniMax Code already has; the result dialog has the same button. On MiniMax Code
+   3.1.11 or later the Host opens the most recent imported conversation, which sits in the
+   `DeepSeek` project of the sidebar. With nothing imported yet, on older clients, or if the Host
+   cannot open it, the Mini App opens the `~/DeepSeek` folder (creating it if needed) in Finder,
+   Explorer or the Linux file manager instead.
+9. Changed your mind? Right after an import, **撤销本次导入** in the result dialog removes exactly
+   the sessions that run added, after a confirmation. If any of them was used since (say, you
+   continued the chat), nothing is removed and the dialog asks again before **仍然撤销**.
 
 ### What an imported session contains
 
@@ -47,9 +53,12 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
 - Uploaded files are kept as references (name, size, path in the export); bytes are not copied.
 - Replies that timed out or were cut off carry a short historical error note.
 
-Before its first write, every import run takes one verified online backup of
-`runtime-state.sqlite`; sessions are then written in batches of 10, each in one transaction, with
-a read-back check after every commit. A session that cannot be imported is reported on its own and
+An import no longer copies `runtime-state.sqlite` first (on a 3.5 GB database that copy was most
+of the wait and needed as much free disk again). Instead each run keeps a small undo journal,
+`~/.minimax/deepseek-migration/<run>/undo.json`, listing the rows it inserted, the before-image of
+the one existing row it updates (the `DeepSeek` project's visibility and restore marker) and the
+files and folders it created. Sessions are written in batches of 10, each in one transaction
+together with its journal entry, with a read-back check after every commit. A session that cannot be imported is reported on its own and
 never blocks the others. Target sessions are
 keyed by a hash of the DeepSeek account id plus the session id, so importing the same export
 again (even after re-downloading it) skips what is already there.
@@ -88,18 +97,21 @@ the `~/DeepSeek` folder in the file manager instead.
   selection, `--report <temporary report>`, `--data-dir ~/.minimax`, `--agent mavis`,
   `--workspace ~/DeepSeek` and `--restore-projects` (re-shows the DeepSeek project if it was
   removed from the sidebar), plus `--batch-size 10` for apply. Its progress lines on stderr drive
-  the progress bar. One backup per import run and the batch reports go to
-  `~/.minimax/zcode-migration/`.
-- **Folder opener (fallback only):** when the Host cannot open the imported conversation, choosing
-  **打开 DeepSeek 项目** runs `open ~/DeepSeek` on macOS, `explorer.exe ~/DeepSeek` on Windows or
-  `xdg-open ~/DeepSeek` on Linux, with an argument array and no shell, and only if the folder
-  exists.
+  the progress bar. Each run's undo journal and batch reports go to
+  `~/.minimax/deepseek-migration/<run>/`; the write lock is shared with the MiniMax Code migration
+  plugin in `~/.minimax/zcode-migration/`. **撤销本次导入** runs the same script with
+  `undo --run <undo.json> --data-dir ~/.minimax` (plus `--force` after the second confirmation),
+  and the header button asks it (`project`) for the DeepSeek session count and the latest one.
+- **Folder opener (fallback only):** when nothing is imported yet or the Host cannot open the
+  imported conversation, choosing **打开 DeepSeek 项目** creates `~/DeepSeek` if missing and runs
+  `open ~/DeepSeek` on macOS, `explorer.exe ~/DeepSeek` on Windows or `xdg-open ~/DeepSeek` on
+  Linux, with an argument array and no shell.
 - **Agent and conversations:** the Mini App runs no Agent turns, reads no MiniMax Code
   conversations, and does not use `message.append`. The bundled importer creates native sessions.
 - **Network:** no direct network requests and no external hosts.
 - **Host navigation:** **打开 DeepSeek 项目** calls `window.mcode.miniapp.host.navigation.open`
-  with `{ id: 'session', sessionId, source: 'local' }` for a session this Mini App just imported,
-  only from that click. It does not declare `hostAccess` and never reads which page you are on.
+  with `{ id: 'session', sessionId, source: 'local' }` for the latest session in the DeepSeek
+  project, only from that click. It does not declare `hostAccess` and never reads which page you are on.
 - **Other capabilities:** apart from the disclosed processes, it calls no MCP or Connector tools
   and uses no microphone, camera or notifications.
 
@@ -116,7 +128,7 @@ the `~/DeepSeek` folder in the file manager instead.
 ## Credits
 
 The importer in `miniapp/python/` is adapted from the MiniMax Code team's
-`agent-session-migration` plugin (author: Insider): its storage core (lock, backup, transaction,
+`agent-session-migration` plugin (author: Insider): its storage core (lock, transaction,
 read-back, history initialization) and checkpointed job, reduced to the DeepSeek source. Target
 identities and marker files match that plugin's DeepSeek source, so sessions imported by either
 tool are recognized by the other.
