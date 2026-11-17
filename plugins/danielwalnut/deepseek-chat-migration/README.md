@@ -26,8 +26,15 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
    the toolbar selects or clears every conversation not yet imported.
 5. Sessions are always imported into `~/.minimax` for the `mavis` agent and grouped under a
    `DeepSeek` project (`~/DeepSeek`, created empty if missing); there is nothing to configure.
-6. Choose **Import as MCode sessions**. Review the generated plan, then confirm the apply step.
-   The result lists every selected session as imported, already imported (skipped) or failed.
+6. Choose **Import as MCode sessions**. While the plan is generated the button shows
+   「生成预览中…」. Review the plan, then choose **Confirm import**.
+7. While importing, the dialog and the footer show a progress bar and 「导入中 12/50」; each row
+   flips to imported as soon as its batch is written. The result lists every selected session as
+   imported, already imported (skipped) or failed.
+8. Choose **打开 DeepSeek 项目** to go straight to what you imported. On MiniMax Code 3.1.11 or
+   later the Host opens an imported conversation, which sits in the `DeepSeek` project of the
+   sidebar. On older clients, or if the Host cannot open it, the Mini App opens the `~/DeepSeek`
+   folder in Finder, Explorer or the Linux file manager instead.
 
 ### What an imported session contains
 
@@ -40,8 +47,10 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
 - Uploaded files are kept as references (name, size, path in the export); bytes are not copied.
 - Replies that timed out or were cut off carry a short historical error note.
 
-Every import batch backs up `runtime-state.sqlite` first and writes in one transaction; a session
-that cannot be imported is reported on its own and never blocks the others. Target sessions are
+Before its first write, every import run takes one verified online backup of
+`runtime-state.sqlite`; sessions are then written in batches of 10, each in one transaction, with
+a read-back check after every commit. A session that cannot be imported is reported on its own and
+never blocks the others. Target sessions are
 keyed by a hash of the DeepSeek account id plus the session id, so importing the same export
 again (even after re-downloading it) skips what is already there.
 
@@ -59,7 +68,9 @@ primary workflow.
 - MiniMax Code 3.1.11 on Windows 11
 - Node.js 22 parser and unit tests on Linux
 
-The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out window.
+The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out window. Opening
+the imported conversation from the Mini App needs MiniMax Code 3.1.11 or later; older clients get
+the `~/DeepSeek` folder in the file manager instead.
 
 ## Data & access
 
@@ -76,12 +87,21 @@ The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out 
   passed as an array without a shell: `--source <temporary ZIP>`, one `--session <id>` per
   selection, `--report <temporary report>`, `--data-dir ~/.minimax`, `--agent mavis`,
   `--workspace ~/DeepSeek` and `--restore-projects` (re-shows the DeepSeek project if it was
-  removed from the sidebar). Backups and batch reports go to `~/.minimax/zcode-migration/`.
+  removed from the sidebar), plus `--batch-size 10` for apply. Its progress lines on stderr drive
+  the progress bar. One backup per import run and the batch reports go to
+  `~/.minimax/zcode-migration/`.
+- **Folder opener (fallback only):** when the Host cannot open the imported conversation, choosing
+  **打开 DeepSeek 项目** runs `open ~/DeepSeek` on macOS, `explorer.exe ~/DeepSeek` on Windows or
+  `xdg-open ~/DeepSeek` on Linux, with an argument array and no shell, and only if the folder
+  exists.
 - **Agent and conversations:** the Mini App runs no Agent turns, reads no MiniMax Code
   conversations, and does not use `message.append`. The bundled importer creates native sessions.
 - **Network:** no direct network requests and no external hosts.
-- **Other capabilities:** apart from the disclosed `python3` process, it calls no MCP or Connector
-  tools and uses no microphone, camera, notifications, or Host navigation access.
+- **Host navigation:** **打开 DeepSeek 项目** calls `window.mcode.miniapp.host.navigation.open`
+  with `{ id: 'session', sessionId, source: 'local' }` for a session this Mini App just imported,
+  only from that click. It does not declare `hostAccess` and never reads which page you are on.
+- **Other capabilities:** apart from the disclosed processes, it calls no MCP or Connector tools
+  and uses no microphone, camera or notifications.
 
 ## Prototype limits
 

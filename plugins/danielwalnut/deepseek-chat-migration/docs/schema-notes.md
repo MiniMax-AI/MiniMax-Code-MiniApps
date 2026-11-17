@@ -44,6 +44,22 @@ temporary path under `context.dataDir`, runs `import_deepseek.py plan` into a fr
 displays it, and runs `apply` on the same report only after explicit confirmation. The command is
 spawned directly as `python3` with an argument array and no shell.
 
+`apply` takes one verified online backup per run, right before its first write (none when nothing
+is ready), then commits batches of `--batch-size` sessions (the Mini App passes 10). A preview, and
+each batch's re-check, share one open ZIP and one read snapshot of the target; the snapshot is
+closed before the batch writes. stderr carries one JSON line per step:
+`{"event":"start","total":N}`, `{"event":"backup"}` and, after every batch,
+`{"event":"progress","done":n,"total":N,"sessions":[{"sourceId","status"}]}`. The Node runtime folds
+these into `GET /api/migration/progress?planId=`, which the page polls every 500 ms, and records
+rows in `state.json` as they land.
+
+After an import, **打开 DeepSeek 项目** uses the Host navigation API documented in
+`docs/client.md` (MiniMax Code 3.1.11+): `host.navigation.open({ id: 'session', sessionId,
+source: 'local' })` from the click handler, with the first imported target session id. The Host
+has no project or folder target, so the conversation is the closest thing to "the DeepSeek
+project". Without that API, or when it rejects (other than `result_unknown`), the page calls
+`POST /api/workspace/open`, which opens `~/DeepSeek` with `open`, `explorer.exe` or `xdg-open`.
+
 Report entries are `{sourceId, status, error?, plan}` with status `ready`, `already-imported`,
 `imported`, `incompatible`, `failed` or `running`; the UI shows them as ready, skipped, imported
 or failed, and reads the target session id from `plan.targetId`.

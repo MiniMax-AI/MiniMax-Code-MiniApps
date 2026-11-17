@@ -231,5 +231,3 @@ def write_export(path, records, user_id="user-42", version=3):
                 put("chat_sessions/" + s["id"] + ".json", s)
             put("chat_sessions/" + FILES + "_files/report.pdf", b"%PDF-1.4\n")
     return path
-
-

@@ -35,7 +35,8 @@
           <article id="preview"><div class="empty">Select a conversation to preview its restored structure.</div></article>
         </div>
         <footer>
-          <span id="status">Ready</span>
+          <span id="status-wrap"><span id="status">Ready</span><span id="footer-progress" class="progress mini" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span></span>
+          <button id="footer-open" hidden>打开 DeepSeek 项目</button>
           <button id="archive" class="quiet">Export DeepSeek archive</button>
           <button id="import" disabled>导入为 MCode 会话 · Import as MCode sessions</button>
         </footer>
@@ -46,10 +47,15 @@
       <p class="eyebrow">NATIVE SESSION IMPORT · ~/.minimax · mavis</p>
       <h2 id="result-title">Import plan</h2>
       <p id="result-summary"></p>
+      <div id="progress" class="progress-block" hidden>
+        <span class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></span>
+        <small id="progress-label">准备导入…</small>
+      </div>
       <ul id="result-list" class="result-list"></ul>
       <pre id="result-stderr" hidden></pre>
       <div class="dialog-actions">
         <form method="dialog"><button class="quiet">Close</button></form>
+        <button id="open-project" hidden>打开 DeepSeek 项目</button>
         <button id="confirm-import">Confirm import</button>
       </div>
     </dialog>

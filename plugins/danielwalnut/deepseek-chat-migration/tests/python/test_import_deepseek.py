@@ -277,19 +277,62 @@ class ImporterTests(unittest.TestCase):
     def test_provenance_is_deepseek_scoped_and_hides_account_id(self):
         _, directory, _, _ = self.imported()
         marker = json.loads((directory / "deepseek-migration.json").read_text())
-        self.assertEqual((marker["sourceType"], marker["sourceId"]), ("deepseek", BRANCHY))
+        self.assertEqual(
+            (marker["sourceType"], marker["sourceId"]), ("deepseek", BRANCHY)
+        )
         self.assertNotIn("user-42", json.dumps(marker))
 
-    def test_backup_precedes_each_batch(self):
-        _, result, report = self.run_job("apply", [BRANCHY, CUT])
-        self.assertEqual(result["counts"], {"imported": 2})
-        self.assertEqual(len(report["batches"]), 1)
-        backup = Path(report["batches"][0]["backup"])
-        with contextlib.closing(sqlite3.connect(backup)) as db:
+    def test_one_verified_backup_precedes_the_whole_run(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code, result = importer.execute(
+                self.args("apply", [BRANCHY, FILES, CUT], batch_size=1)
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["counts"], {"imported": 3})
+        report = json.loads(Path(result["report"]).read_text())
+        self.assertEqual(len(report["batches"]), 3)
+        backups = {batch["backup"] for batch in report["batches"]}
+        self.assertEqual(backups, {report["backup"]})
+        with contextlib.closing(sqlite3.connect(report["backup"])) as db:
+            # Taken before the first batch: only the seeded session, none imported.
             self.assertEqual(
                 db.execute("SELECT COUNT(*) FROM local_runtime_sessions").fetchone()[0],
                 1,
             )
+            self.assertEqual(db.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
+    def test_apply_reports_progress_after_every_batch(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            importer.execute(self.args("apply", [BRANCHY, FILES, CUT], batch_size=2))
+        events = []
+        for line in stderr.getvalue().splitlines():
+            value = json.loads(line)
+            if "event" in value:
+                events.append(value)
+        self.assertEqual(
+            [e["event"] for e in events], ["start", "backup", "progress", "progress"]
+        )
+        self.assertEqual(events[0]["total"], 3)
+        self.assertEqual(
+            [(e["done"], e["total"]) for e in events[2:]], [(2, 3), (3, 3)]
+        )
+        landed = [s for e in events[2:] for s in e["sessions"]]
+        self.assertEqual(
+            sorted(s["sourceId"] for s in landed), sorted([BRANCHY, FILES, CUT])
+        )
+        self.assertEqual({s["status"] for s in landed}, {"imported"})
+
+    def test_nothing_to_write_takes_no_backup(self):
+        self.run_job("apply", [BRANCHY])
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            _, result = importer.execute(self.args("apply", [BRANCHY]))
+        report = json.loads(Path(result["report"]).read_text())
+        self.assertEqual(result["counts"], {"already-imported": 1})
+        self.assertNotIn("backup", report)
+        self.assertNotIn('"event":"backup"', stderr.getvalue())
 
     def test_idempotent_even_when_the_same_export_is_uploaded_again(self):
         first, _, _, _ = self.imported()
@@ -304,7 +347,9 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(report["sessions"][0]["plan"]["targetId"], first["targetId"])
         self.zip = write_export(self.root / "other.zip", sessions(), user_id="user-43")
         _, _, report = self.run_job("plan", [BRANCHY])
-        self.assertNotEqual(report["sessions"][0]["plan"]["targetId"], first["targetId"])
+        self.assertNotEqual(
+            report["sessions"][0]["plan"]["targetId"], first["targetId"]
+        )
 
     def test_matches_agent_session_migration_identity(self):
         # Same hash input as the plugin's DeepSeek source: "deepseek-account:<id>".
@@ -344,15 +389,28 @@ class ImporterTests(unittest.TestCase):
             {e["status"] for e in report["sessions"]} - {"imported", "failed"}, set()
         )
         with self.db() as db:
-            rows = db.execute("SELECT COUNT(*) FROM local_runtime_sessions").fetchone()[0]
+            rows = db.execute("SELECT COUNT(*) FROM local_runtime_sessions").fetchone()[
+                0
+            ]
         self.assertEqual(rows - 1, result["counts"].get("imported", 0))
 
     def test_cli_plan_then_apply_reuses_the_report(self):
         report = self.root / "cli.json"
         base = [
-            "--source", str(self.zip), "--session", BRANCHY, "--session", FILES,
-            "--report", str(report), "--data-dir", str(self.target),
-            "--agent", "mavis", "--workspace", str(self.home / "DeepSeek"),
+            "--source",
+            str(self.zip),
+            "--session",
+            BRANCHY,
+            "--session",
+            FILES,
+            "--report",
+            str(report),
+            "--data-dir",
+            str(self.target),
+            "--agent",
+            "mavis",
+            "--workspace",
+            str(self.home / "DeepSeek"),
         ]
         planned = self.cli("plan", *base)
         self.assertEqual(planned.returncode, 0, planned.stderr)
@@ -374,8 +432,15 @@ class ImporterTests(unittest.TestCase):
     def test_cli_apply_without_preview_previews_first(self):
         report = self.root / "direct.json"
         out = self.cli(
-            "apply", "--source", str(self.zip), "--session", CUT,
-            "--report", str(report), "--data-dir", str(self.target),
+            "apply",
+            "--source",
+            str(self.zip),
+            "--session",
+            CUT,
+            "--report",
+            str(report),
+            "--data-dir",
+            str(self.target),
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.loads(out.stdout)["counts"], {"imported": 1})
@@ -383,8 +448,15 @@ class ImporterTests(unittest.TestCase):
 
     def test_cli_reports_contract_errors(self):
         out = self.cli(
-            "plan", "--source", str(self.zip), "--session", BRANCHY,
-            "--report", str(self.root / "x.json"), "--data-dir", str(self.root / "missing"),
+            "plan",
+            "--source",
+            str(self.zip),
+            "--session",
+            BRANCHY,
+            "--report",
+            str(self.root / "x.json"),
+            "--data-dir",
+            str(self.root / "missing"),
         )
         self.assertEqual(out.returncode, 1)
         self.assertIn(b'"error"', out.stderr)
@@ -392,8 +464,15 @@ class ImporterTests(unittest.TestCase):
             db.execute("DELETE FROM local_runtime_sessions")
             db.commit()
         out = self.cli(
-            "plan", "--source", str(self.zip), "--session", BRANCHY,
-            "--report", str(self.root / "y.json"), "--data-dir", str(self.target),
+            "plan",
+            "--source",
+            str(self.zip),
+            "--session",
+            BRANCHY,
+            "--report",
+            str(self.root / "y.json"),
+            "--data-dir",
+            str(self.target),
         )
         self.assertEqual(out.returncode, 1)
         self.assertIn(b"initialize it in MiniMax Code first", out.stderr)

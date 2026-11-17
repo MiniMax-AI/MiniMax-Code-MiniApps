@@ -495,41 +495,44 @@ def load_source(root, ids=None):
     return load_inventory(data, wanted, selected=bool(ids))
 
 
-def load_inventory(data, ids, selected=True):
+def load_inventory(data, ids, selected=True, export=None):
+    """export: an open Export of data["root"] to reuse; otherwise one is opened here."""
+    if export is None:
+        with Export(data["root"]) as opened:
+            return load_inventory(data, ids, selected, opened)
     result = []
-    with Export(data["root"]) as export:
-        for sid in sorted(set(ids)):
-            if sid not in data["index"]:
-                raise MigrationError("Unknown DeepSeek session ID: " + sid)
-            meta, messages, histories, warnings = read_session(
-                export, sid, data["index"].get(sid)
-            )
-            if not messages or not histories["active"]:
-                if selected:
-                    raise MigrationError(
-                        "Selected DeepSeek session has no readable messages: " + sid
-                    )
-                continue
-            updated = max(
-                [meta["updated"], meta["created"]]
-                + [msg["createdAtMs"] for msg in messages]
-            )
-            item = {
-                "session": {
-                    "id": sid,
-                    "directory": default_workspace(),
-                    "title": meta["title"],
-                    "time_created": meta["created"] or messages[0]["createdAtMs"],
-                    "time_updated": updated,
-                    "pinned": meta["pinned"],
-                },
-                "messages": messages,
-                "histories": histories,
-                "desktop": None,
-                "warnings": warnings,
-            }
-            item["fingerprint"] = digest(item)
-            result.append(item)
+    for sid in sorted(set(ids)):
+        if sid not in data["index"]:
+            raise MigrationError("Unknown DeepSeek session ID: " + sid)
+        meta, messages, histories, warnings = read_session(
+            export, sid, data["index"].get(sid)
+        )
+        if not messages or not histories["active"]:
+            if selected:
+                raise MigrationError(
+                    "Selected DeepSeek session has no readable messages: " + sid
+                )
+            continue
+        updated = max(
+            [meta["updated"], meta["created"]]
+            + [msg["createdAtMs"] for msg in messages]
+        )
+        item = {
+            "session": {
+                "id": sid,
+                "directory": default_workspace(),
+                "title": meta["title"],
+                "time_created": meta["created"] or messages[0]["createdAtMs"],
+                "time_updated": updated,
+                "pinned": meta["pinned"],
+            },
+            "messages": messages,
+            "histories": histories,
+            "desktop": None,
+            "warnings": warnings,
+        }
+        item["fingerprint"] = digest(item)
+        result.append(item)
     result.sort(key=lambda x: (x["session"]["time_created"], x["session"]["id"]))
     return result
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,14 +8,19 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  applyProgressEvent,
+  BATCH_SIZE,
   buildMigrationArgs,
+  createProgress,
   defaultTargetDataDir,
   defaultWorkspace,
   IMPORTER_SCRIPT,
   importerError,
   parseMigrationReport,
+  parseProgressLine,
   runMigrationCommand,
 } from '../miniapp/node/migration.mjs';
+import { folderOpener, openFolder } from '../miniapp/node/open-folder.mjs';
 
 const python = process.env.PYTHON || 'python3';
 const FIXTURE = fileURLToPath(new URL('./python/fixture.py', import.meta.url));
@@ -41,8 +47,10 @@ test('builds the bundled importer command without a shell or plugin lookup', () 
     '--data-dir', '/home/user/.minimax',
     '--agent', 'mavis',
     '--workspace', '/home/user/DeepSeek',
+    '--batch-size', String(BATCH_SIZE),
     '--restore-projects',
   ]);
+  assert.throws(() => buildMigrationArgs({ action: 'apply', sourcePath: '/x', sessionIds: ['a'], reportPath: '/r', targetDataDir: '/t', workspace: '/w', batchSize: 0 }));
   assert.throws(() => buildMigrationArgs({ action: 'plan', sourcePath: '/x', sessionIds: ['--all'], reportPath: '/r', targetDataDir: '/t', workspace: '/w' }));
   assert.equal(defaultTargetDataDir('/home/u'), join('/home/u', '.minimax'));
   assert.equal(defaultWorkspace('/home/u'), join('/home/u', 'DeepSeek'));
@@ -67,6 +75,44 @@ test('maps importer statuses and reads the target id from the plan', () => {
   assert.equal(result.sessions[3].message, 'invalid branch');
   assert.deepEqual(result.summary, { total: 6, planned: 1, succeeded: 1, skipped: 1, failed: 3 });
   assert.deepEqual(result.backups, ['/b/runtime-state.before.sqlite']);
+  // One backup per run even when several batches name it.
+  assert.deepEqual(parseMigrationReport({ backup: '/run/b.sqlite', batches: [{ backup: '/run/b.sqlite' }, { backup: '/run/b.sqlite' }], sessions: [] }).backups, ['/run/b.sqlite']);
+});
+
+test('parses importer progress lines and folds them into page progress', () => {
+  assert.equal(parseProgressLine('{"status":"running","report":"/r"}'), null);
+  assert.equal(parseProgressLine('Traceback (most recent call last):'), null);
+  assert.equal(parseProgressLine('{"event":"progress","sessions":"nope"}').sessions.length, 0);
+  const progress = createProgress();
+  applyProgressEvent(progress, parseProgressLine('{"event":"start","total":3}'));
+  assert.deepEqual([progress.phase, progress.done, progress.total], ['starting', 0, 3]);
+  applyProgressEvent(progress, parseProgressLine('{"event":"backup"}'));
+  assert.equal(progress.phase, 'backup');
+  applyProgressEvent(progress, parseProgressLine('{"event":"progress","done":2,"total":3,"sessions":[{"sourceId":"a","status":"imported"},{"sourceId":"b","status":"already-imported"}]}'));
+  assert.deepEqual([progress.phase, progress.done, progress.total], ['importing', 2, 3]);
+  applyProgressEvent(progress, parseProgressLine('{"event":"progress","done":9,"total":3,"sessions":[{"sourceId":"c","status":"failed"}]}'));
+  assert.equal(progress.done, 3);
+  assert.deepEqual(progress.sessions, { a: 'success', b: 'skipped', c: 'failed' });
+});
+
+test('opens the DeepSeek folder with the platform file manager, no shell', async (context) => {
+  assert.deepEqual(folderOpener('/Users/u/DeepSeek', 'darwin'), { command: 'open', args: ['/Users/u/DeepSeek'] });
+  assert.deepEqual(folderOpener('C:\\Users\\u\\DeepSeek', 'win32'), { command: 'explorer.exe', args: ['C:\\Users\\u\\DeepSeek'] });
+  assert.deepEqual(folderOpener('/home/u/DeepSeek', 'linux'), { command: 'xdg-open', args: ['/home/u/DeepSeek'] });
+  const root = await mkdtemp(join(tmpdir(), 'deepseek-open-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, shell: options.shell });
+    const child = new EventEmitter();
+    child.unref = () => {};
+    queueMicrotask(() => child.emit('spawn'));
+    return child;
+  };
+  await openFolder(root, { platform: 'darwin', spawnImpl });
+  assert.deepEqual(calls, [{ command: 'open', args: [root], shell: false }]);
+  await assert.rejects(openFolder(join(root, 'missing'), { platform: 'darwin', spawnImpl }), (error) => error.code === 'folder_missing');
+  assert.equal(calls.length, 1);
 });
 
 test('extracts the importer JSON error line from stderr', () => {
@@ -110,8 +156,13 @@ db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.c
   assert.deepEqual(planned.summary, { total: 2, planned: 2, succeeded: 0, skipped: 0, failed: 0 });
   assert.equal(planned.sessions[0].title, '[From DeepSeek] 量子计算入门');
 
-  const applied = await runMigrationCommand({ ...common, action: 'apply' });
+  const events = [];
+  const applied = await runMigrationCommand({ ...common, action: 'apply', batchSize: 1, onProgress: (event) => events.push(event) });
   assert.equal(applied.ok, true);
+  // Each row is reported as soon as its batch commits, after one up-front backup.
+  assert.deepEqual(events.map((event) => event.event), ['start', 'backup', 'progress', 'progress']);
+  assert.deepEqual(events.slice(2).map((event) => [event.done, event.total]), [[1, 2], [2, 2]]);
+  assert.deepEqual(events.slice(2).flatMap((event) => event.sessions.map((item) => item.status)), ['success', 'success']);
   assert.equal(applied.state, 'completed');
   assert.deepEqual(applied.summary, { total: 2, planned: 0, succeeded: 2, skipped: 0, failed: 0 });
   assert.match(applied.sessions[0].targetSessionId, /^mvs_[0-9a-f]{32}$/);

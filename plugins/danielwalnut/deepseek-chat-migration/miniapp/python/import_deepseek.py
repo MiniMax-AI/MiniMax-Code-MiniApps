@@ -11,25 +11,33 @@ The checkpointed job below is adapted from the team's agent-session-migration pl
 Defaults: --data-dir ~/.minimax, --agent mavis, --workspace ~/DeepSeek (created when
 missing; mkdir only). `plan` writes a preview report and changes nothing else.
 `apply` resumes that report; given a report path that does not exist yet, it previews
-into it first. Every batch backs up the database before its single transaction, a
-failed session never blocks the others, and re-running is idempotent.
+into it first. Before its first write, an apply run takes one verified online backup
+of the database; each batch then commits in its own transaction, a failed session never
+blocks the others, and re-running is idempotent.
 
 Exit codes: 0 completed, 2 completed with per-session errors, 1 configuration or
 contract error, 130 interrupted. A one-line JSON summary goes to stdout, progress
-and errors to stderr; the report file holds per-session status:
+and errors to stderr; the report file holds per-session status. During apply, stderr
+carries one JSON line per step: {"event":"start","total":N}, {"event":"backup"} and,
+after each batch, {"event":"progress","done":n,"total":N,"sessions":[{sourceId,status}]}.
+Statuses:
   ready | already-imported | imported | incompatible | failed | running
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sqlite3
 import sys
+import time
 import uuid
 from pathlib import Path
 
 if sys.version_info < (3, 9):
-    sys.stderr.write('{"error":"Python 3.9 or newer is required","type":"RuntimeError"}\n')
+    sys.stderr.write(
+        '{"error":"Python 3.9 or newer is required","type":"RuntimeError"}\n'
+    )
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -70,13 +78,30 @@ def summary(report, path):
     }
 
 
-def compatible(job, data, sid):
+def emit(event, **fields):
+    """One progress line on stderr; the Mini App reads these while apply runs."""
+    m.print_result(dict(event=event, **fields), file=sys.stderr)
+    sys.stderr.flush()
+
+
+@contextlib.contextmanager
+def reader(job, data):
+    """One open export and one read snapshot of the checked target, shared by every
+    session previewed or re-checked in a step. Close it before writing."""
+    with ds.Export(data["root"]) as export:
+        with m.connect(job["target"] / "v2/sqlite/runtime-state.sqlite") as db:
+            legacy = m.check_target(db, job["config"]["agent"])
+            yield {"export": export, "db": db, "legacy": legacy}
+
+
+def compatible(job, data, sid, view):
     try:
-        items = ds.load_inventory(data, [sid])
+        items = ds.load_inventory(data, [sid], export=view["export"])
         if len(items) != 1 or not items[0]["messages"]:
             raise m.MigrationError("Selected session has no readable messages: " + sid)
-        rows = m.plan(
-            job["source"],
+        rows = m.plan_in(
+            view["db"],
+            view["legacy"],
             job["key"],
             job["target"],
             job["config"]["agent"],
@@ -185,27 +210,27 @@ def preview(job, path, ids, batch_size):
     save(path, report, create=True)
     failures = {e.get("sourceId"): e["error"] for e in discovery_errors}
     known = set(data["ids"])
-    for sid in preview_ids:
-        entry = {"sourceId": sid}
-        try:
-            if sid in failures:
-                raise m.MigrationError(failures[sid])
-            if sid not in known:
-                raise m.MigrationError("Unknown DeepSeek session ID: " + sid)
-            _, row = compatible(job, data, sid)
-            entry.update(
-                status="already-imported"
-                if row["status"] == "already-imported"
-                else "ready",
-                plan=row,
-            )
-        except ERRORS as exc:
-            entry.update(status="incompatible", error=str(exc))
-        report["sessions"].append(entry)
+    with reader(job, data) as view:
+        for sid in preview_ids:
+            entry = {"sourceId": sid}
+            try:
+                if sid in failures:
+                    raise m.MigrationError(failures[sid])
+                if sid not in known:
+                    raise m.MigrationError("Unknown DeepSeek session ID: " + sid)
+                _, row = compatible(job, data, sid, view)
+                entry.update(
+                    status="already-imported"
+                    if row["status"] == "already-imported"
+                    else "ready",
+                    plan=row,
+                )
+            except ERRORS as exc:
+                entry.update(status="incompatible", error=str(exc))
+            report["sessions"].append(entry)
     ready = sum(e["status"] == "ready" for e in report["sessions"])
-    report["estimatedBackupBytes"] = (
-        (ready + batch_size - 1) // batch_size
-    ) * database_bytes
+    # One backup per apply run, taken only when something is ready to write.
+    report["estimatedBackupBytes"] = database_bytes if ready else 0
     report["state"] = "planned"
     save(path, report)
     return report
@@ -280,6 +305,30 @@ def run_apply(job, path, report, batch_size, retry_failed, fail_after=None):
             and e["status"] in ("failed", "incompatible")
         ]
 
+        emit("start", total=len(pending))
+        run_backup = []
+
+        def backup():
+            # Taken once, under the lock, right before this run's first write. Later
+            # batches are covered by it: they only add sessions this run imports.
+            if not run_backup:
+                emit("backup")
+                directory = m.safe_directory(
+                    job["target"],
+                    m.LOCK_DIR
+                    + "/"
+                    + str(int(time.time() * 1000))
+                    + "-run-"
+                    + uuid.uuid4().hex[:8],
+                )
+                directory.mkdir(mode=0o700)
+                snapshot = m.backup_database(
+                    job["target"] / "v2/sqlite/runtime-state.sqlite", directory
+                )
+                report["backup"] = str(snapshot)
+                run_backup.append(snapshot)
+            return run_backup[0]
+
         def commit(entries, items):
             for entry in entries:
                 entry["status"] = "running"
@@ -294,6 +343,7 @@ def run_apply(job, path, report, batch_size, retry_failed, fail_after=None):
                     workspace=config["workspace"],
                     restore_projects=config["restoreProjects"],
                     fail_after=fail_after,
+                    backup=backup(),
                 )
                 report["batches"].append(
                     {
@@ -329,33 +379,46 @@ def run_apply(job, path, report, batch_size, retry_failed, fail_after=None):
             save(path, report)
             m.print_result(summary(report, path), file=sys.stderr)
 
+        done = 0
         for offset in range(0, len(pending), batch_size):
+            chunk = pending[offset : offset + batch_size]
             entries, items = [], []
-            for entry in pending[offset : offset + batch_size]:
-                sid = entry["sourceId"]
-                try:
-                    if sid in errors:
-                        raise m.MigrationError(errors[sid])
-                    loaded, row = compatible(job, data, sid)
-                    if (
-                        "plan" in entry
-                        and row["fingerprint"] != entry["plan"]["fingerprint"]
-                    ):
-                        raise m.MigrationError(
-                            "Source changed since preview; generate a new preview"
-                        )
-                    entry["plan"] = row
-                    if row["status"] == "already-imported":
-                        entry["status"] = "already-imported"
-                        entry.pop("error", None)
-                        continue
-                    entries.append(entry)
-                    items.extend(loaded)
-                except ERRORS as exc:
-                    entry.update(status="failed", error=str(exc))
+            # Re-check this batch against a fresh snapshot, then close it before writing.
+            with reader(job, data) as view:
+                for entry in chunk:
+                    sid = entry["sourceId"]
+                    try:
+                        if sid in errors:
+                            raise m.MigrationError(errors[sid])
+                        loaded, row = compatible(job, data, sid, view)
+                        if (
+                            "plan" in entry
+                            and row["fingerprint"] != entry["plan"]["fingerprint"]
+                        ):
+                            raise m.MigrationError(
+                                "Source changed since preview; generate a new preview"
+                            )
+                        entry["plan"] = row
+                        if row["status"] == "already-imported":
+                            entry["status"] = "already-imported"
+                            entry.pop("error", None)
+                            continue
+                        entries.append(entry)
+                        items.extend(loaded)
+                    except ERRORS as exc:
+                        entry.update(status="failed", error=str(exc))
             save(path, report)
             if entries:
                 commit(entries, items)
+            done += len(chunk)
+            emit(
+                "progress",
+                done=done,
+                total=len(pending),
+                sessions=[
+                    {"sourceId": e["sourceId"], "status": e["status"]} for e in chunk
+                ],
+            )
         report["state"] = (
             "completed-with-errors"
             if report["discoveryErrors"]

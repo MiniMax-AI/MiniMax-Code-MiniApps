@@ -2,7 +2,7 @@
 
 Python 3.9+, standard library only. Adapted from the storage core of MiniMax Code's
 agent-session-migration plugin (author: Insider), reduced to the DeepSeek source:
-the migration lock, per-batch online backup, single write transaction, rollback,
+the migration lock, online backup before writing, single write transaction, rollback,
 post-commit read-back and first-turn history initialization are kept as they were.
 Target identities, marker files and the lock directory match that plugin's DeepSeek
 source so imports from either tool are recognized by the other.
@@ -534,178 +534,188 @@ def plan(source, key, target, agent, items, workspace=None, restore_projects=Fal
     """Read-only preview of normalized items against the target. key: stable identity root."""
     with connect(target / "v2/sqlite/runtime-state.sqlite") as db:
         legacy_count = check_target(db, agent)
-        planned = []
-        for item in items:
-            s = item["session"]
-            sid = identity(key, s["id"])
-            created = timestamp(s["time_created"])
-            timestamp(s["time_updated"])
-            cwd = str(Path(workspace or s["directory"]).expanduser().resolve())
-            if not Path(cwd).is_dir():
-                raise MigrationError("Missing workspace; use --workspace: " + cwd)
-            rel = history_dir(sid, created)
-            directory = safe_directory(target, "v2/sessions/" + rel)
-            display, canonical, warnings = [], [], []
-            status = "new"
-            existing = db.execute(
-                "SELECT title,history_relative_dir,agent_name,created_at_ms,updated_at_ms FROM local_runtime_sessions WHERE session_id=?",
-                (sid,),
-            ).fetchone()
-            if existing:
-                marker = directory / MARKER
-                if not marker.is_file() or is_link(marker):
-                    raise MigrationError(
-                        "Existing target identity has no migration provenance: " + sid
-                    )
-                provenance = parse(marker.read_text(encoding="utf-8"), str(marker))
-                if provenance.get("fingerprint") != item["fingerprint"]:
-                    raise MigrationError(
-                        "Source changed after migration; refusing to overwrite continued target session: "
-                        + s["id"]
-                    )
-                if (
-                    existing["history_relative_dir"] != rel
-                    or existing["agent_name"] != agent
-                    or provenance.get("workspace") != cwd
-                ):
-                    raise MigrationError("Existing migration target differs: " + sid)
-                regular(directory / "messages.jsonl")
-                # Readback counts describe persisted target state, including continued turns.
-                display = [
-                    dict(row)
-                    for row in db.execute(
-                        "SELECT msg_id FROM local_runtime_message_rows WHERE session_id=?",
-                        (sid,),
-                    )
-                ]
-                with open(directory / "messages.jsonl", encoding="utf-8") as history:
-                    canonical = [
-                        parse(line, str(directory / "messages.jsonl"))
-                        for line in history
-                        if line.strip()
-                    ]
-                created = timestamp(existing["created_at_ms"])
-                if provenance.get("adapterVersion", 1) < ADAPTER_VERSION:
-                    warnings.append(
-                        "Imported by an older adapter; existing history is unchanged and is not automatically repaired"
-                    )
-                if not db.execute(
-                    "SELECT 1 FROM local_runtime_pi_history_file_migrations WHERE session_id=?",
-                    (sid,),
-                ).fetchone():
-                    raise MigrationError(
-                        "Existing import needs history repair (agent-session-migration repair --target-session): "
-                        + sid
-                    )
-                status = "already-imported"
-            elif directory.exists():
+        return plan_in(
+            db, legacy_count, key, target, agent, items, workspace, restore_projects
+        )
+
+
+def plan_in(
+    db, legacy_count, key, target, agent, items, workspace=None, restore_projects=False
+):
+    """plan() on an open read connection whose target was already checked; lets a
+    preview of many sessions share one snapshot instead of reconnecting per session."""
+    planned = []
+    for item in items:
+        s = item["session"]
+        sid = identity(key, s["id"])
+        created = timestamp(s["time_created"])
+        timestamp(s["time_updated"])
+        cwd = str(Path(workspace or s["directory"]).expanduser().resolve())
+        if not Path(cwd).is_dir():
+            raise MigrationError("Missing workspace; use --workspace: " + cwd)
+        rel = history_dir(sid, created)
+        directory = safe_directory(target, "v2/sessions/" + rel)
+        display, canonical, warnings = [], [], []
+        status = "new"
+        existing = db.execute(
+            "SELECT title,history_relative_dir,agent_name,created_at_ms,updated_at_ms FROM local_runtime_sessions WHERE session_id=?",
+            (sid,),
+        ).fetchone()
+        if existing:
+            marker = directory / MARKER
+            if not marker.is_file() or is_link(marker):
                 raise MigrationError(
-                    "Uncommitted history directory exists; inspect recovery manifest before retry: "
-                    + str(directory)
+                    "Existing target identity has no migration provenance: " + sid
                 )
-            project_state = None
-            restore_boundary = None
-            source_created = timestamp(s["time_created"])
-            updated = timestamp(
-                existing["updated_at_ms"] if existing else s["time_updated"]
-            )
-            if status == "new":
-                display, canonical, warnings = convert(item, sid)
-                project = db.execute(
-                    "SELECT project_id,hidden,extra_data_json,updated_at_ms FROM local_runtime_projects WHERE project_kind='workspace' AND workspace_dir=?",
-                    (cwd,),
-                ).fetchone()
-                if project:
-                    project_state = dict(project)
-                    removal = parse(
-                        project["extra_data_json"], "project extra data"
-                    ).get("sidebarRemoval")
-                    cutoff = (
-                        timestamp(removal["atMs"])
-                        if isinstance(removal, dict) and "atMs" in removal
-                        else None
-                    )
-                    if removal is not None and cutoff is None:
-                        raise MigrationError("Unsupported project removal boundary")
-                    if project["hidden"]:
-                        latest = (
-                            db.execute(
-                                "SELECT MAX(created_at_ms) FROM local_runtime_sessions WHERE project_id=?",
-                                (project["project_id"],),
-                            ).fetchone()[0]
-                            or 0
-                        )
-                        cutoff = max(
-                            int(time.time() * 1000),
-                            project["updated_at_ms"],
-                            cutoff or 0,
-                            latest,
-                        )
-                        at_boundary = [
-                            r[0]
-                            for r in db.execute(
-                                "SELECT session_id FROM local_runtime_sessions WHERE project_id=? AND created_at_ms=?",
-                                (project["project_id"], cutoff),
-                            )
-                        ]
-                        restore_boundary = {"atMs": cutoff, "boundaryIds": at_boundary}
-                    removed = cutoff is not None and (
-                        created < cutoff
-                        or created == cutoff
-                        and sid in (restore_boundary or removal).get("boundaryIds", [])
-                    )
-                    if project["hidden"] or removed:
-                        if not restore_projects:
-                            raise MigrationError(
-                                "Workspace project was removed; use --restore-projects only after explicitly accepting restoration: "
-                                + cwd
-                            )
-                        if removed:
-                            created = max(int(time.time() * 1000), cutoff + 1)
-                        updated = max(updated, created)
-                        warnings.append(
-                            "Project explicitly restored; original source timestamps remain in provenance and source archive"
-                        )
-            if legacy_count:
+            provenance = parse(marker.read_text(encoding="utf-8"), str(marker))
+            if provenance.get("fingerprint") != item["fingerprint"]:
+                raise MigrationError(
+                    "Source changed after migration; refusing to overwrite continued target session: "
+                    + s["id"]
+                )
+            if (
+                existing["history_relative_dir"] != rel
+                or existing["agent_name"] != agent
+                or provenance.get("workspace") != cwd
+            ):
+                raise MigrationError("Existing migration target differs: " + sid)
+            regular(directory / "messages.jsonl")
+            # Readback counts describe persisted target state, including continued turns.
+            display = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT msg_id FROM local_runtime_message_rows WHERE session_id=?",
+                    (sid,),
+                )
+            ]
+            with open(directory / "messages.jsonl", encoding="utf-8") as history:
+                canonical = [
+                    parse(line, str(directory / "messages.jsonl"))
+                    for line in history
+                    if line.strip()
+                ]
+            created = timestamp(existing["created_at_ms"])
+            if provenance.get("adapterVersion", 1) < ADAPTER_VERSION:
                 warnings.append(
-                    "Preserved existing legacy columnar_version=0 rows: "
-                    + str(legacy_count)
+                    "Imported by an older adapter; existing history is unchanged and is not automatically repaired"
                 )
-            source_title = item["desktop"]["title"] if item["desktop"] else s["title"]
-            prefix = "[From " + LABEL + "]"
-            title = source_title
-            if existing:
-                title = existing["title"]
-            elif not title.startswith(prefix):
-                title = prefix + " " + title
-            planned.append(
-                {
-                    "sourceCreatedAtMs": source_created,
-                    "sourceUpdatedAtMs": timestamp(s["time_updated"]),
-                    "projectState": project_state,
-                    "restoreBoundary": restore_boundary,
-                    "canonicalMessageCount": len(canonical),
-                    "sourceId": s["id"],
-                    "targetId": sid,
-                    "title": title,
-                    "archived": bool(
-                        item["desktop"]["archived"]
-                        if item["desktop"]
-                        else dict(s).get("time_archived")
-                    ),
-                    "workspace": cwd,
-                    "historyRelativeDir": rel,
-                    "createdAtMs": created,
-                    "updatedAtMs": updated,
-                    "fingerprint": item["fingerprint"],
-                    "messageCount": len(display),
-                    "warnings": warnings,
-                    "status": status,
-                    "item": item,
-                    "display": display,
-                    "canonical": canonical,
-                }
+            if not db.execute(
+                "SELECT 1 FROM local_runtime_pi_history_file_migrations WHERE session_id=?",
+                (sid,),
+            ).fetchone():
+                raise MigrationError(
+                    "Existing import needs history repair (agent-session-migration repair --target-session): "
+                    + sid
+                )
+            status = "already-imported"
+        elif directory.exists():
+            raise MigrationError(
+                "Uncommitted history directory exists; inspect recovery manifest before retry: "
+                + str(directory)
             )
+        project_state = None
+        restore_boundary = None
+        source_created = timestamp(s["time_created"])
+        updated = timestamp(
+            existing["updated_at_ms"] if existing else s["time_updated"]
+        )
+        if status == "new":
+            display, canonical, warnings = convert(item, sid)
+            project = db.execute(
+                "SELECT project_id,hidden,extra_data_json,updated_at_ms FROM local_runtime_projects WHERE project_kind='workspace' AND workspace_dir=?",
+                (cwd,),
+            ).fetchone()
+            if project:
+                project_state = dict(project)
+                removal = parse(project["extra_data_json"], "project extra data").get(
+                    "sidebarRemoval"
+                )
+                cutoff = (
+                    timestamp(removal["atMs"])
+                    if isinstance(removal, dict) and "atMs" in removal
+                    else None
+                )
+                if removal is not None and cutoff is None:
+                    raise MigrationError("Unsupported project removal boundary")
+                if project["hidden"]:
+                    latest = (
+                        db.execute(
+                            "SELECT MAX(created_at_ms) FROM local_runtime_sessions WHERE project_id=?",
+                            (project["project_id"],),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                    cutoff = max(
+                        int(time.time() * 1000),
+                        project["updated_at_ms"],
+                        cutoff or 0,
+                        latest,
+                    )
+                    at_boundary = [
+                        r[0]
+                        for r in db.execute(
+                            "SELECT session_id FROM local_runtime_sessions WHERE project_id=? AND created_at_ms=?",
+                            (project["project_id"], cutoff),
+                        )
+                    ]
+                    restore_boundary = {"atMs": cutoff, "boundaryIds": at_boundary}
+                removed = cutoff is not None and (
+                    created < cutoff
+                    or created == cutoff
+                    and sid in (restore_boundary or removal).get("boundaryIds", [])
+                )
+                if project["hidden"] or removed:
+                    if not restore_projects:
+                        raise MigrationError(
+                            "Workspace project was removed; use --restore-projects only after explicitly accepting restoration: "
+                            + cwd
+                        )
+                    if removed:
+                        created = max(int(time.time() * 1000), cutoff + 1)
+                    updated = max(updated, created)
+                    warnings.append(
+                        "Project explicitly restored; original source timestamps remain in provenance and source archive"
+                    )
+        if legacy_count:
+            warnings.append(
+                "Preserved existing legacy columnar_version=0 rows: "
+                + str(legacy_count)
+            )
+        source_title = item["desktop"]["title"] if item["desktop"] else s["title"]
+        prefix = "[From " + LABEL + "]"
+        title = source_title
+        if existing:
+            title = existing["title"]
+        elif not title.startswith(prefix):
+            title = prefix + " " + title
+        planned.append(
+            {
+                "sourceCreatedAtMs": source_created,
+                "sourceUpdatedAtMs": timestamp(s["time_updated"]),
+                "projectState": project_state,
+                "restoreBoundary": restore_boundary,
+                "canonicalMessageCount": len(canonical),
+                "sourceId": s["id"],
+                "targetId": sid,
+                "title": title,
+                "archived": bool(
+                    item["desktop"]["archived"]
+                    if item["desktop"]
+                    else dict(s).get("time_archived")
+                ),
+                "workspace": cwd,
+                "historyRelativeDir": rel,
+                "createdAtMs": created,
+                "updatedAtMs": updated,
+                "fingerprint": item["fingerprint"],
+                "messageCount": len(display),
+                "warnings": warnings,
+                "status": status,
+                "item": item,
+                "display": display,
+                "canonical": canonical,
+            }
+        )
     return planned
 
 
@@ -788,6 +798,28 @@ def apply(
         )
 
 
+def backup_database(dbfile, directory):
+    """Online backup of the whole target DB into directory, verified twice: once on
+    the backup connection and once reopened read-only from disk."""
+    path = directory / "runtime-state.before.sqlite"
+    with connect(dbfile) as original:
+        backup = sqlite3.connect(path)
+        try:
+            original.backup(backup)
+            mode = backup.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+            if mode.lower() != "delete":
+                raise MigrationError("Could not finalize standalone database backup")
+            if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise MigrationError("Target backup integrity check failed")
+        finally:
+            backup.close()
+    os.chmod(path, 0o600)
+    with connect(path) as backup_check:
+        if backup_check.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise MigrationError("Target backup integrity check failed")
+    return path
+
+
 def _apply_locked(
     source,
     key,
@@ -797,7 +829,10 @@ def _apply_locked(
     workspace=None,
     restore_projects=False,
     fail_after=None,
+    backup=None,
 ):
+    # backup: a verified backup this apply run already took under the same lock.
+    # Without one, each call backs up the database before its transaction.
     # Files precede the DB commit. A failed/crashed import never publishes partial DB rows.
     # Orphan files are retained with an explicit recovery report, never mistaken for success.
     lock = safe_directory(target, LOCK_DIR)
@@ -826,23 +861,10 @@ def _apply_locked(
         }
         private_write(report_file, compact(report) + "\n")
         dbfile = target / "v2/sqlite/runtime-state.sqlite"
-        with connect(dbfile) as original:
-            backup = sqlite3.connect(batch / "runtime-state.before.sqlite")
-            try:
-                original.backup(backup)
-                mode = backup.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
-                if mode.lower() != "delete":
-                    raise MigrationError(
-                        "Could not finalize standalone database backup"
-                    )
-                if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                    raise MigrationError("Target backup integrity check failed")
-            finally:
-                backup.close()
-        os.chmod(batch / "runtime-state.before.sqlite", 0o600)
-        with connect(batch / "runtime-state.before.sqlite") as backup_check:
-            if backup_check.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise MigrationError("Target backup integrity check failed")
+        if backup is None:
+            backup = backup_database(dbfile, batch)
+        elif not Path(backup).is_file() or is_link(Path(backup)):
+            raise MigrationError("Run backup is missing: " + str(backup))
         with connect(dbfile, True) as db:
             db.execute("BEGIN IMMEDIATE")
             check_target(db, agent)
@@ -1053,7 +1075,7 @@ def _apply_locked(
         return {
             "status": "imported",
             "imported": len(new),
-            "backup": str(batch / "runtime-state.before.sqlite"),
+            "backup": str(backup),
             "report": str(report_file),
             "sessions": public_plan(verified),
         }

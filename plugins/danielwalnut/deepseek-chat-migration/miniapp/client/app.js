@@ -6,7 +6,10 @@ const state = {
   selected: new Set(),
   active: null,
   planId: null,
+  busy: false,
+  openTarget: null,
 };
+const POLL_MS = 500;
 const LABELS = { planned: 'ready', success: 'imported', skipped: 'already imported · skipped', failed: 'failed' };
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -69,7 +72,7 @@ function renderSelectAll() {
   $('#select-label').textContent = count ? `已选 ${count}` : '全选';
 }
 
-function render() {
+function render({ preview = true } = {}) {
   renderSelectAll();
   $('#list').innerHTML = filtered().map((conversation) => {
     const imported = state.imported.has(conversation.stableId);
@@ -90,7 +93,7 @@ function render() {
       render();
     });
   }
-  renderPreview();
+  if (preview) renderPreview();
 }
 
 function renderPreview() {
@@ -117,12 +120,29 @@ function renderBlock(block) {
   return `<details><summary>${esc(block.label || 'Notice')}</summary>${esc(block.text)}</details>`;
 }
 
+/** Spinner + a short label while a step runs; the original label comes back after. */
+function setBusy(button, busy, label) {
+  if (busy) {
+    button.dataset.label ??= button.textContent;
+    button.textContent = label;
+  } else if (button.dataset.label !== undefined) {
+    button.textContent = button.dataset.label;
+    delete button.dataset.label;
+  }
+  button.classList.toggle('busy', busy);
+  button.setAttribute('aria-busy', String(busy));
+}
+
 async function planImport() {
   const selected = state.conversations.filter((item) => state.selected.has(item.stableId));
   if (!selected.length) return setStatus('Select at least one conversation to import.', true);
+  if (state.busy) return;
+  state.busy = true;
   $('#import').disabled = true;
+  setBusy($('#import'), true, '生成预览中…');
+  showOpenProject(false);
   try {
-    setStatus(`Planning ${selected.length} native MCode session import${selected.length === 1 ? '' : 's'}…`);
+    setStatus(`生成预览中… · ${selected.length} 个会话`);
     const result = await api('/api/migration/plan', {
       method: 'POST',
       body: JSON.stringify({
@@ -131,7 +151,9 @@ async function planImport() {
     });
     state.planId = result.planId;
     renderMigrationResult('Import plan', result);
+    renderProgress(null);
     $('#confirm-import').disabled = !result.summary.planned;
+    $('#confirm-import').hidden = false;
     $('#migration-result').showModal();
     setStatus(result.summary.planned
       ? `${result.summary.planned} ready to import. Review the plan before importing.`
@@ -139,32 +161,144 @@ async function planImport() {
   } catch (error) {
     setStatus(error.message, true);
   } finally {
+    state.busy = false;
+    setBusy($('#import'), false);
     $('#import').disabled = false;
   }
 }
 
+function progressLabel(progress) {
+  if (progress.phase === 'backup') return '正在备份数据库…';
+  if (progress.phase === 'importing' || progress.phase === 'done') return `导入中 ${progress.done}/${progress.total}`;
+  return '准备导入…';
+}
+
+/** Dialog bar + footer status while apply runs; null hides both bars. */
+function renderProgress(progress) {
+  for (const id of ['#progress', '#footer-progress']) $(id).hidden = !progress;
+  if (!progress) return;
+  const ratio = progress.total ? progress.done / progress.total : 0;
+  const waiting = progress.phase !== 'importing' && progress.phase !== 'done';
+  for (const bar of document.querySelectorAll('.progress')) {
+    bar.classList.toggle('waiting', waiting);
+    bar.querySelector('i').style.width = waiting ? '' : `${Math.round(ratio * 100)}%`;
+    bar.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+  }
+  const label = progressLabel(progress);
+  $('#progress-label').textContent = label;
+  setStatus(label);
+}
+
+function markLanded(progress) {
+  for (const item of progress.sessions || []) {
+    const row = document.querySelector(`#result-list li[data-id="${CSS.escape(item.sessionId)}"]`);
+    if (!row || row.classList.contains(item.status)) continue;
+    row.className = item.status;
+    row.querySelector('span').textContent = LABELS[item.status] || item.status;
+  }
+  let changed = false;
+  for (const stableId of progress.imported || []) {
+    if (state.imported.has(stableId)) continue;
+    state.imported.add(stableId);
+    state.selected.delete(stableId);
+    changed = true;
+  }
+  if (changed) render({ preview: false });
+}
+
 async function applyImport() {
-  if (!state.planId) return;
+  if (!state.planId || state.busy) return;
+  const planId = state.planId;
+  state.busy = true;
   $('#confirm-import').disabled = true;
+  $('#import').disabled = true;
+  setBusy($('#confirm-import'), true, '导入中…');
+  $('#result-title').textContent = 'Importing…';
+  renderProgress({ phase: 'starting', done: 0, total: 0 });
+  let polling = true;
+  const poll = async () => {
+    while (polling) {
+      try {
+        const progress = await api(`/api/migration/progress?planId=${encodeURIComponent(planId)}`);
+        if (polling) {
+          renderProgress(progress);
+          markLanded(progress);
+        }
+      } catch {
+        // Not started yet or already finished; the apply response is authoritative.
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+  };
+  const poller = poll();
   try {
-    setStatus('Importing native MCode sessions…');
     const result = await api('/api/migration/apply', {
       method: 'POST',
-      body: JSON.stringify({ planId: state.planId }),
+      body: JSON.stringify({ planId }),
     });
+    polling = false;
+    await poller;
     for (const stableId of result.imported || []) state.imported.add(stableId);
     state.selected = new Set([...state.selected].filter((stableId) => !state.imported.has(stableId)));
     state.planId = null;
-    render();
+    render({ preview: false });
     renderMigrationResult('Import result', result);
-    $('#confirm-import').disabled = true;
+    renderProgress(null);
+    $('#confirm-import').hidden = true;
+    const landed = (result.sessions || []).find((item) => item.status === 'success' && item.targetSessionId)
+      || (result.sessions || []).find((item) => item.status === 'skipped' && item.targetSessionId);
+    state.openTarget = landed?.targetSessionId || null;
+    showOpenProject(Boolean(landed));
     const skipped = result.summary.skipped ? `, ${result.summary.skipped} already imported` : '';
     setStatus(result.summary.failed
       ? `Imported ${result.summary.succeeded}${skipped}, ${result.summary.failed} failed.`
       : `Imported ${result.summary.succeeded} MCode session${result.summary.succeeded === 1 ? '' : 's'}${skipped}.`, result.summary.failed > 0);
   } catch (error) {
+    polling = false;
+    await poller;
+    renderProgress(null);
+    $('#confirm-import').disabled = false;
+    setStatus(error.message, true);
+  } finally {
+    state.busy = false;
+    setBusy($('#confirm-import'), false);
+    $('#import').disabled = false;
+  }
+}
+
+function showOpenProject(visible) {
+  for (const id of ['#open-project', '#footer-open']) $(id).hidden = !visible;
+}
+
+async function openWorkspaceFolder() {
+  try {
+    const result = await api('/api/workspace/open', { method: 'POST' });
+    setStatus(`已在文件管理器中打开 ${result.path}`);
+  } catch (error) {
     setStatus(error.message, true);
   }
+}
+
+/**
+ * Opens an imported conversation, which lives in the DeepSeek project, through the
+ * Host (MiniMax Code 3.1.11+). Must run straight from the click: the Host checks the
+ * user gesture. Older clients, or a Host that cannot open it, get ~/DeepSeek in the
+ * file manager instead.
+ */
+function openProject() {
+  const host = window.mcode?.miniapp?.host;
+  const sessionId = state.openTarget;
+  if (typeof host?.navigation?.open !== 'function' || !sessionId) return void openWorkspaceFolder();
+  host.navigation.open({ id: 'session', sessionId, source: 'local' }).then((result) => {
+    if (result?.status === 'opened') {
+      if ($('#migration-result').open) $('#migration-result').close();
+      setStatus('已打开 DeepSeek 项目里导入的会话。');
+    }
+  }, (error) => {
+    // result_unknown: the Host may still open it; do not open a second place.
+    if (error?.code === 'result_unknown') return setStatus('MiniMax Code 没有回应打开请求，请在侧栏的 DeepSeek 项目里查看。', true);
+    return openWorkspaceFolder();
+  });
 }
 
 function renderMigrationResult(title, result) {
@@ -178,7 +312,7 @@ function renderMigrationResult(title, result) {
   $('#result-summary').textContent = parts.join(' · ');
   $('#result-list').innerHTML = (result.sessions || []).map((item) => {
     const conversation = state.conversations.find((entry) => entry.sourceId === item.sessionId);
-    return `<li class="${esc(item.status)}"><b>${esc(conversation?.title || item.sessionId)}</b><span>${esc(LABELS[item.status] || item.status)}${item.message ? ` · ${esc(item.message)}` : ''}</span></li>`;
+    return `<li class="${esc(item.status)}" data-id="${esc(item.sessionId)}"><b>${esc(conversation?.title || item.sessionId)}</b><span>${esc(LABELS[item.status] || item.status)}${item.message ? ` · ${esc(item.message)}` : ''}</span></li>`;
   }).join('');
   $('#result-stderr').textContent = result.error || '';
   $('#result-stderr').hidden = !result.error;
@@ -211,6 +345,8 @@ $('#select-all').addEventListener('change', (event) => {
 $('#import').addEventListener('click', planImport);
 $('#archive').addEventListener('click', exportArchive);
 $('#confirm-import').addEventListener('click', applyImport);
+$('#open-project').addEventListener('click', openProject);
+$('#footer-open').addEventListener('click', openProject);
 for (const eventName of ['dragenter', 'dragover']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.add('drag'); });
 for (const eventName of ['dragleave', 'drop']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.remove('drag'); });
 $('#drop').addEventListener('drop', (event) => event.dataTransfer.files[0] && openFile(event.dataTransfer.files[0]).catch((error) => setStatus(error.message, true)));

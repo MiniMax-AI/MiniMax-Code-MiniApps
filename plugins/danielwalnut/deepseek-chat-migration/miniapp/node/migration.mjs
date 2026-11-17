@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const MAX_OUTPUT = 64 * 1024;
+const MAX_LINE = 1024 * 1024;
+/** Sessions per write transaction; each batch commit is one progress step in the UI. */
+export const BATCH_SIZE = 10;
 
 /** The importer ships inside this Mini App; no other plugin is needed. */
 export const IMPORTER_SCRIPT = fileURLToPath(new URL('../python/import_deepseek.py', import.meta.url));
@@ -33,6 +36,7 @@ export function buildMigrationArgs({
   targetDataDir,
   agentName = TARGET_AGENT,
   workspace,
+  batchSize = BATCH_SIZE,
 }) {
   if (action !== 'plan' && action !== 'apply') throw migrationError('invalid_action');
   if (!Array.isArray(sessionIds) || !sessionIds.length || sessionIds.length > 1000) {
@@ -50,6 +54,7 @@ export function buildMigrationArgs({
     '--data-dir', targetDataDir,
     '--agent', validateAgentName(agentName),
     '--workspace', workspace,
+    '--batch-size', String(validateBatchSize(batchSize)),
     // Imports go to the DeepSeek project; if it was removed from the sidebar,
     // importing selected chats into it brings it back.
     '--restore-projects',
@@ -70,10 +75,18 @@ export async function runMigrationCommand({
   targetDataDir = defaultTargetDataDir(),
   agentName = TARGET_AGENT,
   workspace = defaultWorkspace(),
+  batchSize = BATCH_SIZE,
   signal,
+  onProgress,
 }) {
-  const args = buildMigrationArgs({ scriptPath, action, sourcePath, sessionIds, reportPath, targetDataDir, agentName, workspace });
-  const processResult = await spawnAndWait(python, args, signal);
+  const args = buildMigrationArgs({ scriptPath, action, sourcePath, sessionIds, reportPath, targetDataDir, agentName, workspace, batchSize });
+  const onLine = typeof onProgress === 'function'
+    ? (line) => {
+      const event = parseProgressLine(line);
+      if (event) onProgress(event);
+    }
+    : null;
+  const processResult = await spawnAndWait(python, args, signal, onLine);
   let report;
   try {
     report = JSON.parse(await readFile(reportPath, 'utf8'));
@@ -147,8 +160,52 @@ export function parseMigrationReport(report, requestedIds = []) {
       failed: count('failed'),
     },
     state: typeof report?.state === 'string' ? report.state : '',
-    backups: Array.isArray(report?.batches) ? report.batches.map((batch) => batch?.backup).filter(Boolean) : [],
+    // One backup per apply run; every batch of that run names the same file.
+    backups: [...new Set([report?.backup, ...(Array.isArray(report?.batches) ? report.batches.map((batch) => batch?.backup) : [])].filter((value) => typeof value === 'string' && value))],
   };
+}
+
+/**
+ * One stderr line from `apply`: `{"event":"start"|"backup"|"progress", ...}`.
+ * Anything else (summaries, tracebacks) is not progress and yields null.
+ */
+export function parseProgressLine(line) {
+  let value;
+  try {
+    value = JSON.parse(String(line).trim());
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const count = (n) => Number.isInteger(n) && n >= 0 ? n : 0;
+  if (value.event === 'start') return { event: 'start', total: count(value.total) };
+  if (value.event === 'backup') return { event: 'backup' };
+  if (value.event !== 'progress') return null;
+  const sessions = (Array.isArray(value.sessions) ? value.sessions : [])
+    .filter((item) => item && typeof item.sourceId === 'string')
+    .map((item) => ({ sessionId: item.sourceId, status: STATUS[item.status] || 'failed' }));
+  return { event: 'progress', done: count(value.done), total: count(value.total), sessions };
+}
+
+/** Folds progress events into what the page polls: phase, done/total, landed rows. */
+export function createProgress(total = 0) {
+  return { phase: 'starting', done: 0, total, sessions: {} };
+}
+
+export function applyProgressEvent(progress, event) {
+  if (!event) return progress;
+  if (event.event === 'start') {
+    progress.phase = 'starting';
+    progress.total = event.total;
+  } else if (event.event === 'backup') {
+    progress.phase = 'backup';
+  } else if (event.event === 'progress') {
+    progress.phase = 'importing';
+    progress.done = Math.min(event.done, event.total);
+    progress.total = event.total;
+    for (const item of event.sessions) progress.sessions[item.sessionId] = item.status;
+  }
+  return progress;
 }
 
 /** The importer prints `{"error": ...}` as JSON on stderr for contract errors. */
@@ -173,6 +230,11 @@ function validateSessionId(value) {
   return value;
 }
 
+function validateBatchSize(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 100) throw migrationError('invalid_arguments', { message: 'batchSize must be 1-100' });
+  return value;
+}
+
 function validateAgentName(value) {
   if (typeof value !== 'string' || !value.trim() || value.trim().startsWith('-') || value.length > 128
     || /[\u0000-\u001f\u007f/\\]/.test(value)) {
@@ -181,7 +243,7 @@ function validateAgentName(value) {
   return value.trim();
 }
 
-function spawnAndWait(command, args, signal) {
+function spawnAndWait(command, args, signal, onLine) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       shell: false,
@@ -190,9 +252,24 @@ function spawnAndWait(command, args, signal) {
       signal,
     });
     let stderr = '';
+    let pending = '';
+    const deliver = (line) => {
+      if (!onLine || !line) return;
+      try {
+        onLine(line);
+      } catch {
+        // A broken listener must not break the import it is watching.
+      }
+    };
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => {
       if (stderr.length < MAX_OUTPUT) stderr += chunk.slice(0, MAX_OUTPUT - stderr.length);
+      if (!onLine) return;
+      pending += chunk;
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      if (pending.length > MAX_LINE) pending = '';
+      for (const line of lines) deliver(line);
     });
     child.once('error', (error) => {
       if (error?.code === 'ENOENT') {
@@ -204,6 +281,7 @@ function spawnAndWait(command, args, signal) {
       reject(migrationError(error?.name === 'AbortError' ? 'migration_cancelled' : 'migration_spawn_failed'));
     });
     child.once('close', (exitCode) => {
+      deliver(pending);
       resolvePromise({ exitCode: exitCode ?? -1, stderr: stderr.trim() });
     });
   });

@@ -8,11 +8,14 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import {
+  applyProgressEvent,
+  createProgress,
   defaultTargetDataDir,
   defaultWorkspace,
   runMigrationCommand,
   TARGET_AGENT,
 } from './migration.mjs';
+import { openFolder } from './open-folder.mjs';
 
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_ZIP_BODY = 1024 * 1024 * 1024;
@@ -25,6 +28,22 @@ export async function start(context) {
   const clientRoot = join(context.pluginRoot, 'miniapp/client');
   let source = null;
   const pendingPlans = new Map();
+  // planId -> live apply progress; the page polls it while apply runs.
+  const progressByPlan = new Map();
+  let persisting = Promise.resolve();
+  const persist = () => {
+    persisting = persisting.then(() => saveState(statePath, state)).catch((error) => {
+      context.logger.warn(`state save failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+    return persisting;
+  };
+  const remember = (selection, item) => {
+    state.imported[selection.stableId] = {
+      sourceId: selection.id,
+      targetSessionId: item.targetSessionId ?? state.imported[selection.stableId]?.targetSessionId ?? null,
+      importedAt: new Date().toISOString(),
+    };
+  };
 
   const server = createServer(async (request, response) => {
     try {
@@ -55,6 +74,7 @@ export async function start(context) {
         }
         source = { dir, path };
         pendingPlans.clear();
+        progressByPlan.clear();
         return json(response, 200, { uploaded: true });
       }
       if (request.method === 'POST' && url.pathname === '/api/migration/plan') {
@@ -78,30 +98,71 @@ export async function start(context) {
         const body = await readJson(request);
         const plan = typeof body.planId === 'string' ? pendingPlans.get(body.planId) : null;
         if (!plan) return json(response, 409, { error: 'plan_not_found' });
-        // Apply resumes the previewed report: same sessions, same options.
-        const result = await runMigrationCommand({
-          action: 'apply',
-          sourcePath: source.path,
-          sessionIds: plan.selections.map((item) => item.id),
-          reportPath: plan.reportPath,
-          signal: context.signal,
-        });
-        const statusById = new Map(result.sessions.map((item) => [item.sessionId, item]));
+        if (plan.running) return json(response, 409, { error: 'apply_running', message: '这批会话正在导入。' });
+        plan.running = true;
+        const bySource = new Map(plan.selections.map((item) => [item.id, item]));
+        const progress = createProgress();
+        progress.imported = [];
+        progressByPlan.set(body.planId, progress);
+        let result;
+        try {
+          // Apply resumes the previewed report: same sessions, same options.
+          result = await runMigrationCommand({
+            action: 'apply',
+            sourcePath: source.path,
+            sessionIds: plan.selections.map((item) => item.id),
+            reportPath: plan.reportPath,
+            signal: context.signal,
+            onProgress: (event) => {
+              applyProgressEvent(progress, event);
+              if (event.event !== 'progress') return;
+              let landed = false;
+              for (const item of event.sessions) {
+                const selection = bySource.get(item.sessionId);
+                if (!selection || (item.status !== 'success' && item.status !== 'skipped')) continue;
+                if (!progress.imported.includes(selection.stableId)) progress.imported.push(selection.stableId);
+                remember(selection, item);
+                landed = true;
+              }
+              // Rows that landed stay imported even if the runtime stops mid-run.
+              if (landed) void persist();
+            },
+          });
+        } catch (error) {
+          progress.phase = 'failed';
+          plan.running = false;
+          throw error;
+        }
         const imported = [];
-        for (const selection of plan.selections) {
-          const item = statusById.get(selection.id);
-          if (item && (item.status === 'success' || item.status === 'skipped')) {
-            state.imported[selection.stableId] = {
-              sourceId: selection.id,
-              targetSessionId: item.targetSessionId,
-              importedAt: new Date().toISOString(),
-            };
+        for (const item of result.sessions) {
+          const selection = bySource.get(item.sessionId);
+          if (selection && (item.status === 'success' || item.status === 'skipped')) {
+            remember(selection, item);
             imported.push(selection.stableId);
           }
         }
-        await saveState(statePath, state);
+        await persist();
+        progress.phase = 'done';
+        progress.done = progress.total;
+        progress.imported = imported;
         pendingPlans.delete(body.planId);
         return json(response, 200, { imported, ...result });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/migration/progress') {
+        const progress = progressByPlan.get(url.searchParams.get('planId') ?? '');
+        if (!progress) return json(response, 404, { error: 'progress_not_found' });
+        return json(response, 200, {
+          phase: progress.phase,
+          done: progress.done,
+          total: progress.total,
+          sessions: Object.entries(progress.sessions).map(([sessionId, status]) => ({ sessionId, status })),
+          imported: progress.imported,
+        });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/workspace/open') {
+        // Fallback when the Host cannot open the imported session itself.
+        await openFolder(defaultWorkspace());
+        return json(response, 200, { opened: true, path: defaultWorkspace() });
       }
       return json(response, 404, { error: 'not_found' });
     } catch (error) {
