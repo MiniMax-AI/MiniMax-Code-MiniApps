@@ -14,6 +14,8 @@ import {
   runMigrationCommand,
 } from './migration.mjs';
 
+const TARGET_AGENT = 'mavis';
+
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_ZIP_BODY = 1024 * 1024 * 1024;
 const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js']);
@@ -72,8 +74,8 @@ export async function start(context) {
             message: 'Install the agent-session-migration plugin, then reopen this Mini App.',
           });
         }
-        const targetDataDir = normalizeTargetDataDir(body.targetDataDir);
-        const agentName = readAgentName(body.agentName);
+        const targetDataDir = defaultTargetDataDir();
+        const agentName = TARGET_AGENT;
         const reportPath = join(source.dir, `plan-${randomUUID()}.json`);
         const result = await runMigrationCommand({
           scriptPath: join(pluginRoot, 'scripts', 'migrate.py'),
@@ -160,14 +162,6 @@ function readSelections(value) {
     }
     return { id: item.id, stableId: item.stableId };
   });
-}
-
-function readAgentName(value) {
-  if (typeof value !== 'string' || !value.trim() || value.trim().startsWith('-') || value.length > 128
-    || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw requestError('agent_name_required');
-  }
-  return value.trim();
 }
 
 async function loadState(path) {

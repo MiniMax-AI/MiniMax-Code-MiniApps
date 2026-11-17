@@ -33,9 +33,8 @@ The app does not use the scraping or authenticated-fetch paths found in some com
 
 The Mini App runtime context documented by this repository exposes `context.dataDir`, but that is
 the plugin's private state directory and is not the MiniMax Code target data directory. It exposes
-no active Agent name. Therefore the migration page defaults the target to the current user's
-`~/.minimax` directory and requires an Agent-name input. Both values are persisted in the private
-plugin state after a successful plan.
+no active Agent name. The migration therefore always targets the current user's `~/.minimax`
+directory and the `mavis` agent; neither is user-configurable.
 
 The runtime looks for `agent-session-migration/scripts/migrate.py` below
 `~/.minimax/plugins/` and common marketplace/cache roots. The DeepSeek adapter belongs to that

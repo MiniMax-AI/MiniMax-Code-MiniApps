@@ -21,7 +21,7 @@ DeepSeek 会话迁移专门处理 DeepSeek 网页版的官方导出包。它会�
 3. 在 MiniMax Code 里让 Agent 安装这个 Mini App。
 4. 打开 **DeepSeek Chat Migration**，选择刚才下载的 DeepSeek ZIP。
 5. 预览恢复结果，勾选要迁移的会话。
-6. 填写目标 MCode 数据目录和 Agent 名称。数据目录默认是 `~/.minimax`；目前 Mini App Host 不会直接提供这两个值。
+6. 会话固定导入到 `~/.minimax` 下的 `mavis` agent，不需要额外配置。可以用「全选」勾上所有还没导入的对话，用「全不选」清空。
 7. 点 **导入为 MCode 会话**。先看迁移计划，确认后再执行；结果会逐条列出成功或失败。
 
 有索引文件时，列表顺序和标题以 `chat_session_index.json` 为准。对话分支按
@@ -40,8 +40,8 @@ Markdown 档案导出仍然保留，方便额外备份；主要入口是原生�
 ## Data & access
 
 - **读取文件：** 只读你亲自选择的 DeepSeek 官方 ZIP，或兼容的 DeepSeek JSON，并且全程在本机解析。不会读取浏览器登录状态，不会抓取 `chat.deepseek.com`，不会上传导出包，也不会碰宿主的其他文件。
-- **写入文件：** 选中的 ZIP 会流式写入宿主管理的私有 `context.dataDir` 临时目录；再次上传时会替换，运行时停止时会删除。目标目录、Agent 名称和成功导入的哈希会原子写入 `context.dataDir/state.json`。只有你确认迁移计划后，迁移脚本才会向目标 MCode 数据目录写入原生会话。
-- **启动进程：** 先后运行 `python3 <agent-session-migration>/scripts/migrate.py plan` 和 `apply`。参数用数组传递，不经过 shell；包含 `--source deepseek`、临时 ZIP、所选会话 ID、临时报告、目标数据目录和 Agent 名称。
+- **写入文件：** 选中的 ZIP 会流式写入宿主管理的私有 `context.dataDir` 临时目录；再次上传时会替换，运行时停止时会删除。目标目录和成功导入的哈希会原子写入 `context.dataDir/state.json`。只有你确认迁移计划后，迁移脚本才会向目标 MCode 数据目录写入原生会话。
+- **启动进程：** 先后运行 `python3 <agent-session-migration>/scripts/migrate.py plan` 和 `apply`。参数用数组传递，不经过 shell；包含 `--source deepseek`、临时 ZIP、所选会话 ID、临时报告、目标数据目录和 `--agent mavis`。
 - **Agent 与现有对话：** Mini App 不运行 Agent 回合，不读取 MiniMax Code 历史会话，也不调用 `message.append`。原生会话由迁移插件创建。
 - **网络：** 应用不直接联网，也不访问任何外部域名。
 - **其他能力：** 除了上面的 `python3` 进程，不调用 MCP 或 Connector 工具，也不使用麦克风、摄像头、系统通知或宿主导航信息。
@@ -52,4 +52,4 @@ Markdown 档案导出仍然保留，方便额外备份；主要入口是原生�
 - ZIP 支持 STORE、DEFLATE 和使用 data descriptor 的条目。
 - 附件在原始导出包中存在时会进入新档案；原包只有元数据时，应用只能保留引用。
 - 原生导入依赖已经安装、并带 DeepSeek 来源适配器的 `agent-session-migration`。
-- Host 不会向 Mini App 暴露目标数据目录或当前 Agent 名称，所以页面默认填写 `~/.minimax`，Agent 名称需要用户确认。
+- 导入目标固定为 `~/.minimax` 数据目录和 `mavis` agent。

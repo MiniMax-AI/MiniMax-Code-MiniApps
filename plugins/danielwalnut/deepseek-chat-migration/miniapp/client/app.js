@@ -23,8 +23,6 @@ async function loadState() {
     const saved = await api('/api/state');
     state.imported = new Set(saved.imported || []);
     state.migrationPluginInstalled = Boolean(saved.migrationPlugin?.installed);
-    $('#target-data-dir').value = saved.targetDataDir || saved.defaultTargetDataDir || '';
-    $('#agent-name').value = saved.agentName || '';
     $('#plugin-status').textContent = saved.migrationPlugin?.installed
       ? `agent-session-migration: ${saved.migrationPlugin.path}`
       : saved.migrationPlugin?.message || 'agent-session-migration is not installed.';
@@ -119,8 +117,6 @@ async function planImport() {
       method: 'POST',
       body: JSON.stringify({
         sessions: selected.map((conversation) => ({ id: conversation.sourceId, stableId: conversation.stableId })),
-        targetDataDir: $('#target-data-dir').value,
-        agentName: $('#agent-name').value,
       }),
     });
     state.planId = result.planId;
@@ -186,8 +182,12 @@ function setStatus(message, error = false) {
 
 $('#file').addEventListener('change', (event) => event.target.files[0] && openFile(event.target.files[0]).catch((error) => setStatus(error.message, true)));
 $('#search').addEventListener('input', render);
-$('#select-new').addEventListener('click', () => {
+$('#select-all').addEventListener('click', () => {
   state.selected = new Set(state.conversations.filter((item) => !state.imported.has(item.stableId)).map((item) => item.stableId));
+  render();
+});
+$('#select-none').addEventListener('click', () => {
+  state.selected = new Set();
   render();
 });
 $('#import').addEventListener('click', planImport);

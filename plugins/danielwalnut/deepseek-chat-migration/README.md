@@ -23,9 +23,9 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
    `scripts/migrate.py` and its DeepSeek source adapter.
 3. In MiniMax Code, ask the Agent to install this Mini App directory.
 4. Open **DeepSeek Chat Migration**, then choose the ZIP downloaded from DeepSeek.
-5. Review the restored conversations and select those to migrate.
-6. Enter the target MCode data directory and agent name. The data directory defaults to
-   `~/.minimax`; Mini App Host currently exposes neither value directly.
+5. Review the restored conversations and select those to migrate. **Select all** picks every
+   conversation not yet imported; **Select none** clears the selection.
+6. Sessions are always imported into `~/.minimax` for the `mavis` agent; there is nothing to configure.
 7. Choose **Import as MCode sessions**. Review the generated plan, then confirm the apply step.
    The result lists success or failure for every selected DeepSeek session.
 
@@ -52,14 +52,14 @@ The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out 
   `chat.deepseek.com`, upload the export, or read any other Host file.
 - **Files written:** the selected ZIP is streamed to a temporary directory under the Host-owned,
   opaque `context.dataDir`; it is replaced on the next upload and removed when the runtime stops.
-  Target directory and agent-name preferences plus successful import hashes are written atomically
+  Successful import hashes are written atomically
   to `context.dataDir/state.json`. The migration process writes native sessions under the target
   MCode data directory only after the user confirms the plan.
 - **Process spawned:** `python3 <agent-session-migration>/scripts/migrate.py`, first with `plan` and
   then, after confirmation, with `apply`. Arguments are passed as an array without a shell:
   `--source deepseek`, `--source-db <temporary ZIP>`, one `--session <id>` per selection,
-  `--report <temporary report>`, `--target-data-dir <chosen directory>`, and
-  `--agent <chosen agent>`.
+  `--report <temporary report>`, `--target-data-dir ~/.minimax`, and
+  `--agent mavis`.
 - **Agent and conversations:** the Mini App runs no Agent turns, reads no MiniMax Code
   conversations, and does not use `message.append`. The migration helper creates native sessions.
 - **Network:** no direct network requests and no external hosts.
@@ -75,5 +75,4 @@ The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out 
   when the selected conversation is exported; missing binaries remain references.
 - Native import depends on an installed `agent-session-migration` version that includes the
   separately maintained DeepSeek source adapter.
-- The Host does not expose its target data directory or active agent name to Mini Apps. The page
-  defaults the directory to `~/.minimax` and requires the user to enter the agent name.
+- The target is fixed to the `~/.minimax` data directory and the `mavis` agent.
