@@ -1,14 +1,20 @@
 import { readInput, buildArchive } from './archive.js';
-import { distillConversation } from './distill.js';
 
-const state = { conversations: [], imported: new Set(), selected: new Set(), active: null, handoffs: {} };
+const state = {
+  conversations: [],
+  imported: new Set(),
+  selected: new Set(),
+  active: null,
+  planId: null,
+  migrationPluginInstalled: false,
+};
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(body.message || body.error || `Request failed (${response.status})`);
   return body;
 }
 
@@ -16,7 +22,13 @@ async function loadState() {
   try {
     const saved = await api('/api/state');
     state.imported = new Set(saved.imported || []);
-    state.handoffs = saved.handoffs || {};
+    state.migrationPluginInstalled = Boolean(saved.migrationPlugin?.installed);
+    $('#target-data-dir').value = saved.targetDataDir || saved.defaultTargetDataDir || '';
+    $('#agent-name').value = saved.agentName || '';
+    $('#plugin-status').textContent = saved.migrationPlugin?.installed
+      ? `agent-session-migration: ${saved.migrationPlugin.path}`
+      : saved.migrationPlugin?.message || 'agent-session-migration is not installed.';
+    $('#import').disabled = !state.migrationPluginInstalled;
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -25,6 +37,14 @@ async function loadState() {
 async function openFile(file) {
   setStatus('Parsing DeepSeek export locally…');
   const parsed = await readInput(file);
+  setStatus('Saving the DeepSeek ZIP to a private temporary path…');
+  const upload = await fetch('/api/source', {
+    method: 'POST',
+    headers: { 'content-type': 'application/zip' },
+    body: file,
+  });
+  const uploadResult = await upload.json();
+  if (!upload.ok) throw new Error(uploadResult.message || uploadResult.error || 'Could not stage the ZIP.');
   state.conversations = parsed;
   state.selected = new Set(parsed.filter((item) => !state.imported.has(item.stableId)).map((item) => item.stableId));
   state.active = parsed[0]?.stableId || null;
@@ -88,37 +108,64 @@ function renderBlock(block) {
   return `<details><summary>${esc(block.label || 'Notice')}</summary>${esc(block.text)}</details>`;
 }
 
-async function distillSelected() {
+async function planImport() {
   const selected = state.conversations.filter((item) => state.selected.has(item.stableId));
-  if (!selected.length) return setStatus('Select at least one new conversation.', true);
-  const agent = window.mcode?.miniapp?.agent;
-  if (!agent?.run) return setStatus('Agent distillation is unavailable in this MiniMax Code version.', true);
-  $('#distill').disabled = true;
+  if (!selected.length) return setStatus('Select at least one conversation to import.', true);
+  if (!state.migrationPluginInstalled) return setStatus('Install agent-session-migration first.', true);
+  $('#import').disabled = true;
   try {
-    await api('/api/import', { method: 'POST', body: JSON.stringify({ conversations: selected }) });
-    for (let index = 0; index < selected.length; index += 1) {
-      const conversation = selected[index];
-      const handoff = await distillConversation(conversation, agent, (progress) => setStatus(`${index + 1}/${selected.length} · ${progress}`));
-      state.handoffs[conversation.stableId] = handoff;
-      await api('/api/handoff', { method: 'POST', body: JSON.stringify({ stableId: conversation.stableId, handoff }) });
-      state.imported.add(conversation.stableId);
-      showHandoff(conversation, handoff);
-    }
-    state.selected.clear();
-    render();
-    setStatus(`Created ${selected.length} handoff document${selected.length === 1 ? '' : 's'}.`);
+    setStatus(`Planning ${selected.length} native MCode session import${selected.length === 1 ? '' : 's'}…`);
+    const result = await api('/api/migration/plan', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessions: selected.map((conversation) => ({ id: conversation.sourceId, stableId: conversation.stableId })),
+        targetDataDir: $('#target-data-dir').value,
+        agentName: $('#agent-name').value,
+      }),
+    });
+    state.planId = result.planId;
+    renderMigrationResult('Import plan', result);
+    $('#confirm-import').disabled = !result.ok;
+    $('#migration-result').showModal();
+    setStatus(result.ok ? 'Plan ready. Review it before importing.' : 'The migration plan contains errors.', !result.ok);
   } catch (error) {
-    const message = error?.message === 'not_permitted' ? 'Agent access is switched off. Enable session.run in plugin settings.' : error.message;
-    setStatus(message, true);
+    setStatus(error.message, true);
   } finally {
-    $('#distill').disabled = false;
+    $('#import').disabled = !state.migrationPluginInstalled;
   }
 }
 
-function showHandoff(conversation, handoff) {
-  $('#handoff-title').textContent = conversation.title;
-  $('#handoff-text').textContent = handoff;
-  $('#handoff').showModal();
+async function applyImport() {
+  if (!state.planId) return;
+  $('#confirm-import').disabled = true;
+  try {
+    setStatus('Importing native MCode sessions…');
+    const result = await api('/api/migration/apply', {
+      method: 'POST',
+      body: JSON.stringify({ planId: state.planId }),
+    });
+    for (const stableId of result.imported || []) state.imported.add(stableId);
+    state.selected = new Set([...state.selected].filter((stableId) => !state.imported.has(stableId)));
+    state.planId = null;
+    render();
+    renderMigrationResult('Import result', result);
+    setStatus(result.ok
+      ? `Imported ${result.summary.succeeded} MCode session${result.summary.succeeded === 1 ? '' : 's'}.`
+      : `Import finished with ${result.summary.failed} failure${result.summary.failed === 1 ? '' : 's'}.`, !result.ok);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function renderMigrationResult(title, result) {
+  $('#result-title').textContent = title;
+  $('#result-summary').textContent = `${result.summary.total} total · ${result.summary.planned || result.summary.succeeded} ready/succeeded · ${result.summary.failed} failed`;
+  $('#result-list').innerHTML = (result.sessions || []).map((item) => {
+    const conversation = state.conversations.find((entry) => entry.sourceId === item.sessionId);
+    return `<li class="${esc(item.status)}"><b>${esc(conversation?.title || item.sessionId)}</b><span>${esc(item.status)}${item.message ? ` · ${esc(item.message)}` : ''}</span></li>`;
+  }).join('');
+  $('#result-stderr').textContent = result.stderr || '';
+  $('#result-stderr').hidden = !result.stderr;
 }
 
 function exportArchive() {
@@ -126,7 +173,7 @@ function exportArchive() {
   const conversations = chosen.length ? chosen : state.conversations;
   if (!conversations.length) return;
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(buildArchive(conversations, state.handoffs));
+  link.href = URL.createObjectURL(buildArchive(conversations));
   link.download = 'deepseek-chat-archive.zip';
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
@@ -143,20 +190,9 @@ $('#select-new').addEventListener('click', () => {
   state.selected = new Set(state.conversations.filter((item) => !state.imported.has(item.stableId)).map((item) => item.stableId));
   render();
 });
-$('#distill').addEventListener('click', distillSelected);
+$('#import').addEventListener('click', planImport);
 $('#archive').addEventListener('click', exportArchive);
-$('#copy').addEventListener('click', async () => navigator.clipboard.writeText($('#handoff-text').textContent).catch(() => setStatus('Clipboard write failed.', true)));
-$('#append').addEventListener('click', async () => {
-  const append = window.mcode?.miniapp?.message?.append;
-  if (!append) return setStatus('Adding text to a chat draft is unavailable in this version.', true);
-  try {
-    await append($('#handoff-text').textContent);
-    setStatus('Added to the current chat draft. Review it and press Send.');
-    $('#handoff').close();
-  } catch (error) {
-    setStatus(error.message === 'user_cancelled' ? 'Cancelled.' : `Could not add draft (${error.message}).`, true);
-  }
-});
+$('#confirm-import').addEventListener('click', applyImport);
 for (const eventName of ['dragenter', 'dragover']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.add('drag'); });
 for (const eventName of ['dragleave', 'drop']) $('#drop').addEventListener(eventName, (event) => { event.preventDefault(); $('#drop').classList.remove('drag'); });
 $('#drop').addEventListener('drop', (event) => event.dataTransfer.files[0] && openFile(event.dataTransfer.files[0]).catch((error) => setStatus(error.message, true)));

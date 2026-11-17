@@ -2,10 +2,9 @@
 
 English | [简体中文](README_ZH.md)
 
-DeepSeek Chat Migration turns the official DeepSeek web-app export into a durable local archive
-and compact handoff documents for continuing work in MiniMax Code. It previews titles, dates, turn
-counts and approximate size; restores regenerated branches; and keeps reasoning, sources and
-attachments separate from answers.
+DeepSeek Chat Migration previews the official DeepSeek web-app export, restores regenerated
+branches, reasoning, sources and attachments, then imports selected conversations as native
+MiniMax Code sessions through the separate `agent-session-migration` plugin.
 
 ## Export from DeepSeek
 
@@ -20,13 +19,15 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
 ## Install and open
 
 1. Download this `deepseek-chat-migration` directory.
-2. In MiniMax Code, ask the Agent to install this Mini App directory.
-3. Open **DeepSeek Chat Migration**, then choose the ZIP downloaded from DeepSeek.
-4. Review the restored conversations and select only those you want to keep.
-5. Choose **Create handoffs** to produce fixed-format handoff documents, or
-   **Export DeepSeek archive** to download one Markdown file per conversation, an index, an
-   offline full-text search page, and available attachments for the selected conversations.
-6. From a handoff, choose **Add to current chat draft**, review the inserted text, and press Send.
+2. Install the separate `agent-session-migration` plugin. This Mini App needs its
+   `scripts/migrate.py` and its DeepSeek source adapter.
+3. In MiniMax Code, ask the Agent to install this Mini App directory.
+4. Open **DeepSeek Chat Migration**, then choose the ZIP downloaded from DeepSeek.
+5. Review the restored conversations and select those to migrate.
+6. Enter the target MCode data directory and agent name. The data directory defaults to
+   `~/.minimax`; Mini App Host currently exposes neither value directly.
+7. Choose **Import as MCode sessions**. Review the generated plan, then confirm the apply step.
+   The result lists success or failure for every selected DeepSeek session.
 
 Conversation order and titles come from `chat_session_index.json` when present. Messages are
 restored from `parent_id` and `current_message_id`; regenerated answers remain visible as alternate
@@ -34,55 +35,36 @@ branches. `THINK` fragments render as collapsible reasoning, and search fragment
 collapsible sources. Already imported conversations are matched by source ID plus a stable content
 hash and skipped when the same export is opened again.
 
-## Handoff format
-
-Long threads are split at paragraph boundaries. MiniMax Code's available model extracts each
-chunk, then reduces those summaries until one document remains:
-
-- 聊过什么
-- 已确定的要求
-- 排除过的方案
-- 未完成事项
-- 关键事实与偏好
-
-The original normalized DeepSeek transcript remains in this Mini App's private state and in any
-archive the user downloads. The handoff is a stable, compact prefix; it does not replace the
-original archive.
+The Markdown archive button remains available as a secondary backup. Native-session import is the
+primary workflow.
 
 ## Tested environment
 
 - MiniMax Code 3.1.11 on Windows 11
 - Node.js 22 parser and unit tests on Linux
 
-The Mini App requires MiniMax Code 3.1.2 or later because it declares Agent session access and a
-pop-out window.
+The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out window.
 
 ## Data & access
 
 - **Files read:** only the official DeepSeek ZIP or a compatible DeepSeek JSON the user explicitly
   picks in the page. Parsing happens locally. The app does not inspect browser sessions, scrape
   `chat.deepseek.com`, upload the export, or read any other Host file.
-- **Files written:** normalized selected transcripts and handoff documents are written atomically
-  to `state.json` inside the Host-owned private `context.dataDir`. The location is opaque. The
-  generated archive ZIP, including available selected attachments, is downloaded only after the
-  user clicks Export.
-- **Model access:** only text from conversations the user selects is sent through MiniMax Code's
-  Agent API for distillation. Long threads use multiple Agent turns. A disabled `session.run`
-  permission is handled without stopping the app.
-- **Conversations:** it does not read existing MiniMax Code conversations. Adding a handoff uses
-  the page API, shows the Host confirmation, and only appends to the unsent draft of the current
-  conversation.
+- **Files written:** the selected ZIP is streamed to a temporary directory under the Host-owned,
+  opaque `context.dataDir`; it is replaced on the next upload and removed when the runtime stops.
+  Target directory and agent-name preferences plus successful import hashes are written atomically
+  to `context.dataDir/state.json`. The migration process writes native sessions under the target
+  MCode data directory only after the user confirms the plan.
+- **Process spawned:** `python3 <agent-session-migration>/scripts/migrate.py`, first with `plan` and
+  then, after confirmation, with `apply`. Arguments are passed as an array without a shell:
+  `--source deepseek`, `--source-db <temporary ZIP>`, one `--session <id>` per selection,
+  `--report <temporary report>`, `--target-data-dir <chosen directory>`, and
+  `--agent <chosen agent>`.
+- **Agent and conversations:** the Mini App runs no Agent turns, reads no MiniMax Code
+  conversations, and does not use `message.append`. The migration helper creates native sessions.
 - **Network:** no direct network requests and no external hosts.
-- **Processes and tools:** no child processes, MCP tools, Connector tools, microphone, camera,
-  notifications, or Host navigation access.
-
-## Current capability limits
-
-The current Mini App APIs cannot create a normal user-visible conversation pre-seeded with text,
-and cannot directly write a project's memory or rules file. DeepSeek Chat Migration therefore
-offers a confirmed append-to-draft action and Markdown handoff/archive files. Open the destination
-project and conversation, append the handoff, review it, and send it. If a preference should
-become a project rule, ask the Agent in that conversation to save the relevant handoff items.
+- **Other capabilities:** apart from the disclosed `python3` process, it calls no MCP or Connector
+  tools and uses no microphone, camera, notifications, or Host navigation access.
 
 ## Prototype limits
 
@@ -91,4 +73,7 @@ become a project rule, ask the Agent in that conversation to save the relevant h
 - ZIP input supports STORE and DEFLATE entries, including entries that use data descriptors.
 - Attachment metadata is preserved. Binaries present under `chat_sessions/<id>_files/` are included
   when the selected conversation is exported; missing binaries remain references.
-- Imports larger than the 32 MiB normalized request limit should be split into smaller selections.
+- Native import depends on an installed `agent-session-migration` version that includes the
+  separately maintained DeepSeek source adapter.
+- The Host does not expose its target data directory or active agent name to Mini Apps. The page
+  defaults the directory to `~/.minimax` and requires the user to enter the agent name.

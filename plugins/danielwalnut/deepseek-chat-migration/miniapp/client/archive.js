@@ -118,13 +118,12 @@ export async function readZip(bytes) {
   return files;
 }
 
-export function markdownFor(conversation, handoff = '') {
+export function markdownFor(conversation) {
   const lines = [
     `# ${conversation.title}`, '',
     `- Imported: ${conversation.updatedAt || conversation.createdAt || 'unknown'}`,
     `- Source ID: ${conversation.sourceId}`, '',
   ];
-  if (handoff) lines.push('## Handoff', '', handoff, '');
   lines.push('## Transcript', '');
   const activeIds = new Set(activePath(conversation));
   for (const message of conversation.messages) {
@@ -178,10 +177,10 @@ function safeName(value) {
   return (clean || 'conversation').slice(0, 80);
 }
 
-export function buildArchive(conversations, handoffs = {}) {
+export function buildArchive(conversations) {
   const conversationFiles = conversations.map((conversation, index) => ({
     name: `conversations/${String(index + 1).padStart(3, '0')}-${safeName(conversation.title)}-${conversation.sourceId.slice(0, 8)}.md`,
-    data: encoder.encode(markdownFor(conversation, handoffs[conversation.stableId] || '')),
+    data: encoder.encode(markdownFor(conversation)),
   }));
   const index = [
     '# DeepSeek conversation archive', '',
@@ -190,7 +189,7 @@ export function buildArchive(conversations, handoffs = {}) {
   ].join('\n');
   const searchData = conversations.map((conversation, index) => ({
     title: conversation.title, file: conversationFiles[index].name,
-    text: markdownFor(conversation, handoffs[conversation.stableId] || ''),
+    text: markdownFor(conversation),
   }));
   const files = [{ name: 'index.md', data: encoder.encode(index) }, ...conversationFiles];
   const attachmentNames = new Set();

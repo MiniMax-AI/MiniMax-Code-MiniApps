@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "name": "deepseek-chat-migration",
   "displayName": "DeepSeek Chat Migration",
-  "version": "0.1.0",
-  "description": "Parse official DeepSeek chat exports locally, restore conversation branches and attachments, and distill selected threads into reusable handoff documents.",
+  "version": "0.2.0",
+  "description": "Preview official DeepSeek chat exports and import selected conversations as native MiniMax Code sessions through agent-session-migration.",
   "author": "DanielWalnut",
   "icon": "icon.png",
   "category": "Productivity",
   "exampleQueries": [
     "Open DeepSeek Chat Migration",
-    "导入我的 DeepSeek 导出记录"
+    "导入我的 DeepSeek 对话为 MCode 会话",
+    "Import selected DeepSeek conversations as MCode sessions"
   ],
   "apps": [],
   "mcpServers": [],

@@ -14,10 +14,10 @@
     <main>
       <section class="hero">
         <p class="eyebrow">DEEPSEEK CONVERSATION MIGRATION</p>
-        <h1>Bring your DeepSeek history.<br><em>Keep the work moving.</em></h1>
-        <p>Open DeepSeek's official data export, inspect restored branches and sources, then turn selected long conversations into concise handoff documents.</p>
+        <h1>Bring your DeepSeek history.<br><em>Continue as native MCode sessions.</em></h1>
+        <p>Open DeepSeek's official export, inspect restored branches and sources, then import selected conversations into MiniMax Code.</p>
         <label class="drop" id="drop">
-          <input id="file" type="file" accept=".zip,.json">
+          <input id="file" type="file" accept=".zip">
           <span class="drop-icon">↓</span>
           <b>Choose your DeepSeek export ZIP</b>
           <small>Settings → Data → Export · parsed locally, never uploaded</small>
@@ -34,21 +34,28 @@
           <aside id="list"></aside>
           <article id="preview"><div class="empty">Select a conversation to preview its restored structure.</div></article>
         </div>
+        <div class="migration-settings">
+          <label><span>Target MCode data directory</span><input id="target-data-dir" type="text" spellcheck="false" placeholder="~/.minimax"></label>
+          <label><span>Target agent name</span><input id="agent-name" type="text" spellcheck="false" placeholder="Enter the MCode agent name"></label>
+          <small id="plugin-status"></small>
+        </div>
         <footer>
           <span id="status">Ready</span>
           <button id="archive" class="quiet">Export DeepSeek archive</button>
-          <button id="distill">Create handoffs</button>
+          <button id="import" disabled>导入为 MCode 会话 · Import as MCode sessions</button>
         </footer>
       </section>
     </main>
-    <dialog id="handoff">
+    <dialog id="migration-result">
       <form method="dialog"><button class="close" aria-label="Close">×</button></form>
-      <p class="eyebrow">HANDOFF DOCUMENT</p>
-      <h2 id="handoff-title"></h2>
-      <pre id="handoff-text"></pre>
+      <p class="eyebrow">AGENT SESSION MIGRATION</p>
+      <h2 id="result-title">Import plan</h2>
+      <p id="result-summary"></p>
+      <ul id="result-list" class="result-list"></ul>
+      <pre id="result-stderr" hidden></pre>
       <div class="dialog-actions">
-        <button id="copy" class="quiet">Copy</button>
-        <button id="append">Add to current chat draft</button>
+        <form method="dialog"><button class="quiet">Close</button></form>
+        <button id="confirm-import">Confirm import</button>
       </div>
     </dialog>
     <script type="module" src="/assets/app.js"></script>

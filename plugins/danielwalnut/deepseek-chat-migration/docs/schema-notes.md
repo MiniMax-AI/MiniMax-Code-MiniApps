@@ -29,6 +29,21 @@ include `REQUEST`, `RESPONSE`, `THINK`, `TOOL_SEARCH`, `TOOL_OPEN`, `TOOL_FIND`,
 
 The app does not use the scraping or authenticated-fetch paths found in some community tools.
 
+## Native MiniMax Code session migration
+
+The Mini App runtime context documented by this repository exposes `context.dataDir`, but that is
+the plugin's private state directory and is not the MiniMax Code target data directory. It exposes
+no active Agent name. Therefore the migration page defaults the target to the current user's
+`~/.minimax` directory and requires an Agent-name input. Both values are persisted in the private
+plugin state after a successful plan.
+
+The runtime looks for `agent-session-migration/scripts/migrate.py` below
+`~/.minimax/plugins/` and common marketplace/cache roots. The DeepSeek adapter belongs to that
+separate plugin and is not implemented here. This app streams the uploaded ZIP to a temporary path
+under `context.dataDir`, calls the helper with `plan`, displays its JSON report, and calls `apply`
+only after explicit confirmation. The command is spawned directly as `python3` with an argument
+array and no shell.
+
 ## Observed production export
 
 An export inspected on 2026-11-17 contained 177 sessions, 326 user turns and seven sessions with

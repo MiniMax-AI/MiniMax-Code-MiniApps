@@ -19,7 +19,5 @@
       "resizable": true
     }
   },
-  "mcpEndpoints": [],
-  "agentAccess": ["session.run"],
-  "agentConcurrency": 4
+  "mcpEndpoints": []
 }

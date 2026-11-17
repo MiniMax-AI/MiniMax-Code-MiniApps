@@ -1,17 +1,30 @@
 // @ts-check
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join } from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { randomUUID } from 'node:crypto';
+import {
+  defaultTargetDataDir,
+  findMigrationPlugin,
+  normalizeTargetDataDir,
+  runMigrationCommand,
+} from './migration.mjs';
 
-const MAX_BODY = 32 * 1024 * 1024;
-const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js', 'distill.js']);
+const MAX_JSON_BODY = 1024 * 1024;
+const MAX_ZIP_BODY = 1024 * 1024 * 1024;
+const ASSETS = new Set(['app.js', 'styles.css', 'deepseek.js', 'archive.js']);
 
 export async function start(context) {
   await mkdir(context.dataDir, { recursive: true });
   const statePath = join(context.dataDir, 'state.json');
   const state = await loadState(statePath);
   const clientRoot = join(context.pluginRoot, 'miniapp/client');
+  let source = null;
+  const pendingPlans = new Map();
 
   const server = createServer(async (request, response) => {
     try {
@@ -23,31 +36,100 @@ export async function start(context) {
         return sendFile(response, join(clientRoot, name));
       }
       if (request.method === 'GET' && url.pathname === '/api/state') {
-        return json(response, 200, { imported: Object.keys(state.conversations), handoffs: state.handoffs });
+        const migrationPlugin = await findMigrationPlugin();
+        return json(response, 200, {
+          imported: Object.keys(state.imported),
+          targetDataDir: state.targetDataDir,
+          defaultTargetDataDir: defaultTargetDataDir(),
+          agentName: state.agentName,
+          migrationPlugin: migrationPlugin
+            ? { installed: true, path: migrationPlugin }
+            : { installed: false, message: 'Install the agent-session-migration plugin to import native sessions.' },
+        });
       }
-      if (request.method === 'POST' && url.pathname === '/api/import') {
+      if (request.method === 'POST' && url.pathname === '/api/source') {
+        if (source?.dir) await rm(source.dir, { recursive: true, force: true });
+        const dir = await mkdtemp(join(context.dataDir, 'migration-'));
+        const path = join(dir, 'deepseek-export.zip');
+        try {
+          await saveRequestBody(request, path, MAX_ZIP_BODY);
+        } catch (error) {
+          await rm(dir, { recursive: true, force: true });
+          throw error;
+        }
+        source = { dir, path };
+        pendingPlans.clear();
+        return json(response, 200, { uploaded: true });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/migration/plan') {
+        if (!source?.path) return json(response, 409, { error: 'source_not_uploaded' });
         const body = await readJson(request);
-        if (!Array.isArray(body.conversations) || body.conversations.length > 1000) return json(response, 400, { error: 'invalid_conversations' });
-        for (const conversation of body.conversations) {
-          if (!validConversation(conversation)) return json(response, 400, { error: 'invalid_conversation' });
-          state.conversations[conversation.stableId] = conversation;
+        const selections = readSelections(body.sessions);
+        const pluginRoot = await findMigrationPlugin();
+        if (!pluginRoot) {
+          return json(response, 409, {
+            error: 'migration_plugin_missing',
+            message: 'Install the agent-session-migration plugin, then reopen this Mini App.',
+          });
+        }
+        const targetDataDir = normalizeTargetDataDir(body.targetDataDir);
+        const agentName = readAgentName(body.agentName);
+        const reportPath = join(source.dir, `plan-${randomUUID()}.json`);
+        const result = await runMigrationCommand({
+          scriptPath: join(pluginRoot, 'scripts', 'migrate.py'),
+          action: 'plan',
+          sourcePath: source.path,
+          sessionIds: selections.map((item) => item.id),
+          reportPath,
+          targetDataDir,
+          agentName,
+          signal: context.signal,
+        });
+        const planId = randomUUID();
+        pendingPlans.set(planId, { selections, pluginRoot, targetDataDir, agentName });
+        state.targetDataDir = targetDataDir;
+        state.agentName = agentName;
+        await saveState(statePath, state);
+        return json(response, 200, { planId, pluginPath: pluginRoot, ...result });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/migration/apply') {
+        if (!source?.path) return json(response, 409, { error: 'source_not_uploaded' });
+        const body = await readJson(request);
+        const plan = typeof body.planId === 'string' ? pendingPlans.get(body.planId) : null;
+        if (!plan) return json(response, 409, { error: 'plan_not_found' });
+        const reportPath = join(source.dir, `apply-${randomUUID()}.json`);
+        const result = await runMigrationCommand({
+          scriptPath: join(plan.pluginRoot, 'scripts', 'migrate.py'),
+          action: 'apply',
+          sourcePath: source.path,
+          sessionIds: plan.selections.map((item) => item.id),
+          reportPath,
+          targetDataDir: plan.targetDataDir,
+          agentName: plan.agentName,
+          signal: context.signal,
+        });
+        const statusById = new Map(result.sessions.map((item) => [item.sessionId, item.status]));
+        const imported = [];
+        for (const selection of plan.selections) {
+          if (result.exitCode === 0 && statusById.get(selection.id) !== 'failed') {
+            state.imported[selection.stableId] = {
+              sourceId: selection.id,
+              importedAt: new Date().toISOString(),
+            };
+            imported.push(selection.stableId);
+          }
         }
         await saveState(statePath, state);
-        return json(response, 200, { saved: body.conversations.length });
-      }
-      if (request.method === 'POST' && url.pathname === '/api/handoff') {
-        const body = await readJson(request);
-        if (typeof body.stableId !== 'string' || typeof body.handoff !== 'string' || body.handoff.length > 200000 || !state.conversations[body.stableId]) {
-          return json(response, 400, { error: 'invalid_handoff' });
-        }
-        state.handoffs[body.stableId] = body.handoff;
-        await saveState(statePath, state);
-        return json(response, 200, { saved: true });
+        pendingPlans.delete(body.planId);
+        return json(response, 200, { imported, ...result });
       }
       return json(response, 404, { error: 'not_found' });
     } catch (error) {
       context.logger.warn(`request failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-      if (!response.headersSent) json(response, error?.code === 'BODY_TOO_LARGE' ? 413 : 400, { error: 'request_failed' });
+      if (!response.headersSent) {
+        const code = typeof error?.code === 'string' ? error.code : 'request_failed';
+        json(response, code === 'BODY_TOO_LARGE' || code === 'body_too_large' ? 413 : 400, { error: code });
+      }
       else response.end();
     }
   });
@@ -60,6 +142,7 @@ export async function start(context) {
     disposed = true;
     context.signal.removeEventListener('abort', onAbort);
     await close(server);
+    if (source?.dir) await rm(source.dir, { recursive: true, force: true });
   };
   const onAbort = () => void dispose();
   context.signal.addEventListener('abort', onAbort, { once: true });
@@ -67,19 +150,39 @@ export async function start(context) {
   return { dispose };
 }
 
-function validConversation(value) {
-  return value && typeof value === 'object' && typeof value.stableId === 'string' && value.stableId.length <= 256
-    && typeof value.title === 'string' && value.title.length <= 10000 && Array.isArray(value.messages)
-    && value.messages.length <= 100000;
+function readSelections(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 1000) throw requestError('invalid_sessions');
+  return value.map((item) => {
+    if (!item || typeof item.id !== 'string' || !item.id || item.id.startsWith('-') || item.id.length > 256
+      || typeof item.stableId !== 'string' || !item.stableId || item.stableId.length > 256
+      || /[\u0000-\u001f\u007f]/.test(item.id)) {
+      throw requestError('invalid_sessions');
+    }
+    return { id: item.id, stableId: item.stableId };
+  });
+}
+
+function readAgentName(value) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().startsWith('-') || value.length > 128
+    || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw requestError('agent_name_required');
+  }
+  return value.trim();
 }
 
 async function loadState(path) {
   try {
     const value = JSON.parse(await readFile(path, 'utf8'));
-    return { conversations: value.conversations || {}, handoffs: value.handoffs || {} };
+    return {
+      imported: value.imported && typeof value.imported === 'object' ? value.imported : {},
+      targetDataDir: typeof value.targetDataDir === 'string'
+        ? normalizeTargetDataDir(value.targetDataDir)
+        : defaultTargetDataDir(),
+      agentName: typeof value.agentName === 'string' ? value.agentName : '',
+    };
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    return { conversations: {}, handoffs: {} };
+    return { imported: {}, targetDataDir: defaultTargetDataDir(), agentName: '' };
   }
 }
 
@@ -94,7 +197,7 @@ async function readJson(request) {
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY) {
+    if (size > MAX_JSON_BODY) {
       const error = new Error('body too large');
       error.code = 'BODY_TOO_LARGE';
       throw error;
@@ -102,6 +205,28 @@ async function readJson(request) {
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function saveRequestBody(request, path, limit) {
+  let size = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      size += chunk.length;
+      if (size > limit) {
+        callback(requestError('body_too_large'));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+  await pipeline(request, limiter, createWriteStream(path, { flags: 'wx', mode: 0o600 }));
+  if (!size) throw requestError('empty_source');
+}
+
+function requestError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
 }
 
 async function sendFile(response, path) {
