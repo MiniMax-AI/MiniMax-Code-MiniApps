@@ -29,27 +29,33 @@ export async function readInput(file) {
 
 export async function readZip(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // Locate the end-of-central-directory record; sizes there are reliable even when
+  // local headers defer them to data descriptors (flag 0x08), as real exports do.
+  let eocd = -1;
+  for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 22 - 0xffff); offset -= 1) {
+    if (u32(view, offset) === 0x06054b50) { eocd = offset; break; }
+  }
+  if (eocd < 0) throw new Error('This file is not a valid ZIP archive.');
+  const count = u16(view, eocd + 10);
+  let cursor = u32(view, eocd + 16);
   const files = [];
-  let offset = 0;
-  while (offset + 30 <= bytes.length) {
-    if (u32(view, offset) !== 0x04034b50) {
-      offset += 1;
-      continue;
-    }
-    const flags = u16(view, offset + 6);
-    const method = u16(view, offset + 8);
-    const compressedSize = u32(view, offset + 18);
-    const nameLength = u16(view, offset + 26);
-    const extraLength = u16(view, offset + 28);
-    if (flags & 0x08) throw new Error('ZIP entries using data descriptors are not supported in this prototype.');
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLength + extraLength;
-    const name = decoder.decode(bytes.subarray(nameStart, nameStart + nameLength));
+  for (let index = 0; index < count; index += 1) {
+    if (u32(view, cursor) !== 0x02014b50) throw new Error('Corrupt ZIP central directory.');
+    const method = u16(view, cursor + 10);
+    const compressedSize = u32(view, cursor + 20);
+    const nameLength = u16(view, cursor + 28);
+    const extraLength = u16(view, cursor + 30);
+    const commentLength = u16(view, cursor + 32);
+    const localOffset = u32(view, cursor + 42);
+    const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
+    cursor += 46 + nameLength + extraLength + commentLength;
+    if (name.endsWith('/')) continue;
+    if (u32(view, localOffset) !== 0x04034b50) throw new Error(`Corrupt ZIP entry ${name}.`);
+    const dataStart = localOffset + 30 + u16(view, localOffset + 26) + u16(view, localOffset + 28);
     const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
     const content = method === 0 ? compressed : method === 8 ? await inflate(compressed) : null;
     if (!content) throw new Error(`Unsupported ZIP compression method ${method}.`);
-    if (!name.endsWith('/')) files.push([name.normalize('NFC'), content]);
-    offset = dataStart + compressedSize;
+    files.push([name.normalize('NFC'), content]);
   }
   return files;
 }
