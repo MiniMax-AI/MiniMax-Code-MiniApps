@@ -1,172 +1,168 @@
+// @ts-check
+
 import { spawn } from 'node:child_process';
-import { access, readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const MAX_OUTPUT = 64 * 1024;
+
+/** The importer ships inside this Mini App; no other plugin is needed. */
+export const IMPORTER_SCRIPT = fileURLToPath(new URL('../python/import_deepseek.py', import.meta.url));
+export const TARGET_AGENT = 'mavis';
 
 export function defaultTargetDataDir(home = homedir()) {
   return join(home, '.minimax');
 }
 
-export function normalizeTargetDataDir(value, home = homedir()) {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return defaultTargetDataDir(home);
-  const expanded = raw === '~' ? home
-    : raw.startsWith(`~${sep}`) || raw.startsWith('~/') || raw.startsWith('~\\')
-      ? join(home, raw.slice(2))
-      : raw;
-  if (!isAbsolute(expanded)) throw migrationError('target_data_dir_must_be_absolute');
-  return resolve(expanded);
+export function defaultWorkspace(home = homedir()) {
+  return join(home, 'DeepSeek');
 }
 
-export async function findMigrationPlugin(home = homedir()) {
-  const minimaxRoot = join(home, '.minimax');
-  const directCandidates = [
-    join(minimaxRoot, 'plugins', 'agent-session-migration'),
-    join(minimaxRoot, 'marketplace', 'agent-session-migration'),
-    join(minimaxRoot, 'marketplace', 'plugins', 'agent-session-migration'),
-    join(minimaxRoot, 'marketplace-cache', 'agent-session-migration'),
-    join(minimaxRoot, 'cache', 'marketplace', 'agent-session-migration'),
-    join(minimaxRoot, 'plugins', '.cache', 'agent-session-migration'),
-  ];
-  for (const candidate of directCandidates) {
-    if (await hasMigrationScript(candidate)) return candidate;
-  }
-  const searchRoots = [
-    join(minimaxRoot, 'plugins'),
-    join(minimaxRoot, 'marketplace'),
-    join(minimaxRoot, 'marketplace-cache'),
-    join(minimaxRoot, 'cache'),
-  ];
-  for (const root of searchRoots) {
-    const found = await searchPluginCache(root);
-    if (found) return found;
-  }
-  return null;
+export function defaultPython(platform = process.platform) {
+  return platform === 'win32' ? 'python' : 'python3';
 }
 
 export function buildMigrationArgs({
-  scriptPath,
+  scriptPath = IMPORTER_SCRIPT,
   action,
   sourcePath,
   sessionIds,
   reportPath,
   targetDataDir,
-  agentName,
+  agentName = TARGET_AGENT,
+  workspace,
 }) {
   if (action !== 'plan' && action !== 'apply') throw migrationError('invalid_action');
   if (!Array.isArray(sessionIds) || !sessionIds.length || sessionIds.length > 1000) {
     throw migrationError('invalid_sessions');
   }
-  const cleanIds = sessionIds.map(validateSessionId);
-  const cleanAgent = validateAgentName(agentName);
+  for (const [name, value] of [['sourcePath', sourcePath], ['reportPath', reportPath], ['targetDataDir', targetDataDir], ['workspace', workspace]]) {
+    if (typeof value !== 'string' || !value) throw migrationError('invalid_arguments', { message: `${name} is required` });
+  }
   return [
     scriptPath,
     action,
-    '--source', 'deepseek',
-    '--source-db', sourcePath,
-    ...cleanIds.flatMap((id) => ['--session', id]),
+    '--source', sourcePath,
+    ...sessionIds.map(validateSessionId).flatMap((id) => ['--session', id]),
     '--report', reportPath,
-    '--target-data-dir', targetDataDir,
-    '--agent', cleanAgent,
+    '--data-dir', targetDataDir,
+    '--agent', validateAgentName(agentName),
+    '--workspace', workspace,
+    // Imports go to the DeepSeek project; if it was removed from the sidebar,
+    // importing selected chats into it brings it back.
+    '--restore-projects',
   ];
 }
 
+/**
+ * Runs the bundled importer. `plan` writes a fresh report; `apply` must be given the
+ * same report path, which binds it to the previewed sessions and options.
+ */
 export async function runMigrationCommand({
-  python = 'python3',
-  scriptPath,
+  python = defaultPython(),
+  scriptPath = IMPORTER_SCRIPT,
   action,
   sourcePath,
   sessionIds,
   reportPath,
-  targetDataDir,
-  agentName,
+  targetDataDir = defaultTargetDataDir(),
+  agentName = TARGET_AGENT,
+  workspace = defaultWorkspace(),
   signal,
 }) {
-  const args = buildMigrationArgs({
-    scriptPath,
-    action,
-    sourcePath,
-    sessionIds,
-    reportPath,
-    targetDataDir,
-    agentName,
-  });
+  const args = buildMigrationArgs({ scriptPath, action, sourcePath, sessionIds, reportPath, targetDataDir, agentName, workspace });
   const processResult = await spawnAndWait(python, args, signal);
   let report;
   try {
     report = JSON.parse(await readFile(reportPath, 'utf8'));
   } catch (error) {
+    const detail = importerError(processResult.stderr);
     if (error?.code === 'ENOENT') {
-      if (/invalid choice: 'deepseek'/.test(processResult.stderr || '')) {
-        throw migrationError('deepseek_source_unsupported', {
-          message: 'agent-session-migration 还不支持 DeepSeek 来源，请先更新这个插件。',
-          exitCode: processResult.exitCode,
-          stderr: processResult.stderr,
-        });
-      }
-      throw migrationError('migration_report_missing', {
-        message: `迁移脚本没有生成报告（exit ${processResult.exitCode}）。${(processResult.stderr || '').trim().split('\n').slice(-1)[0] || ''}`,
+      throw migrationError('migration_failed', {
+        message: detail || `导入脚本没有生成报告（exit ${processResult.exitCode}）。`,
         exitCode: processResult.exitCode,
         stderr: processResult.stderr,
       });
     }
-    throw migrationError('migration_report_invalid');
+    throw migrationError('migration_report_invalid', { message: detail || undefined });
   }
-  const parsed = parseMigrationReport(report, sessionIds, action);
+  const parsed = parseMigrationReport(report, sessionIds);
+  const failedRun = processResult.exitCode !== 0 && processResult.exitCode !== 2;
   return {
     ...parsed,
     exitCode: processResult.exitCode,
-    stderr: processResult.stderr,
-    ok: processResult.exitCode === 0 && parsed.sessions.every((item) => item.status !== 'failed'),
+    error: failedRun ? importerError(processResult.stderr) || `exit ${processResult.exitCode}` : '',
+    ok: processResult.exitCode === 0 && parsed.summary.failed === 0,
   };
 }
 
-export function parseMigrationReport(report, requestedIds = [], action = 'plan') {
-  const candidates = Array.isArray(report) ? report
-    : firstArray(
-      report?.sessions,
-      report?.results,
-      report?.items,
-      report?.migrations,
-      report?.entries,
-      report?.plan?.sessions,
-      report?.result?.sessions,
-      report?.report?.sessions,
-    );
+const STATUS = {
+  ready: 'planned',
+  imported: 'success',
+  'already-imported': 'skipped',
+  incompatible: 'failed',
+  failed: 'failed',
+  running: 'failed',
+};
+
+/** Maps the importer's report entries onto the UI's planned/success/skipped/failed. */
+export function parseMigrationReport(report, requestedIds = []) {
   const byId = new Map();
-  for (const item of candidates || []) {
-    if (!item || typeof item !== 'object') continue;
-    const sessionId = String(item.session_id ?? item.sessionId ?? item.source_id ?? item.sourceId ?? item.id ?? '');
-    if (!sessionId) continue;
-    const failure = item.ok === false || item.success === false || Boolean(item.error)
-      || ['failed', 'error', 'invalid'].includes(String(item.status ?? '').toLowerCase());
-    const success = item.ok === true || item.success === true
-      || ['success', 'succeeded', 'applied', 'imported', 'ready', 'planned'].includes(String(item.status ?? '').toLowerCase());
-    byId.set(sessionId, {
-      sessionId,
-      status: failure ? 'failed' : success ? (action === 'plan' ? 'planned' : 'success') : (action === 'plan' ? 'planned' : 'success'),
-      message: String(item.message ?? item.error ?? item.reason ?? ''),
-      targetSessionId: item.target_session_id ?? item.targetSessionId ?? null,
+  for (const entry of Array.isArray(report?.sessions) ? report.sessions : []) {
+    if (!entry || typeof entry.sourceId !== 'string') continue;
+    const status = STATUS[entry.status] || 'failed';
+    byId.set(entry.sourceId, {
+      sessionId: entry.sourceId,
+      status,
+      rawStatus: String(entry.status ?? ''),
+      message: entry.error ? String(entry.error)
+        : status === 'skipped' ? '已导入过，跳过'
+          : entry.status === 'running' ? '上次导入被中断，重新导入即可继续' : '',
+      targetSessionId: typeof entry.plan?.targetId === 'string' ? entry.plan.targetId : null,
+      title: typeof entry.plan?.title === 'string' ? entry.plan.title : null,
+      messageCount: Number.isInteger(entry.plan?.messageCount) ? entry.plan.messageCount : null,
+      warnings: Array.isArray(entry.plan?.warnings) ? entry.plan.warnings.length : 0,
     });
   }
-  const sessions = requestedIds.map((id) => byId.get(String(id)) || ({
+  const sessions = requestedIds.map((id) => byId.get(String(id)) || {
     sessionId: String(id),
-    status: report?.ok === false || report?.success === false ? 'failed' : action === 'plan' ? 'planned' : 'success',
-    message: String(report?.error ?? report?.message ?? ''),
+    status: 'failed',
+    rawStatus: 'missing',
+    message: '报告里没有这个会话',
     targetSessionId: null,
-  }));
+    title: null,
+    messageCount: null,
+    warnings: 0,
+  });
+  const count = (status) => sessions.filter((item) => item.status === status).length;
   return {
     sessions,
     summary: {
       total: sessions.length,
-      succeeded: sessions.filter((item) => item.status === 'success').length,
-      planned: sessions.filter((item) => item.status === 'planned').length,
-      failed: sessions.filter((item) => item.status === 'failed').length,
+      planned: count('planned'),
+      succeeded: count('success'),
+      skipped: count('skipped'),
+      failed: count('failed'),
     },
-    report,
+    state: typeof report?.state === 'string' ? report.state : '',
+    backups: Array.isArray(report?.batches) ? report.batches.map((batch) => batch?.backup).filter(Boolean) : [],
   };
+}
+
+/** The importer prints `{"error": ...}` as JSON on stderr for contract errors. */
+export function importerError(stderr = '') {
+  const lines = String(stderr).trim().split('\n').filter(Boolean);
+  for (const line of lines.reverse()) {
+    try {
+      const value = JSON.parse(line);
+      if (value && typeof value.error === 'string') return value.error;
+    } catch {
+      // Progress or interpreter output; fall through to the raw last line.
+    }
+  }
+  return lines[0] || '';
 }
 
 function validateSessionId(value) {
@@ -179,49 +175,10 @@ function validateSessionId(value) {
 
 function validateAgentName(value) {
   if (typeof value !== 'string' || !value.trim() || value.trim().startsWith('-') || value.length > 128
-    || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw migrationError('agent_name_required');
+    || /[\u0000-\u001f\u007f/\\]/.test(value)) {
+    throw migrationError('invalid_agent');
   }
   return value.trim();
-}
-
-async function hasMigrationScript(pluginRoot) {
-  try {
-    await access(join(pluginRoot, 'scripts', 'migrate.py'));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function searchPluginCache(root) {
-  const queue = [{ path: root, depth: 0 }];
-  let visited = 0;
-  while (queue.length && visited < 5000) {
-    const current = queue.shift();
-    let entries;
-    try {
-      entries = await readdir(current.path, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    visited += entries.length;
-    if (await hasMigrationScript(current.path)
-      && current.path.split(sep).includes('agent-session-migration')) {
-      return current.path;
-    }
-    if (current.depth >= 5) continue;
-    for (const entry of entries) {
-      if (entry.isDirectory() && !entry.isSymbolicLink()) {
-        queue.push({ path: join(current.path, entry.name), depth: current.depth + 1 });
-      }
-    }
-  }
-  return null;
-}
-
-function firstArray(...values) {
-  return values.find((value) => Array.isArray(value)) || [];
 }
 
 function spawnAndWait(command, args, signal) {
@@ -238,11 +195,13 @@ function spawnAndWait(command, args, signal) {
       if (stderr.length < MAX_OUTPUT) stderr += chunk.slice(0, MAX_OUTPUT - stderr.length);
     });
     child.once('error', (error) => {
-      reject(migrationError(
-        error.code === 'ENOENT' ? 'python3_not_found'
-          : error.name === 'AbortError' ? 'migration_cancelled'
-            : 'migration_spawn_failed',
-      ));
+      if (error?.code === 'ENOENT') {
+        reject(migrationError('python3_not_found', {
+          message: `没有找到 ${command}。导入需要 Python 3.9 或更新版本，安装后重新打开这个 Mini App。`,
+        }));
+        return;
+      }
+      reject(migrationError(error?.name === 'AbortError' ? 'migration_cancelled' : 'migration_spawn_failed'));
     });
     child.once('close', (exitCode) => {
       resolvePromise({ exitCode: exitCode ?? -1, stderr: stderr.trim() });

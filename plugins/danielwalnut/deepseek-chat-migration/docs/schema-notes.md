@@ -36,12 +36,22 @@ the plugin's private state directory and is not the MiniMax Code target data dir
 no active Agent name. The migration therefore always targets the current user's `~/.minimax`
 directory and the `mavis` agent; neither is user-configurable.
 
-The runtime looks for `agent-session-migration/scripts/migrate.py` below
-`~/.minimax/plugins/` and common marketplace/cache roots. The DeepSeek adapter belongs to that
-separate plugin and is not implemented here. This app streams the uploaded ZIP to a temporary path
-under `context.dataDir`, calls the helper with `plan`, displays its JSON report, and calls `apply`
-only after explicit confirmation. The command is spawned directly as `python3` with an argument
-array and no shell.
+The importer is bundled in `miniapp/python/` (listed under `artifacts.node`), so no other plugin is
+needed. It is adapted from the MiniMax Code team's `agent-session-migration` plugin (author:
+Insider): `deepseek_core.py` keeps that plugin's storage core, `import_deepseek.py` its
+checkpointed job, and `deepseek_export.py` reads the export. This app streams the uploaded ZIP to a
+temporary path under `context.dataDir`, runs `import_deepseek.py plan` into a fresh report,
+displays it, and runs `apply` on the same report only after explicit confirmation. The command is
+spawned directly as `python3` with an argument array and no shell.
+
+Report entries are `{sourceId, status, error?, plan}` with status `ready`, `already-imported`,
+`imported`, `incompatible`, `failed` or `running`; the UI shows them as ready, skipped, imported
+or failed, and reads the target session id from `plan.targetId`.
+
+The target is the runtime's `v2/sqlite/runtime-state.sqlite` (columnar version 3, session data
+version 4) plus `v2/sessions/<dated dir>/messages.jsonl`. The target agent must already have at
+least one native session. Sessions without a working directory are attached to the `~/DeepSeek`
+workspace project.
 
 ## Observed production export
 

@@ -9,12 +9,10 @@ import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import {
   defaultTargetDataDir,
-  findMigrationPlugin,
-  normalizeTargetDataDir,
+  defaultWorkspace,
   runMigrationCommand,
+  TARGET_AGENT,
 } from './migration.mjs';
-
-const TARGET_AGENT = 'mavis';
 
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_ZIP_BODY = 1024 * 1024 * 1024;
@@ -38,15 +36,11 @@ export async function start(context) {
         return sendFile(response, join(clientRoot, name));
       }
       if (request.method === 'GET' && url.pathname === '/api/state') {
-        const migrationPlugin = await findMigrationPlugin();
         return json(response, 200, {
           imported: Object.keys(state.imported),
-          targetDataDir: state.targetDataDir,
-          defaultTargetDataDir: defaultTargetDataDir(),
-          agentName: state.agentName,
-          migrationPlugin: migrationPlugin
-            ? { installed: true, path: migrationPlugin }
-            : { installed: false, message: 'Install the agent-session-migration plugin to import native sessions.' },
+          targetDataDir: defaultTargetDataDir(),
+          agentName: TARGET_AGENT,
+          workspace: defaultWorkspace(),
         });
       }
       if (request.method === 'POST' && url.pathname === '/api/source') {
@@ -67,55 +61,39 @@ export async function start(context) {
         if (!source?.path) return json(response, 409, { error: 'source_not_uploaded' });
         const body = await readJson(request);
         const selections = readSelections(body.sessions);
-        const pluginRoot = await findMigrationPlugin();
-        if (!pluginRoot) {
-          return json(response, 409, {
-            error: 'migration_plugin_missing',
-            message: 'Install the agent-session-migration plugin, then reopen this Mini App.',
-          });
-        }
-        const targetDataDir = defaultTargetDataDir();
-        const agentName = TARGET_AGENT;
-        const reportPath = join(source.dir, `plan-${randomUUID()}.json`);
+        const reportPath = join(source.dir, `job-${randomUUID()}.json`);
         const result = await runMigrationCommand({
-          scriptPath: join(pluginRoot, 'scripts', 'migrate.py'),
           action: 'plan',
           sourcePath: source.path,
           sessionIds: selections.map((item) => item.id),
           reportPath,
-          targetDataDir,
-          agentName,
           signal: context.signal,
         });
         const planId = randomUUID();
-        pendingPlans.set(planId, { selections, pluginRoot, targetDataDir, agentName });
-        state.targetDataDir = targetDataDir;
-        state.agentName = agentName;
-        await saveState(statePath, state);
-        return json(response, 200, { planId, pluginPath: pluginRoot, ...result });
+        pendingPlans.set(planId, { selections, reportPath });
+        return json(response, 200, { planId, ...result });
       }
       if (request.method === 'POST' && url.pathname === '/api/migration/apply') {
         if (!source?.path) return json(response, 409, { error: 'source_not_uploaded' });
         const body = await readJson(request);
         const plan = typeof body.planId === 'string' ? pendingPlans.get(body.planId) : null;
         if (!plan) return json(response, 409, { error: 'plan_not_found' });
-        const reportPath = join(source.dir, `apply-${randomUUID()}.json`);
+        // Apply resumes the previewed report: same sessions, same options.
         const result = await runMigrationCommand({
-          scriptPath: join(plan.pluginRoot, 'scripts', 'migrate.py'),
           action: 'apply',
           sourcePath: source.path,
           sessionIds: plan.selections.map((item) => item.id),
-          reportPath,
-          targetDataDir: plan.targetDataDir,
-          agentName: plan.agentName,
+          reportPath: plan.reportPath,
           signal: context.signal,
         });
-        const statusById = new Map(result.sessions.map((item) => [item.sessionId, item.status]));
+        const statusById = new Map(result.sessions.map((item) => [item.sessionId, item]));
         const imported = [];
         for (const selection of plan.selections) {
-          if (result.exitCode === 0 && statusById.get(selection.id) !== 'failed') {
+          const item = statusById.get(selection.id);
+          if (item && (item.status === 'success' || item.status === 'skipped')) {
             state.imported[selection.stableId] = {
               sourceId: selection.id,
+              targetSessionId: item.targetSessionId,
               importedAt: new Date().toISOString(),
             };
             imported.push(selection.stableId);
@@ -168,16 +146,10 @@ function readSelections(value) {
 async function loadState(path) {
   try {
     const value = JSON.parse(await readFile(path, 'utf8'));
-    return {
-      imported: value.imported && typeof value.imported === 'object' ? value.imported : {},
-      targetDataDir: typeof value.targetDataDir === 'string'
-        ? normalizeTargetDataDir(value.targetDataDir)
-        : defaultTargetDataDir(),
-      agentName: typeof value.agentName === 'string' ? value.agentName : '',
-    };
+    return { imported: value.imported && typeof value.imported === 'object' ? value.imported : {} };
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    return { imported: {}, targetDataDir: defaultTargetDataDir(), agentName: '' };
+    return { imported: {} };
   }
 }
 

@@ -1,8 +1,13 @@
 {
   "schemaVersion": 1,
   "artifacts": {
-    "client": ["./miniapp/client"],
-    "node": ["./miniapp/node"]
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node",
+      "./miniapp/python"
+    ]
   },
   "runtime": {
     "kind": "process",

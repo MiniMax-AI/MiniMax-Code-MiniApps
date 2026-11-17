@@ -1,87 +1,148 @@
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildMigrationArgs,
   defaultTargetDataDir,
-  findMigrationPlugin,
-  normalizeTargetDataDir,
+  defaultWorkspace,
+  IMPORTER_SCRIPT,
+  importerError,
   parseMigrationReport,
   runMigrationCommand,
 } from '../miniapp/node/migration.mjs';
 
-test('constructs the migration command without a shell', () => {
+const python = process.env.PYTHON || 'python3';
+const FIXTURE = fileURLToPath(new URL('./python/fixture.py', import.meta.url));
+const BRANCHY = '11111111-aaaa-4bbb-8ccc-000000000001';
+const FILES = '22222222-aaaa-4bbb-8ccc-000000000002';
+
+test('builds the bundled importer command without a shell or plugin lookup', () => {
+  assert.match(IMPORTER_SCRIPT, /miniapp[\\/]python[\\/]import_deepseek\.py$/);
   const args = buildMigrationArgs({
-    scriptPath: '/plugins/agent-session-migration/scripts/migrate.py',
     action: 'plan',
     sourcePath: '/tmp/deepseek export.zip',
     sessionIds: ['session-a', 'session-b'],
-    reportPath: '/tmp/plan.json',
+    reportPath: '/tmp/job.json',
     targetDataDir: '/home/user/.minimax',
-    agentName: 'code-agent',
+    workspace: '/home/user/DeepSeek',
   });
   assert.deepEqual(args, [
-    '/plugins/agent-session-migration/scripts/migrate.py',
+    IMPORTER_SCRIPT,
     'plan',
-    '--source', 'deepseek',
-    '--source-db', '/tmp/deepseek export.zip',
+    '--source', '/tmp/deepseek export.zip',
     '--session', 'session-a',
     '--session', 'session-b',
-    '--report', '/tmp/plan.json',
-    '--target-data-dir', '/home/user/.minimax',
-    '--agent', 'code-agent',
+    '--report', '/tmp/job.json',
+    '--data-dir', '/home/user/.minimax',
+    '--agent', 'mavis',
+    '--workspace', '/home/user/DeepSeek',
+    '--restore-projects',
   ]);
+  assert.throws(() => buildMigrationArgs({ action: 'plan', sourcePath: '/x', sessionIds: ['--all'], reportPath: '/r', targetDataDir: '/t', workspace: '/w' }));
+  assert.equal(defaultTargetDataDir('/home/u'), join('/home/u', '.minimax'));
+  assert.equal(defaultWorkspace('/home/u'), join('/home/u', 'DeepSeek'));
 });
 
-test('parses per-session successes and failures from reports', () => {
+test('maps importer statuses and reads the target id from the plan', () => {
   const result = parseMigrationReport({
+    state: 'completed-with-errors',
+    batches: [{ status: 'imported', backup: '/b/runtime-state.before.sqlite' }],
     sessions: [
-      { session_id: 'good', status: 'imported', target_session_id: 'mcode-good' },
-      { session_id: 'bad', status: 'failed', error: 'invalid branch' },
+      { sourceId: 'new', status: 'imported', plan: { targetId: 'mvs_new', title: '[From DeepSeek] a', messageCount: 4, warnings: ['w'] } },
+      { sourceId: 'old', status: 'already-imported', plan: { targetId: 'mvs_old' } },
+      { sourceId: 'ready', status: 'ready', plan: { targetId: 'mvs_ready' } },
+      { sourceId: 'bad', status: 'incompatible', error: 'invalid branch' },
+      { sourceId: 'boom', status: 'failed', error: 'disk full' },
     ],
-  }, ['good', 'bad'], 'apply');
-  assert.deepEqual(result.summary, { total: 2, succeeded: 1, planned: 0, failed: 1 });
-  assert.equal(result.sessions[0].targetSessionId, 'mcode-good');
-  assert.equal(result.sessions[1].message, 'invalid branch');
+  }, ['new', 'old', 'ready', 'bad', 'boom', 'absent']);
+  assert.deepEqual(result.sessions.map((item) => item.status), ['success', 'skipped', 'planned', 'failed', 'failed', 'failed']);
+  assert.equal(result.sessions[0].targetSessionId, 'mvs_new');
+  assert.equal(result.sessions[0].warnings, 1);
+  assert.equal(result.sessions[1].targetSessionId, 'mvs_old');
+  assert.equal(result.sessions[3].message, 'invalid branch');
+  assert.deepEqual(result.summary, { total: 6, planned: 1, succeeded: 1, skipped: 1, failed: 3 });
+  assert.deepEqual(result.backups, ['/b/runtime-state.before.sqlite']);
 });
 
-test('runs plan and apply against a stub migration script', async (context) => {
-  const root = await mkdtemp(join(tmpdir(), 'deepseek-migration-test-'));
+test('extracts the importer JSON error line from stderr', () => {
+  assert.equal(importerError('{"status":"running"}\n{"error":"Target agent has no existing session","type":"MigrationError"}'), 'Target agent has no existing session');
+  assert.equal(importerError('Traceback\nValueError: x'), 'ValueError: x');
+});
+
+test('reports a missing Python interpreter clearly', async () => {
+  await assert.rejects(runMigrationCommand({
+    python: 'definitely-not-python3-here',
+    action: 'plan',
+    sourcePath: '/tmp/x.zip',
+    sessionIds: ['a'],
+    reportPath: '/tmp/never.json',
+    targetDataDir: '/tmp',
+    workspace: '/tmp',
+  }), (error) => error.code === 'python3_not_found' && /Python 3\.9/.test(error.message));
+});
+
+test('plans and applies a synthetic export through the bundled importer', async (context) => {
+  const root = await mkdtemp(join(tmpdir(), 'deepseek-import-'));
   context.after(() => rm(root, { recursive: true, force: true }));
-  const sourcePath = join(root, 'source.zip');
-  const targetDataDir = join(root, 'target');
-  await writeFile(sourcePath, 'synthetic zip placeholder');
-  const scriptPath = new URL('./fixtures/stub-migrate.py', import.meta.url).pathname;
+  const sourcePath = join(root, 'upload', 'deepseek-export.zip');
+  const targetDataDir = join(root, 'data');
+  const workspace = join(root, 'home', 'DeepSeek');
+  await mkdir(join(root, 'upload'));
+  await mkdir(join(targetDataDir, 'v2', 'sqlite'), { recursive: true });
+  execFileSync(python, ['-c', `
+import sqlite3, sys
+sys.path.insert(0, sys.argv[1])
+import fixture
+from pathlib import Path
+fixture.write_export(Path(sys.argv[2]), fixture.sessions())
+db = sqlite3.connect(sys.argv[3]); db.executescript(fixture.TARGET_SCHEMA); db.close()
+`, join(FIXTURE, '..'), sourcePath, join(targetDataDir, 'v2', 'sqlite', 'runtime-state.sqlite')]);
+  const reportPath = join(root, 'upload', 'job.json');
+  const common = { python, sourcePath, sessionIds: [BRANCHY, FILES], reportPath, targetDataDir, workspace };
 
-  for (const action of ['plan', 'apply']) {
-    const reportPath = join(root, `${action}.json`);
-    const result = await runMigrationCommand({
-      scriptPath,
-      action,
-      sourcePath,
-      sessionIds: ['session-a', 'session-b'],
-      reportPath,
-      targetDataDir,
-      agentName: 'code-agent',
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.report.source, 'deepseek');
-    assert.equal(result.report.agent, 'code-agent');
-    assert.equal(result.sessions.length, 2);
-    assert.equal(result.summary[action === 'plan' ? 'planned' : 'succeeded'], 2);
-  }
+  const planned = await runMigrationCommand({ ...common, action: 'plan' });
+  assert.equal(planned.exitCode, 0);
+  assert.deepEqual(planned.summary, { total: 2, planned: 2, succeeded: 0, skipped: 0, failed: 0 });
+  assert.equal(planned.sessions[0].title, '[From DeepSeek] 量子计算入门');
+
+  const applied = await runMigrationCommand({ ...common, action: 'apply' });
+  assert.equal(applied.ok, true);
+  assert.equal(applied.state, 'completed');
+  assert.deepEqual(applied.summary, { total: 2, planned: 0, succeeded: 2, skipped: 0, failed: 0 });
+  assert.match(applied.sessions[0].targetSessionId, /^mvs_[0-9a-f]{32}$/);
+  assert.equal(applied.backups.length, 1);
+
+  // A second upload of the same export gets a fresh report and is skipped, not failed.
+  const again = await runMigrationCommand({ ...common, action: 'apply', reportPath: join(root, 'upload', 'job-2.json') });
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.summary, { total: 2, planned: 0, succeeded: 0, skipped: 2, failed: 0 });
+  assert.deepEqual(again.sessions.map((item) => item.targetSessionId), applied.sessions.map((item) => item.targetSessionId));
+  assert.match(await readFile(reportPath, 'utf8'), /"state":"completed"/);
 });
 
-test('finds installed and marketplace-cached migration plugins', async (context) => {
-  const home = await mkdtemp(join(tmpdir(), 'deepseek-plugin-home-'));
-  context.after(() => rm(home, { recursive: true, force: true }));
-  const cached = join(home, '.minimax', 'marketplace-cache', 'versions', 'agent-session-migration');
-  await mkdir(join(cached, 'scripts'), { recursive: true });
-  await copyFile(new URL('./fixtures/stub-migrate.py', import.meta.url), join(cached, 'scripts', 'migrate.py'));
-  assert.equal(await findMigrationPlugin(home), cached);
-  assert.equal(defaultTargetDataDir(home), join(home, '.minimax'));
-  assert.equal(normalizeTargetDataDir('~/.minimax-alt', home), join(home, '.minimax-alt'));
+test('surfaces contract errors as a readable message', async (context) => {
+  const root = await mkdtemp(join(tmpdir(), 'deepseek-import-err-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const sourcePath = join(root, 'export.zip');
+  execFileSync(python, ['-c', `
+import sys
+sys.path.insert(0, sys.argv[1])
+import fixture
+from pathlib import Path
+fixture.write_export(Path(sys.argv[2]), fixture.sessions())
+`, join(FIXTURE, '..'), sourcePath]);
+  await assert.rejects(runMigrationCommand({
+    python,
+    action: 'plan',
+    sourcePath,
+    sessionIds: [BRANCHY],
+    reportPath: join(root, 'job.json'),
+    targetDataDir: join(root, 'missing-data-dir'),
+    workspace: join(root, 'DeepSeek'),
+  }), (error) => error.code === 'migration_failed' && /data directory/.test(error.message));
 });

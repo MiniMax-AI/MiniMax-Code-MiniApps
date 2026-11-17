@@ -6,8 +6,8 @@ const state = {
   selected: new Set(),
   active: null,
   planId: null,
-  migrationPluginInstalled: false,
 };
+const LABELS = { planned: 'ready', success: 'imported', skipped: 'already imported · skipped', failed: 'failed' };
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
@@ -22,11 +22,7 @@ async function loadState() {
   try {
     const saved = await api('/api/state');
     state.imported = new Set(saved.imported || []);
-    state.migrationPluginInstalled = Boolean(saved.migrationPlugin?.installed);
-    $('#plugin-status').textContent = saved.migrationPlugin?.installed
-      ? `agent-session-migration: ${saved.migrationPlugin.path}`
-      : saved.migrationPlugin?.message || 'agent-session-migration is not installed.';
-    $('#import').disabled = !state.migrationPluginInstalled;
+    $('#import').disabled = false;
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -124,7 +120,6 @@ function renderBlock(block) {
 async function planImport() {
   const selected = state.conversations.filter((item) => state.selected.has(item.stableId));
   if (!selected.length) return setStatus('Select at least one conversation to import.', true);
-  if (!state.migrationPluginInstalled) return setStatus('Install agent-session-migration first.', true);
   $('#import').disabled = true;
   try {
     setStatus(`Planning ${selected.length} native MCode session import${selected.length === 1 ? '' : 's'}…`);
@@ -136,13 +131,15 @@ async function planImport() {
     });
     state.planId = result.planId;
     renderMigrationResult('Import plan', result);
-    $('#confirm-import').disabled = !result.ok;
+    $('#confirm-import').disabled = !result.summary.planned;
     $('#migration-result').showModal();
-    setStatus(result.ok ? 'Plan ready. Review it before importing.' : 'The migration plan contains errors.', !result.ok);
+    setStatus(result.summary.planned
+      ? `${result.summary.planned} ready to import. Review the plan before importing.`
+      : 'Nothing new to import in this selection.', result.summary.failed > 0);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
-    $('#import').disabled = !state.migrationPluginInstalled;
+    $('#import').disabled = false;
   }
 }
 
@@ -160,9 +157,11 @@ async function applyImport() {
     state.planId = null;
     render();
     renderMigrationResult('Import result', result);
-    setStatus(result.ok
-      ? `Imported ${result.summary.succeeded} MCode session${result.summary.succeeded === 1 ? '' : 's'}.`
-      : `Import finished with ${result.summary.failed} failure${result.summary.failed === 1 ? '' : 's'}.`, !result.ok);
+    $('#confirm-import').disabled = true;
+    const skipped = result.summary.skipped ? `, ${result.summary.skipped} already imported` : '';
+    setStatus(result.summary.failed
+      ? `Imported ${result.summary.succeeded}${skipped}, ${result.summary.failed} failed.`
+      : `Imported ${result.summary.succeeded} MCode session${result.summary.succeeded === 1 ? '' : 's'}${skipped}.`, result.summary.failed > 0);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -170,13 +169,19 @@ async function applyImport() {
 
 function renderMigrationResult(title, result) {
   $('#result-title').textContent = title;
-  $('#result-summary').textContent = `${result.summary.total} total · ${result.summary.planned || result.summary.succeeded} ready/succeeded · ${result.summary.failed} failed`;
+  const { total, planned, succeeded, skipped, failed } = result.summary;
+  const parts = [`${total} total`];
+  if (planned) parts.push(`${planned} ready`);
+  if (succeeded) parts.push(`${succeeded} imported`);
+  if (skipped) parts.push(`${skipped} already imported`);
+  if (failed) parts.push(`${failed} failed`);
+  $('#result-summary').textContent = parts.join(' · ');
   $('#result-list').innerHTML = (result.sessions || []).map((item) => {
     const conversation = state.conversations.find((entry) => entry.sourceId === item.sessionId);
-    return `<li class="${esc(item.status)}"><b>${esc(conversation?.title || item.sessionId)}</b><span>${esc(item.status)}${item.message ? ` · ${esc(item.message)}` : ''}</span></li>`;
+    return `<li class="${esc(item.status)}"><b>${esc(conversation?.title || item.sessionId)}</b><span>${esc(LABELS[item.status] || item.status)}${item.message ? ` · ${esc(item.message)}` : ''}</span></li>`;
   }).join('');
-  $('#result-stderr').textContent = result.stderr || '';
-  $('#result-stderr').hidden = !result.stderr;
+  $('#result-stderr').textContent = result.error || '';
+  $('#result-stderr').hidden = !result.error;
 }
 
 function exportArchive() {
