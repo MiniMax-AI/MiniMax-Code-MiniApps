@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>插件上架材料工作台</title>
+    <link rel="stylesheet" href="/client/app.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>插件上架材料工作台</h1>
+          <p class="page-description">
+            填写插件清单与上架信息，逐项核对名称、版本、必填字段与内容一致性，生成可审核的上架材料包。
+          </p>
+        </div>
+        <div class="header-actions">
+          <button id="validate-button" class="button button-primary" type="button">运行检查</button>
+          <button id="package-button" class="button" type="button">生成上架材料包</button>
+        </div>
+      </header>
+
+      <p id="status-banner" class="status-banner" role="status" hidden></p>
+
+      <div class="layout">
+        <section class="panel" aria-labelledby="input-heading">
+          <h2 id="input-heading">上架信息</h2>
+
+          <form id="draft-form" novalidate>
+            <div class="field">
+              <label for="manifest-text">插件清单 <span class="required">必填</span></label>
+              <p class="field-hint">粘贴 .minimax-plugin/plugin.json 的完整内容。</p>
+              <textarea
+                id="manifest-text"
+                name="manifestText"
+                rows="12"
+                spellcheck="false"
+                placeholder='{ "schemaVersion": 1, "name": "acme-research", ... }'
+              ></textarea>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="market-name">期望市场名称 <span class="required">必填</span></label>
+                <input id="market-name" name="marketName" type="text" placeholder="Acme 研究助手" />
+              </div>
+              <div class="field">
+                <label for="category">目标分类 <span class="required">必填</span></label>
+                <select id="category" name="category">
+                  <option value="">请选择分类</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="summary">简介 <span class="required">必填</span></label>
+              <p class="field-hint">说明能解决什么问题，不写内部技术实现。</p>
+              <textarea id="summary" name="summary" rows="3" placeholder="检索研究资料并生成结构化综述。"></textarea>
+            </div>
+
+            <div class="field">
+              <label for="documentation">说明文档 <span class="required">必填</span></label>
+              <p class="field-hint">将写入包的 README.md。</p>
+              <textarea id="documentation" name="documentation" rows="8" placeholder="# Acme 研究助手&#10;&#10;使用说明……"></textarea>
+            </div>
+
+            <fieldset class="field">
+              <legend>示例 query（最多 3 条）</legend>
+              <div id="query-list" class="query-list"></div>
+              <button id="add-query" class="button button-quiet" type="button">添加一条</button>
+            </fieldset>
+
+            <fieldset class="field">
+              <legend>目标市场要求</legend>
+              <div class="field-row">
+                <div class="field">
+                  <label for="operation">操作类型 <span class="required">必填</span></label>
+                  <select id="operation" name="operation">
+                    <option value="new">上架新 Plugin</option>
+                    <option value="update">更新已有 Plugin</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="organization">组织/团队</label>
+                  <input id="organization" name="organization" type="text" placeholder="Acme" />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="submit-email">提交邮箱 <span class="required">必填</span></label>
+                  <input id="submit-email" name="submitEmail" type="email" placeholder="you@example.com" />
+                </div>
+                <div class="field">
+                  <label for="submit-account">提交飞书账号</label>
+                  <input id="submit-account" name="submitAccount" type="text" placeholder="用于查询提交进度" />
+                </div>
+              </div>
+              <div id="update-fields" class="field-row" hidden>
+                <div class="field">
+                  <label for="existing-name">原 Plugin 名</label>
+                  <input id="existing-name" name="existingName" type="text" placeholder="更新时 name 必须保持不变" />
+                </div>
+                <div class="field">
+                  <label for="previous-version">上次提交版本</label>
+                  <input id="previous-version" name="previousVersion" type="text" placeholder="1.0.0" />
+                </div>
+              </div>
+              <div class="checkbox-group">
+                <span class="checkbox-label">目标区域 <span class="required">必填</span></span>
+                <label><input type="checkbox" name="regions" value="CN" /> CN</label>
+                <label><input type="checkbox" name="regions" value="US" /> US</label>
+              </div>
+              <div class="checkbox-group">
+                <span class="checkbox-label">启用端 <span class="required">必填</span></span>
+                <label><input type="checkbox" name="enabledEnds" value="desktop" /> 桌面端</label>
+                <label><input type="checkbox" name="enabledEnds" value="cloud" /> 云端</label>
+              </div>
+            </fieldset>
+
+            <fieldset class="field">
+              <legend>素材</legend>
+              <p class="field-hint">
+                按角色上传：图标填 manifest 里的 icon 路径，Skill/MCP 填清单引用的相对路径，截图用于市场展示。
+              </p>
+              <div class="upload-row">
+                <select id="asset-role" aria-label="素材角色">
+                  <option value="icon">图标 icon</option>
+                  <option value="screenshot">截图 screenshot</option>
+                  <option value="skill">Skill 文件</option>
+                  <option value="mcp">MCP 文件</option>
+                  <option value="app">App 文件</option>
+                  <option value="doc">其他文件</option>
+                </select>
+                <input id="asset-name" type="text" placeholder="包内相对路径，如 icon.png" aria-label="素材路径" />
+                <button id="asset-upload" class="button" type="button">上传</button>
+              </div>
+              <input id="asset-file" type="file" class="visually-hidden" />
+              <ul id="asset-list" class="asset-list"></ul>
+            </fieldset>
+          </form>
+        </section>
+
+        <div class="side-column">
+          <section class="panel" aria-labelledby="check-heading">
+            <h2 id="check-heading">检查结果</h2>
+            <div id="summary-bar" class="summary-bar" role="status">尚未运行检查</div>
+            <div id="missing-list" class="missing-list"></div>
+            <div id="issue-list" class="issue-list"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="preview-heading">
+            <h2 id="preview-heading">上架预览</h2>
+            <div id="preview-body" class="preview-body">
+              <p class="empty-hint">填写信息并运行检查后，这里显示市场卡片预览。</p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="channel-heading">
+            <h2 id="channel-heading">提交通道与权限</h2>
+            <div id="channel-body" class="channel-body">
+              <p class="empty-hint">尚未探测提交通道。</p>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="package-heading">
+            <h2 id="package-heading">上架材料包</h2>
+            <div id="package-body" class="package-body">
+              <p class="empty-hint">还没有生成材料包。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+    <script src="/client/app.js" type="module"></script>
+  </body>
+</html>
