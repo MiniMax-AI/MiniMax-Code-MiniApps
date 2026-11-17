@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "express-media",
+  "displayName": "急件 · 视频投递",
+  "version": "1.1.0",
+  "description": "在本地把视频压到各平台能收的体积，并能如实告诉你发不发得出去。用于「视频太大发不出去」「微信/Telegram/Discord/邮件限制多少」「压到 25MB」「转 GIF 表情包」「视频太长要裁一段」这类场景。全部在本机处理，文件不上传。",
+  "author": "Andre-1998",
+  "icon": "icon.png",
+  "darkIcon": "icon-dark.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "这个视频 90MB，微信发不出去，帮我压到能发的大小",
+    "帮我查一下这个视频发到微信、Telegram、Discord 各是什么限制",
+    "把这段视频转成 GIF 表情包，控制在 1MB 以内"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": [
+    "skills/express-media/SKILL.md"
+  ]
+}

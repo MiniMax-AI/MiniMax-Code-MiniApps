@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>急件 · 平台限制速查</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; padding: 24px; font: 14px/1.6 system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+      h1 { margin: 0 0 4px; font-size: 20px; }
+      .sub { margin: 0 0 20px; opacity: .72; }
+      .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+      input { flex: 1 1 240px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit; font: inherit; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid rgba(128,128,128,.28); vertical-align: top; }
+      th { font-weight: 600; opacity: .78; }
+      td.id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; opacity: .8; }
+      .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(128,128,128,.45); }
+      .official { border-color: #2f9e44; }
+      .community { border-color: #e8a33d; }
+      .mixed { border-color: #d9484f; }
+      .notes { margin: 4px 0 0; opacity: .78; font-size: 13px; }
+      .src { margin: 4px 0 0; font-size: 12px; }
+      .src a { color: inherit; }
+      .empty { padding: 24px 0; opacity: .72; }
+      footer { margin-top: 24px; font-size: 12px; opacity: .7; }
+    </style>
+  </head>
+  <body>
+    <main id="app">
+      <h1>急件 · 平台限制速查</h1>
+      <p class="sub" id="sub">各平台视频体积与时长上限，以及这个数字是谁说的。</p>
+      <div class="bar">
+        <input id="q" type="search" placeholder="搜索平台，例如 微信 / Telegram / bilibili" autocomplete="off" />
+        <span id="count"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>平台</th><th>体积上限</th><th>时长上限</th><th>口径</th><th>说明与来源</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p class="empty" id="empty" hidden>没有匹配的平台。</p>
+      <footer>
+        表由插件内置的 data/platforms.json 提供，与命令行、skill 用的是同一份数据。<br />
+        压视频请直接在对话里说：比如「这个视频 90MB，微信发不出去，帮我压」。
+      </footer>
+    </main>
+    <script>
+      const CONFIDENCE = {
+        official: ['官方', 'official'],
+        community: ['社区实测', 'community'],
+        mixed: ['口径不一', 'mixed']
+      };
+      const rows = document.getElementById('rows');
+      const empty = document.getElementById('empty');
+      const count = document.getElementById('count');
+      const sub = document.getElementById('sub');
+      const search = document.getElementById('q');
+      let targets = [];
+
+      function bytes(value) {
+        if (!value && value !== 0) return '—';
+        if (value % 1073741824 === 0) return (value / 1073741824) + ' GB';
+        if (value % 1048576 === 0) return (value / 1048576) + ' MB';
+        return value + ' B';
+      }
+
+      function duration(seconds) {
+        if (!seconds && seconds !== 0) return '不限';
+        if (seconds % 3600 === 0) return '限 ' + (seconds / 3600) + ' 小时';
+        if (seconds % 60 === 0) return '限 ' + (seconds / 60) + ' 分钟';
+        return '限 ' + seconds + ' 秒';
+      }
+
+      function cell(row, text) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        row.appendChild(td);
+        return td;
+      }
+
+      function render(list) {
+        rows.textContent = '';
+        for (const item of list) {
+          const row = document.createElement('tr');
+          const name = cell(row, item.label || item.id);
+          const id = document.createElement('div');
+          id.className = 'id';
+          id.textContent = item.id;
+          name.appendChild(id);
+          cell(row, bytes(item.maxBytes));
+          cell(row, duration(item.maxDurationSec));
+          const conf = CONFIDENCE[item.confidence] || ['社区实测', 'community'];
+          const tagCell = document.createElement('td');
+          const tag = document.createElement('span');
+          tag.className = 'tag ' + conf[1];
+          tag.textContent = conf[0];
+          tagCell.appendChild(tag);
+          row.appendChild(tagCell);
+          const detail = document.createElement('td');
+          for (const note of item.notes || []) {
+            const p = document.createElement('p');
+            p.className = 'notes';
+            p.textContent = note;
+            detail.appendChild(p);
+          }
+          const sources = document.createElement('p');
+          sources.className = 'src';
+          (item.sources || []).forEach((source, index) => {
+            if (index > 0) sources.appendChild(document.createTextNode(' · '));
+            const link = document.createElement('a');
+            link.href = source.url;
+            link.target = '_blank';
+            link.rel = 'noreferrer noopener';
+            link.textContent = source.note || '来源';
+            sources.appendChild(link);
+          });
+          detail.appendChild(sources);
+          row.appendChild(detail);
+          rows.appendChild(row);
+        }
+        empty.hidden = list.length > 0;
+        count.textContent = list.length + ' 个平台';
+      }
+
+      function filter() {
+        const keyword = search.value.trim().toLowerCase();
+        if (!keyword) {
+          render(targets);
+          return;
+        }
+        render(targets.filter((item) =>
+          (item.id + ' ' + (item.label || '') + ' ' + (item.notes || []).join(' ')).toLowerCase().includes(keyword)
+        ));
+      }
+
+      search.addEventListener('input', filter);
+
+      fetch('api/platforms')
+        .then((response) => response.json())
+        .then((table) => {
+          targets = table.targets || [];
+          if (table.updatedAt) {
+            sub.textContent = '各平台视频体积与时长上限，以及这个数字是谁说的。数据更新于 ' + table.updatedAt + '。';
+          }
+          render(targets);
+        })
+        .catch(() => {
+          sub.textContent = '没能读到插件自带的平台限制表（data/platforms.json）。';
+          empty.hidden = false;
+        });
+    </script>
+  </body>
+</html>
