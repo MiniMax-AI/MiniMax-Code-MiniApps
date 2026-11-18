@@ -3,8 +3,13 @@
 English | [简体中文](README_ZH.md)
 
 DeepSeek Chat Migration previews the official DeepSeek web-app export, restores regenerated
-branches, reasoning, sources and attachments, then imports selected conversations as native
-MiniMax Code sessions with its own bundled importer. No other plugin is needed.
+branches, reasoning, sources and attachments, and lets you carry the conversations you pick into
+the MiniMax Code chat the Mini App is open in. It adds them to that chat's input through the
+documented `message.append` API: MiniMax Code asks you to confirm, then you review the text and
+press Send yourself. No other plugin is needed.
+
+The Mini App does not create, import or edit MiniMax Code sessions, and it never reads or writes
+MiniMax Code's own databases or session files.
 
 ## Export from DeepSeek
 
@@ -18,117 +23,68 @@ The app never logs in to DeepSeek, reads browser sessions or scrapes the website
 
 ## Install and open
 
-1. Download this `deepseek-chat-migration` directory. Python 3.9 or later must be available
-   as `python3` (`python` on Windows); the importer uses only the standard library.
+1. Download this `deepseek-chat-migration` directory.
 2. In MiniMax Code, ask the Agent to install this Mini App directory.
-3. Open **DeepSeek Chat Migration**, then choose the ZIP downloaded from DeepSeek.
-4. Review the restored conversations and select those to migrate. The **全选** checkbox in
-   the toolbar selects or clears every conversation not yet imported.
-5. Sessions are always imported into `~/.minimax` for the `mavis` agent and grouped under a
-   `DeepSeek` project (`~/DeepSeek`, created empty if missing); there is nothing to configure.
-6. Choose **Import as MCode sessions**. While the plan is generated the button shows
-   「生成预览中…」. Review the plan, then choose **Confirm import**.
-7. While importing, the dialog and the footer show a progress bar and 「导入中 12/50」; each row
-   flips to imported as soon as its batch is written. The result lists every selected session as
-   imported, already imported (skipped) or failed.
-8. Choose **打开 DeepSeek 项目** to go straight to what you imported. The button sits in the
-   page header at all times, even on a fresh page before any upload, and shows how many DeepSeek
-   sessions MiniMax Code already has; the result dialog has the same button. On MiniMax Code
-   3.1.11 or later the Host opens the most recent imported conversation, which sits in the
-   `DeepSeek` project of the sidebar. With nothing imported yet, on older clients, or if the Host
-   cannot open it, the Mini App opens the `~/DeepSeek` folder (creating it if needed) in Finder,
-   Explorer or the Linux file manager instead.
-9. Changed your mind? Right after an import, **撤销本次导入** in the result dialog removes exactly
-   the sessions that run added, after a confirmation. If any of them was used since (say, you
-   continued the chat), nothing is removed and the dialog asks again before **仍然撤销**.
+3. Open **DeepSeek Chat Migration** in the chat where you want to continue, then choose the ZIP
+   downloaded from DeepSeek. It is parsed inside the page.
+4. Click a conversation to preview it: every branch, with reasoning, sources and attachments as
+   collapsible blocks. Tick one or more conversations to carry several at once (**全选** in the
+   toolbar ticks or clears all). With nothing ticked, the previewed conversation is used.
+5. Optionally tick **包含思考过程 · reasoning** and **包含搜索来源 · sources**. The footer shows
+   how long the text will be.
+6. Choose **添加到对话输入框 · Add to chat input**. MiniMax Code shows its own confirmation with the
+   plugin, the target chat and the text. After you confirm, the text is appended to the unsent
+   draft; nothing is sent until you press Send. Each click needs its own confirmation.
+7. **复制 · Copy** puts the same text on the clipboard instead, for another chat or an older client.
+   **Export DeepSeek archive** downloads `deepseek-chat-archive.zip` (Markdown per conversation,
+   attachments included in the export, and an offline search page) as a separate backup.
 
-### What an imported session contains
+### What the added text contains
 
-- The title becomes `[From DeepSeek] <title>`; creation, update and message times are kept.
-- Only the branch DeepSeek last showed (root to `current_message_id`) is displayed and becomes the
-  model's continuation history. Regenerated or edited-away branches are kept in a per-session
-  source archive next to the history, not in the conversation.
-- `THINK` reasoning is shown in the transcript but never sent back to the model.
-- Web searches become read-only historical tool records with queries and results.
-- Uploaded files are kept as references (name, size, path in the export); bytes are not copied.
-- Replies that timed out or were cut off carry a short historical error note.
-
-An import no longer copies `runtime-state.sqlite` first (on a 3.5 GB database that copy was most
-of the wait and needed as much free disk again). Instead each run keeps a small undo journal,
-`~/.minimax/deepseek-migration/<run>/undo.json`, listing the rows it inserted, the before-image of
-the one existing row it updates (the `DeepSeek` project's visibility and restore marker) and the
-files and folders it created. Sessions are written in batches of 10, each in one transaction
-together with its journal entry, with a read-back check after every commit. A session that cannot be imported is reported on its own and
-never blocks the others. Target sessions are
-keyed by a hash of the DeepSeek account id plus the session id, so importing the same export
-again (even after re-downloading it) skips what is already there.
-
-Conversation order and titles come from `chat_session_index.json` when present. Messages are
-restored from `parent_id` and `current_message_id`; regenerated answers remain visible as alternate
-branches. `THINK` fragments render as collapsible reasoning, and search fragments render as
-collapsible sources. Already imported conversations are matched by source ID plus a stable content
-hash and skipped when the same export is opened again.
-
-The Markdown archive button remains available as a secondary backup. Native-session import is the
-primary workflow.
+- A one-line note that the following is earlier DeepSeek history, to be treated as background.
+- Per conversation: `## <title> (<date>)`, then the branch DeepSeek last showed (root to
+  `current_message_id`) as `### User` / `### DeepSeek` turns. Regenerated or edited-away branches
+  are left out; they stay visible in the preview and in the archive.
+- Reasoning and search sources only when their boxes are ticked. Attachments appear as file names
+  (`Attached in DeepSeek: …`); file contents are not added.
+- `message.append` takes at most 100,000 characters. When the selection is longer, each
+  conversation keeps its first user turn and as many of its latest turns as fit, with a marker
+  saying how many messages in between were left out; the footer says so before you add it. For the
+  full text, use the archive.
 
 ## Tested environment
 
-- MiniMax Code 3.1.11 on Windows 11
-- Node.js 22 parser and unit tests on Linux
-
-The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out window. Opening
-the imported conversation from the Mini App needs MiniMax Code 3.1.11 or later; older clients get
-the `~/DeepSeek` folder in the file manager instead.
+- Node.js 22 parser, draft and runtime tests on Linux (`node --test tests/*.test.mjs`).
+- This revision has not yet been run inside a MiniMax Code host. It needs a client that provides
+  `window.mcode.miniapp.message.append`; without it, **Add to chat input** is disabled and **Copy**
+  still works. The Mini App requires MiniMax Code 3.1.2 or later because it declares a pop-out
+  window.
 
 ## Data & access
 
-- **Files read:** only the official DeepSeek ZIP or a compatible DeepSeek JSON the user explicitly
-  picks in the page. Parsing happens locally. The app does not inspect browser sessions, scrape
-  `chat.deepseek.com`, upload the export, or read any other Host file.
-- **Files written:** the selected ZIP is streamed to a temporary directory under the Host-owned,
-  opaque `context.dataDir`; it is replaced on the next upload and removed when the runtime stops.
-  Successful import hashes are written atomically
-  to `context.dataDir/state.json`. The migration process writes native sessions under the target
-  MCode data directory only after the user confirms the plan.
-- **Process spawned:** `python3 miniapp/python/import_deepseek.py` (bundled with this Mini App),
-  first with `plan` and then, after confirmation, with `apply` on the same report. Arguments are
-  passed as an array without a shell: `--source <temporary ZIP>`, one `--session <id>` per
-  selection, `--report <temporary report>`, `--data-dir ~/.minimax`, `--agent mavis`,
-  `--workspace ~/DeepSeek` and `--restore-projects` (re-shows the DeepSeek project if it was
-  removed from the sidebar), plus `--batch-size 10` for apply. Its progress lines on stderr drive
-  the progress bar. Each run's undo journal and batch reports go to
-  `~/.minimax/deepseek-migration/<run>/`; the write lock is shared with the MiniMax Code migration
-  plugin in `~/.minimax/zcode-migration/`. **撤销本次导入** runs the same script with
-  `undo --run <undo.json> --data-dir ~/.minimax` (plus `--force` after the second confirmation),
-  and the header button asks it (`project`) for the DeepSeek session count and the latest one.
-- **Folder opener (fallback only):** when nothing is imported yet or the Host cannot open the
-  imported conversation, choosing **打开 DeepSeek 项目** creates `~/DeepSeek` if missing and runs
-  `open ~/DeepSeek` on macOS, `explorer.exe ~/DeepSeek` on Windows or `xdg-open ~/DeepSeek` on
-  Linux, with an argument array and no shell.
-- **Agent and conversations:** the Mini App runs no Agent turns, reads no MiniMax Code
-  conversations, and does not use `message.append`. The bundled importer creates native sessions.
-- **Network:** no direct network requests and no external hosts.
-- **Host navigation:** **打开 DeepSeek 项目** calls `window.mcode.miniapp.host.navigation.open`
-  with `{ id: 'session', sessionId, source: 'local' }` for the latest session in the DeepSeek
-  project, only from that click. It does not declare `hostAccess` and never reads which page you are on.
-- **Other capabilities:** apart from the disclosed processes, it calls no MCP or Connector tools
-  and uses no microphone, camera or notifications.
+- **Files read:** only the DeepSeek ZIP or JSON you pick in the page, read in the page itself. The
+  app reads no Host files: no MiniMax Code database, session file or project folder.
+- **Files written:** none. Nothing is stored in `context.dataDir` or browser storage; the parsed
+  export lives in the page until it is closed or reloaded. **Export DeepSeek archive** is a normal
+  browser download.
+- **Chat input:** **Add to chat input** calls `window.mcode.miniapp.message.append` with the text
+  described above, only from that click. MiniMax Code asks you to confirm each call, and you send
+  the message yourself. The Mini App cannot send messages, read chat history or change sent
+  messages.
+- **Clipboard:** **Copy** writes the same text to the clipboard; the app never reads the clipboard.
+- **Processes:** the Node entry only serves the page and its assets. It spawns no processes.
+- **Agent and conversations:** no `agentAccess`; the Mini App runs no Agent turns and reads no
+  MiniMax Code conversations.
+- **Network:** no network requests and no external hosts.
+- **Other capabilities:** no `hostAccess`, `toolAccess`, MCP or Connector tools, microphone, camera
+  or notifications.
 
 ## Prototype limits
 
 - The official DeepSeek version-3 ZIP layout is the primary supported format. Two older DeepSeek
   JSON shapes remain accepted for compatibility.
 - ZIP input supports STORE and DEFLATE entries, including entries that use data descriptors.
-- Attachment metadata is preserved. Binaries present under `chat_sessions/<id>_files/` are included
-  when the selected conversation is exported; missing binaries remain references.
-- Attachment bytes are not copied into MiniMax Code; imported sessions keep file references.
-- The target is fixed to the `~/.minimax` data directory and the `mavis` agent.
-
-## Credits
-
-The importer in `miniapp/python/` is adapted from the MiniMax Code team's
-`agent-session-migration` plugin (author: Insider): its storage core (lock, transaction,
-read-back, history initialization) and checkpointed job, reduced to the DeepSeek source. Target
-identities and marker files match that plugin's DeepSeek source, so sessions imported by either
-tool are recognized by the other.
+- Conversations continue inside the current chat as context. The Mini App cannot create native
+  MiniMax Code sessions with the original messages and timestamps; no Mini App API offers that.
+- Very long selections are shortened to fit the 100,000-character chat input limit, as described
+  above.

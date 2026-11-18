@@ -5,8 +5,7 @@
       "./miniapp/client"
     ],
     "node": [
-      "./miniapp/node",
-      "./miniapp/python"
+      "./miniapp/node"
     ]
   },
   "runtime": {

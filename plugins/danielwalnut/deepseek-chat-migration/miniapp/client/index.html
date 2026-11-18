@@ -9,21 +9,18 @@
   <body>
     <header>
       <div class="brand"><img class="mark" src="/assets/icon.png" width="32" height="32" alt=""><div><b>DeepSeek Chat Migration</b><small>DeepSeek 会话迁移</small></div></div>
-      <div class="header-actions">
-        <div class="privacy">DeepSeek export · local parsing</div>
-        <button id="header-open" class="open-project" type="button" title="打开 DeepSeek 项目"><span>打开 DeepSeek 项目</span><i id="header-count" hidden></i></button>
-      </div>
+      <div class="privacy">DeepSeek export · local parsing</div>
     </header>
     <main>
       <section class="hero">
         <p class="eyebrow">DEEPSEEK CONVERSATION MIGRATION</p>
-        <h1>Bring your DeepSeek history.<br><em>Continue as native MCode sessions.</em></h1>
-        <p>Open DeepSeek's official export, inspect restored branches and sources, then import selected conversations into MiniMax Code.</p>
+        <h1>Bring your DeepSeek history.<br><em>Continue it in MiniMax Code.</em></h1>
+        <p>Open DeepSeek's official export, inspect restored branches and sources, then add the conversations you pick to this chat's input. You review the text there and press Send.</p>
         <label class="drop" id="drop">
-          <input id="file" type="file" accept=".zip">
+          <input id="file" type="file" accept=".zip,.json">
           <span class="drop-icon">↓</span>
           <b>Choose your DeepSeek export ZIP</b>
-          <small>Settings → Data → Export · parsed locally, never uploaded</small>
+          <small>Settings → Data → Export · parsed in this page, never uploaded</small>
         </label>
       </section>
 
@@ -38,37 +35,15 @@
           <article id="preview"><div class="empty">Select a conversation to preview its restored structure.</div></article>
         </div>
         <footer>
-          <span id="status-wrap"><span id="status">Ready</span><span id="footer-progress" class="progress mini" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span></span>
-          <button id="footer-open" hidden>打开 DeepSeek 项目</button>
+          <span id="status">Ready</span>
+          <label class="option"><input id="with-reasoning" type="checkbox"> 包含思考过程 · reasoning</label>
+          <label class="option"><input id="with-sources" type="checkbox"> 包含搜索来源 · sources</label>
           <button id="archive" class="quiet">Export DeepSeek archive</button>
-          <button id="import" disabled>导入为 MCode 会话 · Import as MCode sessions</button>
+          <button id="copy" class="quiet">复制 · Copy</button>
+          <button id="append">添加到对话输入框 · Add to chat input</button>
         </footer>
       </section>
     </main>
-    <dialog id="migration-result">
-      <form method="dialog"><button class="close" aria-label="Close">×</button></form>
-      <p class="eyebrow">NATIVE SESSION IMPORT · ~/.minimax · mavis</p>
-      <h2 id="result-title">Import plan</h2>
-      <p id="result-summary"></p>
-      <div id="progress" class="progress-block" hidden>
-        <span class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></span>
-        <small id="progress-label">准备导入…</small>
-      </div>
-      <ul id="result-list" class="result-list"></ul>
-      <pre id="result-stderr" hidden></pre>
-      <div id="undo-confirm" class="undo-confirm" hidden>
-        <span id="undo-text"></span>
-        <button id="undo-no" class="link" type="button">取消</button>
-        <button id="undo-yes" class="quiet danger" type="button">确认撤销</button>
-        <button id="undo-force" class="quiet danger" type="button" hidden>仍然撤销</button>
-      </div>
-      <div class="dialog-actions">
-        <button id="undo-import" class="link undo" type="button" hidden>撤销本次导入</button>
-        <form method="dialog"><button class="quiet">Close</button></form>
-        <button id="open-project" hidden>打开 DeepSeek 项目</button>
-        <button id="confirm-import">Confirm import</button>
-      </div>
-    </dialog>
     <script type="module" src="/assets/app.js"></script>
   </body>
 </html>
