@@ -571,9 +571,9 @@ test('held supplements require an explicit continuation and a failed action leav
 });
 
 test('a request stranded by a restart offers to send it again, and one this page just sent does not', async () => {
-  // dispatchRevision is written when a delivery state changes, so a recovered request has one and
-  // a request the composer just created does not.
-  const stranded = message('msg_stranded', 'Ship the hotfix', { role: 'user', dispatchState: 'pending', dispatchRevision: 1 });
+  // A request that reached the disk and then lost the process before any state change carries no
+  // dispatchRevision; it is still recoverable, and the server says so too.
+  const stranded = message('msg_stranded', 'Ship the hotfix', { role: 'user', dispatchState: 'pending' });
   await reset([stranded]);
   const button = document.querySelector('.message-delivery button');
   assert.equal(button.textContent, 'Continue with follow-ups');
@@ -581,8 +581,13 @@ test('a request stranded by a restart offers to send it again, and one this page
   button.click(); await settle();
   assert.equal(calls.filter((call) => call.path.endsWith('/resume-pending')).length, 1);
 
+  // A request this page just sent is pending with no reply too; it must not offer to resume itself.
+  await reset();
   const fresh = message('msg_fresh', 'Just typed', { role: 'user', dispatchState: 'pending' });
-  await reset([fresh]);
+  route = ({ path, options }) => path.endsWith('/messages') && options.method === 'POST'
+    ? response({ message: fresh }) : undefined;
+  type('Just typed'); enter(); await settle();
+  assert.equal(document.querySelector('.message-delivery button'), null);
   assert.equal(document.querySelector('.message-delivery button'), null);
 });
 

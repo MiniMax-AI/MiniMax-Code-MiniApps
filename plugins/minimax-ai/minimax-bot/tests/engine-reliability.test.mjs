@@ -1275,3 +1275,47 @@ test('sending after Stop does not restore an explicitly cancelled request that n
   assert.equal(original.dispatchState, 'cancelled');
   assert.equal(replacement.dispatchState, 'delivered');
 });
+
+test('a resume that loses the race to a same-id retry does not send the request twice', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const text = 'Ship the hotfix';
+  // A request the restart left pending, with no reply.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text, clientMessageId: 'race-1',
+    clientMessageHash: engine.userMessageFingerprint(text, []), dispatchState: 'pending',
+  });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'reply'), status: 'finished', text: 'Reply' };
+  } };
+
+  // Hold the resume's write, so the retry gets in first.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const realUpdate = store.updateMessages.bind(store);
+  let held = false;
+  store.updateMessages = async (id, ids, patch, options) => {
+    if (!held && patch?.dispatchState === 'pending') { held = true; await gate; }
+    return realUpdate(id, ids, patch, options);
+  };
+
+  const resuming = engine.inbox.resume(chatId).catch((error) => error);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await engine.sendUserMessage(chatId, text, [], 'race-1').catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  release();
+  await resuming;
+  await until(() => idle(engine));
+
+  // One request, one turn, one reply that answers it.
+  assert.equal(runs, 1);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.role === 'bot' && message.sourceMessageId === user.id).length, 1);
+  engine.dispose();
+  await store.writeChain;
+});

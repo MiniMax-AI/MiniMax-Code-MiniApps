@@ -248,6 +248,9 @@ function rowMenu(event, chatId) {
 const ui = {};
 const drafts = new Map();
 const submissions = new Map();
+// Message ids this page sent in this session. A request the composer just created is `pending` with
+// no reply, exactly like one a restart stranded, and only this set tells them apart.
+const sentHere = new Set();
 let mounted = '';
 let mountRevision = 0;
 let revealRevision = 0;
@@ -793,10 +796,10 @@ function userDelivery(message) {
   if (!status || status === 'processing' || status === 'delivered') return null;
   const key = `${message.chatId}:${message.id}`;
   // A restart leaves an accepted request pending with no queue left to send it and nothing running.
-  // Offer the same resume on the proof the server uses: nothing was ever written back for it.
-  // dispatchRevision is only written when a delivery state changes, so a request this page just
-  // sent has none yet and never offers to resume itself.
-  const stranded = status === 'pending' && message.dispatchRevision > 0 && !state.busy.has(message.chatId)
+  // Offer the same resume on the proof the server uses: nothing was ever written back for it. The
+  // server does not look at `dispatchRevision` either — a request that reached the disk and then
+  // lost the process before any state change is recoverable too, and it carries no revision.
+  const stranded = status === 'pending' && !sentHere.has(message.id) && !state.busy.has(message.chatId)
     && !(state.messages.get(message.chatId) ?? []).some(
       (item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
   const button = status === 'held' || stranded ? h('button', {
@@ -1439,7 +1442,10 @@ async function submit() {
   const stillHere = () => mounted === chatId && ui.input;
   try {
     const result = await api('POST', `/api/chats/${chatId}/messages`, { ...body, clientMessageId: submission.clientMessageId });
-    if (result.message?.id && result.message.chatId === chatId) upsertMessage(cacheMessage(result.message));
+    if (result.message?.id && result.message.chatId === chatId) {
+      sentHere.add(result.message.id);
+      upsertMessage(cacheMessage(result.message));
+    }
     submissions.delete(chatId);
     // A file added while the POST was pending belongs to the next send.
     const sentKeys = new Set(ready.map((file) => file.key));

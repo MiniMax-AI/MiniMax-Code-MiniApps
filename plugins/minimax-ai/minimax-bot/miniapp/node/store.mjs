@@ -574,15 +574,18 @@ export class Store {
   }
 
   /** Commit one inbox batch atomically, preserving streaming message object identity. */
-  async updateMessages(chatId, messageIds, patch) {
+  async updateMessages(chatId, messageIds, patch, options = {}) {
     await this.getMessages(chatId);
     const ids = new Set(messageIds);
     return this.enqueue(async () => {
       const list = this.messageCache.get(chatId) ?? [];
-      const selected = list.filter((message) => ids.has(message.id));
+      // `when` keeps the selection to messages still in the state the caller reached them in: a
+      // resume that read `held` must not overwrite a state another path wrote while it waited.
+      const selected = list.filter((message) => ids.has(message.id) && (!options.when || options.when(message)));
+      const touched = new Set(selected.map((message) => message.id));
       const patches = new Map(selected.map((message) => [message.id, Object.hasOwn(patch, 'dispatchState')
         ? { ...patch, dispatchRevision: (message.dispatchRevision ?? 0) + 1 } : patch]));
-      await writeJsonAtomic(this.messagePath(chatId), list.map((message) => ids.has(message.id) ? { ...message, ...patches.get(message.id) } : message));
+      await writeJsonAtomic(this.messagePath(chatId), list.map((message) => touched.has(message.id) ? { ...message, ...patches.get(message.id) } : message));
       for (const message of selected) Object.assign(message, patches.get(message.id));
       return selected;
     });
