@@ -100,6 +100,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - **Start new chat**, deleting a Bot and deleting a group all empty the transcript and then write the state that forgets the chat. When that state write failed, the empty transcript was already on disk: the request reported a failure, the chat was still listed, and its history was gone for good.
 - The state is now written first, and the in-memory session entry is dropped only after that write succeeded. A failure leaves the chat, its messages and its session cursor as they were, so the same action can simply be tried again.
 
+## 0.7.30 A create that fails does not leave the thing behind
+
+- Creating a Bot, a group or a scheduled task writes into the live state and then saves it. When that save failed, the new object stayed in memory: the request reported a failure while the Bot, group or task was already there, and the next unrelated save — changing a setting, any other write — published it to disk. After a restart the thing the user was told had failed was in the team.
+- A failed save now puts the state back: a new object is removed and a changed schedule returns to the values still on disk, so a refusal leaves nothing for a later save to publish. This is the rule `updateBot` already followed; the three create paths now do the same.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

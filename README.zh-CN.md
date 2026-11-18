@@ -58,6 +58,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | MiniApp | 功能 | 作者 |
 | --- | --- | --- |
 | [LivePage Workbench / 活页场景工作台](plugins/ersiwangluo/livepage-workbench/) | 将行业资讯、活动资料和门店数据整理为日报、邀请函与经营复盘任务：原生模板预览、可编辑草稿，可选授权活页发布 | [二四网络](https://github.com/ersiwangluo) |
+| [DeepSeek 会话迁移](plugins/danielwalnut/deepseek-chat-migration/README_ZH.md) | 在本机预览 DeepSeek 网页版官方导出包，恢复分支和附件，并用自带的导入脚本把选中对话导入成 MiniMax Code 原生会话 | [DanielWalnut](https://github.com/DanielWalnut) |
 | [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | 把 OpenFilm 装进 MiniMax Code：桌面版界面（Studio 编辑器 + 聊天栏 + 本地 agent），桌面模式不可用时回落网页版 | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | 图层图片编辑、应用内 AI 助手、本地恢复与程序化编辑工具 | [WebGuHui](https://github.com/WebGuHui) |
@@ -83,7 +84,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [磁盘透视](plugins/zch0227/disk-insight/README.zh-CN.md) | 查看 macOS 和 Windows 的磁盘空间去向：旭日图空间地图，按三档风险分类的垃圾文件，大文件和重复文件，代码仓库和 Git worktree 的占用；任何条目都可以问 Agent，选中的条目在确认框里逐一列出，确认后直接永久删除。需要 MiniMax Code 3.1.2 或更高版本 | [zch0227](https://github.com/zch0227) |
 | [A/时差保安](plugins/liuchen19960902/timezone-guard/README.zh-CN.md) | 发消息前先看对方那边几点：按对方城市当地时间给出「现在可以聊 / 短聊就好 / 先睡，别发」三档判定。需要 MiniMax Code 3.1.2 或更高版本 | [FineCat](https://github.com/LiuChen19960902) |
 | [AI 节点画布](plugins/antianqi/ai-node-canvas/README.zh-CN.md) | MiniMax Code 里的无限画布节点图：把文本、图片、视频、音频的生成接成一张图，结果顺着连线往下传；能在时间轴上剪片段、把视频里的声音分离出来，任何一张结果都能直接做二次处理 | [antianqi](https://github.com/antianqi) |
-| [MiniMax Bot 团队](plugins/antianqi/minimax-bot-team/) | 现在的 bot 像一个人轮流带着几个面具跟你聊天；MiniMax Bot Team 给你一支真正各有能力、各有性格的团队，还能围坐一起从不同角度讨论同一个问题 | [antianqi](https://github.com/antianqi) |
+| [An-bot-team 团队](plugins/antianqi/an-bot-team/) | 现在的 bot 像一个人轮流带着几个面具跟你聊天；An-bot-team 给你一支真正各有能力、各有性格的团队，还能围坐一起从不同角度讨论同一个问题 | [antianqi](https://github.com/antianqi) |
 | [Agent 协作透视](plugins/huixin615/agent-flow/README.zh-CN.md) | 手动导入插件 Hook 记录，查看原生 task 调用与子 Agent 运行区间；有明确 ID 时关联父子任务。可选择记录会话或一键查看最近导入的记录，不读取宿主会话文件。需要 MiniMax Code 3.1.4 或更高版本 | [Huixin615](https://github.com/Huixin615) |
 | [蹬王之王](plugins/hylouis233/expiry-guardian/README.md) | 看你自己维护的本地账本，算出「该用卡还是该留积分」，并把理由说清楚 | [Hylouis](https://github.com/Hylouis233) |
 | [MiniMax Pet](plugins/minimax-ai/minimax-pet/README.zh-CN.md) | 提供外观／任务／设置、可见会话状态、需要回答提醒、按 Markdown 渲染的回复、一键打开任务对话（3.1.11 起）和透明桌宠；需要 MiniMax Code 3.1.6 或更高版本 | [MiniMax](https://github.com/MiniMax-AI) |

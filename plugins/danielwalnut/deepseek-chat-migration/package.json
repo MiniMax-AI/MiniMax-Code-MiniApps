@@ -1,0 +1,14 @@
+{
+  "name": "deepseek-chat-migration",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:python": "python3 -B -m unittest discover -s tests/python -t tests/python"
+  },
+  "mcode": {
+    "schemaVersion": 2,
+    "miniApp": "./miniapp/miniapp.json"
+  }
+}
