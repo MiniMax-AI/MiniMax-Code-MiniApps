@@ -384,7 +384,7 @@ function formatDuration(ms) {
 
 /**
  * @param {any} context
- * @param {{bubbleMs?: number}} [options] 测试用的时长覆盖（生产不传）
+ * @param {{bubbleMs?: number, boardIntervalMs?: number}} [options] 测试用的时长覆盖（生产不传）
  */
 export async function start(context, options = {}) {
   // 聊天历史独立于 state.json：chat.json。
@@ -502,7 +502,7 @@ export async function start(context, options = {}) {
   // 从本文件抽成独立模块 `observe.mjs`：
   // 它只认注入进来的 `context` 和 `state`，自己的状态（订阅取消器 / 退避计时器 /
   // 看板计时器 / 轮次正文缓存）全在自己的闭包里，不再挤在这个大闭包的外层。
-  const observe = createObserve({ context, state, onTaskEvent });
+  const observe = createObserve({ context, state, onTaskEvent, boardIntervalMs: options.boardIntervalMs });
   state.setAgentTracking({ available: observe.agentAvailable, capability: observe.observeCapability });
 
   // ============ 闲话生产者（idle）：她不说话的时候也在活着 ============
@@ -1155,6 +1155,9 @@ export async function start(context, options = {}) {
         if (path === '/api/petaware') {
           const enabled = body.enabled === true || body.enabled === 'true';
           const petAware = await state.setPetAware(enabled);
+          // ⚠️ **开关要真的落到采集层**（官方插件市场 2026-11-16 评审）：
+          //   关 ⇒ 掐断订阅 + 停掉 sessions() 轮询；开 ⇒ 恢复订阅与看板。
+          observe.setAware(petAware);
           sendJson(response, 200, { ok: true, petAware, snapshot: state.snapshot() });
           return;
         }

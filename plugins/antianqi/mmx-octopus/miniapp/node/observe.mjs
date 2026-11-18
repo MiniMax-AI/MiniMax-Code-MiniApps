@@ -53,7 +53,7 @@ const TURN_TEXT_SESSIONS = 50;
  *   dispose: () => void,
  * }}
  */
-export function createObserve({ context, state, onTaskEvent = null }) {
+export function createObserve({ context, state, onTaskEvent = null, boardIntervalMs = BOARD_INTERVAL }) {
   // 这几个在 createServer 之前算好：请求处理器会读它们，不能等到后面才初始化。
   const agentAvailable = !!context.agent;
   const capabilitiesKnown = !!context.capabilities;
@@ -481,6 +481,10 @@ export function createObserve({ context, state, onTaskEvent = null }) {
    */
   function scheduleObserve() {
     if (observeStarted || !agentAvailable || context.signal.aborted) return;
+    // ⚠️ **她知道 MCode 在干什么**这个开关关着 ⇒ **一个跨会话事件都不订阅**。
+    //   （官方插件市场 2026-11-16 评审：关掉就必须真的不采集，
+    //     不能只是「收了不往提示词里写」。）
+    if (!state.petAware) return;
     observeStarted = true;
     // G2：宿主明确不支持 observe —— 直说，不做无意义的退避重试。
     if (!observeSupported) {
@@ -498,6 +502,8 @@ export function createObserve({ context, state, onTaskEvent = null }) {
    */
   function scheduleBoard() {
     if (boardStarted || !agentAvailable || context.signal.aborted) return;
+    // ⚠️ **同一个开关**：关着就不列会话 —— 看板本身也是跨会话信息。
+    if (!state.petAware) return;
     boardStarted = true;
     // 激活延迟是毫秒级的，1 秒足够越过；太早调用只会拿到一次假的失败。
     boardTimer = setTimeout(() => {
@@ -505,7 +511,7 @@ export function createObserve({ context, state, onTaskEvent = null }) {
       void refreshBoard();
       boardTimer = setInterval(() => {
         void refreshBoard();
-      }, BOARD_INTERVAL);
+      }, boardIntervalMs);
     }, 1000);
   }
 
@@ -516,9 +522,46 @@ export function createObserve({ context, state, onTaskEvent = null }) {
   function restartObserve() {
     if (!agentAvailable || context.signal.aborted) return;
     stopObserve();
+    // ⚠️ **关着就不订阅**（与 scheduleObserve 同一个判断在同一个地方）。
+    if (!state.petAware) {
+      observeStarted = false;
+      return;
+    }
     observeAttempts = 0;
     observeStarted = true;
     observeTimer = setTimeout(attemptObserve, 900);
+  }
+
+  /**
+   * 「她知道 MCode 在干什么」开关落地：**关 ⇒ 真的不采集**。
+   *
+   * ⚠️ **关掉时要做三件事**（官方插件市场 2026-11-16 评审）：
+   *   ① 掐断订阅（`observe`）—— 不再收任何跨会话事件；
+   *   ② 停掉看板计时器 —— 不再调 `sessions()` 列会话；
+   *   ③ 清掉已经显示出来的跨会话信息（看板、订阅状态、会话计数）。
+   *   ⚠️ 只在提示词里不拼摘要**不算数** —— 那是「收了不用」，不是「没收」。
+   *
+   * @param {boolean} enabled
+   */
+  function setAware(enabled) {
+    if (enabled) {
+      // 重新走一遍「排订阅 / 排看板」—— 关过一次之后这两步被跳过过了。
+      observeStarted = false;
+      boardStarted = false;
+      scheduleObserve();
+      scheduleBoard();
+      return;
+    }
+    stopObserve();
+    observeStarted = false;
+    if (boardTimer) {
+      clearTimeout(boardTimer);
+      clearInterval(boardTimer);
+      boardTimer = null;
+    }
+    boardStarted = false;
+    state.setAgentTracking({ subscribed: false, sessions: 0, sessionTitle: null, error: null });
+    void state.setBoard({ running: [], recent: [] }).catch(() => undefined);
   }
 
   /**
@@ -544,6 +587,7 @@ export function createObserve({ context, state, onTaskEvent = null }) {
     scheduleBoard,
     restartObserve,
     stopObserve,
+    setAware,
     listSessions,
     runningSince,
     dispose,

@@ -234,6 +234,40 @@ function clock(ms) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/**
+ * 跨会话采集开关的**升级迁移**（**唯一实现** —— load() 与判据都走这里）。
+ *
+ * ⚠️ **为什么必须有这一步**（官方插件市场评审 2026-11-17，PR #138）：
+ *   1.9.0 的默认值是 true ⇒ 1.9.0 会把 true 落进 state.json。
+ *   升级上来的用户**从没点过那个开关** —— 存下来的那个 true 只是旧默认值，
+ *   **说明不了他同意过跨会话采集** ⇒ 拿它当「用户的选择」＝ 没经同意就采集。
+ *
+ * 规则（就这一处，别处不再写一遍）：
+ *   - 带 petAwareOptIn 标记的存档 ⇒ 用户**明确 opt-in 过** ⇒ 按他存下来的开关值恢复；
+ *   - 其余（旧存档，1.9.0 及更早，没有这个标记）⇒ **一律重置为关**，
+ *     并留一条 petAwareReset 提示，请用户需要时手动打开。
+ *
+ * @param {any} saved 读回来的整个存档（没有存档时是 null）
+ * @returns {{petAware: boolean, petAwareOptIn: boolean, petAwareReset: boolean}}
+ */
+export function migratePetAware(saved) {
+  // 用户明确 opt-in 过 ⇒ 按他存下来的开关值恢复（之后他自己关过就是关）。
+  if (saved && saved.petAwareOptIn === true) {
+    return {
+      petAware: saved.petAware === true,
+      petAwareOptIn: true,
+      petAwareReset: false,
+    };
+  }
+  // 没有 opt-in 标记 ⇒ 旧值可能只是旧默认值 ⇒ 一律当作「关」。
+  return {
+    petAware: false,
+    petAwareOptIn: false,
+    // 之前是开着的话 ⇒ 留一条「请重新打开」的提示（用户真打开了才消失）。
+    petAwareReset: (saved && saved.petAware === true) || (saved && saved.petAwareReset === true),
+  };
+}
+
 export class PetState {
   /**
    * @param {string} dataDir Host 注入的运行期数据目录
@@ -353,8 +387,33 @@ export class PetState {
     this.asking = null;
         /** @type {boolean} 她正在回话（运行时态，不持久化） */
     this.chatBusy = false;
-    /** @type {boolean} 是否把 MCode 状态摘要拼进她的输入（持久化，默认开） */
-    this.petAware = true;
+    /**
+     * 是否读取 MCode 的跨会话信息（持久化，**默认关**）。
+     *
+     * ⚠️ **默认关**（官方插件市场 2026-11-16 评审：隐私敏感的跨会话能力必须默认关闭，
+     *   由用户自己打开）：关着的时候她**不订阅**宿主的事件、**不列**会话、
+     *   提示词里也**不拼**状态摘要 ⇒ 别的会话的标题、运行状态、最终回复她一概看不到。
+     *   已经装过的用户保留他自己上次的开关值（`load()` 里读回来）。
+     * @type {boolean}
+     */
+    this.petAware = false;
+    /**
+     * 用户**是否明确 opt-in 过**跨会话采集（持久化）。
+     *
+     * ⚠️ **这个字段是升级迁移的凭据**（官方评审 2026-11-17）：1.9.0 的默认值是
+     *   true 并把它落盘 ⇒ 旧存档里那个 true 说明不了用户同意过。
+     *   只有这个标记为 true 的存档才算「用户自己开的」。
+     * @type {boolean}
+     */
+    this.petAwareOptIn = false;
+    /**
+     * 升级后要提示用户「请重新打开」（持久化，直到用户真打开为止）。
+     *
+     * ⚠️ 评审原话：旧状态分不清「显式选择」与「旧默认值」时，
+     *   **重置为关并请用户重新打开** —— 这个字段就是那句「请」。
+     * @type {boolean}
+     */
+    this.petAwareReset = false;
     // ★ **闲话开关**：她没人的时候要不要自己开口（模型闲话）—— **默认关闭**。
     // ⚠️ **默认关**（Marketplace 评审「强烈建议」）：自动对话会消耗用户自己的额度，
     //   所以新装的用户一律**由用户主动打开**；已经装过的用户保留他自己上次的
@@ -453,7 +512,13 @@ export class PetState {
         //   丢掉之后回到「用户自己建的 mmx 或默认 agent」（见 agentpick.mjs）。
         if (typeof saved.petAgent === 'string' && saved.petAgent
             && saved.petAgent !== LEGACY_SELF_AGENT_NAME) this.petAgent = saved.petAgent;
-        if (typeof saved.petAware === 'boolean') this.petAware = saved.petAware;
+        // ⚠️ **跨会话采集开关的升级迁移**（官方插件市场评审 2026-11-17，PR #138）：
+        //   1.9.0 的默认值是 true 并把它落盘 ⇒ 旧存档里那个 true
+        //   **说明不了用户同意过采集** ⇒ 没有 opt-in 标记的一律重置为关。
+        const petAwareMigrated = migratePetAware(saved);
+        this.petAware = petAwareMigrated.petAware;
+        this.petAwareOptIn = petAwareMigrated.petAwareOptIn;
+        this.petAwareReset = petAwareMigrated.petAwareReset;
         if (typeof saved.idleTalk === 'boolean') this.idleTalk = saved.idleTalk;
         if (saved.naming && typeof saved.naming === 'object') {
           this.naming = {
@@ -479,6 +544,16 @@ export class PetState {
         // 结算「重启期间她被冷落了多久」—— 锚点恢复完就结算，不能等第一次 commit
         // （否则第一次 commit 会把锚点当成从未存在过，那段时间白丢）。
         this.settleHeart();
+        // ⚠️ **迁移结果与文件不一致就把新形状落回去**（官方评审 2026-11-17）：
+        //   旧存档里那个 petAware:true 必须从磁盘上消失 ——
+        //   留着它，下次读回来又会被当成「用户开过」。
+        // ⚠️ **必须放在最后**：前面那些字段（heart 等）刚从存档恢复回来，
+        //   这时候落盘会把它们写成默认值。
+        if (saved.petAware !== this.petAware
+            || saved.petAwareOptIn !== this.petAwareOptIn
+            || saved.petAwareReset !== this.petAwareReset) {
+          await this.persist();
+        }
       }
     } catch (error) {
       // 首次运行没有存档（ENOENT），用默认值 —— 这是正常的。
@@ -515,6 +590,8 @@ export class PetState {
         petHeadInjected: this.petHeadInjected,
         petAgent: this.petAgent,
         petAware: this.petAware,
+        petAwareOptIn: this.petAwareOptIn,
+        petAwareReset: this.petAwareReset,
         idleTalk: this.idleTalk,
         naming: { ...this.naming },
         windowState: { ...this.windowState },
@@ -585,6 +662,7 @@ export class PetState {
       asking: this.asking,
       petAgent: this.petAgent,
       petAware: this.petAware,
+      petAwareReset: this.petAwareReset,
       idleTalk: this.idleTalk,
       naming: { ...this.naming },
       chatBusy: this.chatBusy,
@@ -1164,7 +1242,19 @@ export class PetState {
    * @param {boolean} aware
    */
   async setPetAware(aware) {
-    this.petAware = aware !== false;
+    // ⚠️ **只有明确传 true 才开** —— 默认是关的（官方插件市场 2026-11-16 评审：
+    //   隐私敏感的跨会话能力默认关闭、由用户主动打开）。
+    //   传 undefined / 其它值一律按「关」处理（与 setIdleTalk 同一口径）。
+    const next = aware === true;
+    this.petAware = next;
+    // ⚠️ **只有用户明确打开才记 opt-in**（官方评审 2026-11-17）：
+    //   这个标记是「用户同意过跨会话采集」的**唯一凭据** ——
+    //   升级迁移靠它区分「用户自己开的」与「1.9.0 落下来的旧默认值」。
+    //   关掉 ⇒ 同意被收回，标记一起清掉。
+    this.petAwareOptIn = next;
+    // ⚠️ **用户真打开了就不用再提示**；只是又点了一次「关」不算 ——
+    //   提示要留到他愿意打开为止。
+    if (next) this.petAwareReset = false;
     await this.commit();
     return this.petAware;
   }
