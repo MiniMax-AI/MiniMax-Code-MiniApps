@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.9`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.10`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -465,7 +465,7 @@ video. They are not one request with different parameters:
 | Request | What is sent | Who can run it |
 | --- | --- | --- |
 | First frame | `input_image` + `reference_type: first_frame` | all three models |
-| First+last frame | the first frame + `last_frame_image` | H3 and H3-Max |
+| First+last frame | `input_image` + `reference_type: first_frame` + `last_frame_image` | H3 and H3-Max |
 | Last frame | `input_image` + `reference_type: last_frame` | H3 and H3-Max |
 | Reference set | `reference_images` / `reference_videos` / `reference_audios` | H3 only |
 
