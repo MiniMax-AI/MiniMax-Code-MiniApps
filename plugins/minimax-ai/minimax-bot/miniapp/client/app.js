@@ -698,7 +698,9 @@ function presentationKey() {
 function messageView(message, prev, presentation) {
   return {
     key: message.id,
-    signature: JSON.stringify([message, prev?.ts, presentation, deliveryActions.has(`${message.chatId}:${message.id}`)]),
+    // `busy` decides whether the delivery line offers a resume, and the message itself does not
+    // carry it: without it here a busy event would leave the button in place.
+    signature: JSON.stringify([message, prev?.ts, presentation, deliveryActions.has(`${message.chatId}:${message.id}`), state.busy.has(message.chatId)]),
     create: () => renderItem(message, prev),
     update: (node) => renderItem(message, prev, node),
   };
@@ -1651,6 +1653,10 @@ function handleEvent(event) {
       if (mounted) {
         renderPill();
         syncSend();
+        // The delivery line depends on whether this chat is busy, and the event that flips it does
+        // not carry a message: re-render the feed so a resume button disappears the moment the chat
+        // starts answering, or comes back when it stops.
+        if (mounted === event.chatId) renderFeed(state.messages.get(event.chatId) ?? [], false);
       }
       if (state.drawer.open && state.drawer.view === 'overview') nav.renderDrawer();
       break;

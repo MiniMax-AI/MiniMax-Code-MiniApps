@@ -581,6 +581,17 @@ test('a request stranded by a restart offers to send it again, and one this page
   button.click(); await settle();
   assert.equal(calls.filter((call) => call.path.endsWith('/resume-pending')).length, 1);
 
+  // The busy event carries no message, but it changes whether this line offers a resume.
+  const late = message('msg_late', 'Held back', { role: 'user', dispatchState: 'pending' });
+  await reset([late]);
+  assert.notEqual(document.querySelector('.message-delivery button'), null);
+  emit({ type: 'chat.busy', chatId: late.chatId, busy: true, turns: [] });
+  await settle();
+  assert.equal(document.querySelector('.message-delivery button'), null);
+  emit({ type: 'chat.busy', chatId: late.chatId, busy: false, turns: [] });
+  await settle();
+  assert.notEqual(document.querySelector('.message-delivery button'), null);
+
   // A request this page just sent is pending with no reply too; it must not offer to resume itself.
   await reset();
   const fresh = message('msg_fresh', 'Just typed', { role: 'user', dispatchState: 'pending' });
