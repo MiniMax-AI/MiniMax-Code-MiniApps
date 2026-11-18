@@ -180,7 +180,15 @@ export class Team {
     if (avatar) bot.avatar = await this.saveAvatar(avatar);
     this.store.state.bots.push(bot);
     this.store.bumpRoster();
-    await this.store.save();
+    try {
+      await this.store.save();
+    } catch (error) {
+      // Same rule as updateBot: a rejected request leaves no trace. Without this the Bot stays in
+      // memory after a failed save, and the next unrelated save publishes what the user was told
+      // had failed.
+      this.store.state.bots = this.store.state.bots.filter((item) => item.id !== bot.id);
+      throw error;
+    }
     this.changed();
     return bot;
   }
@@ -379,7 +387,14 @@ export class Team {
     };
     this.store.state.groups.push(group);
     this.store.bumpRoster();
-    await this.store.save();
+    try {
+      await this.store.save();
+    } catch (error) {
+      // A rejected request leaves no trace: a group kept in memory after a failed save would be
+      // published by the next unrelated save, under a name the user was told was refused.
+      this.store.state.groups = this.store.state.groups.filter((item) => item.id !== group.id);
+      throw error;
+    }
     const welcome = await this.store.appendMessage(`group:${group.id}`, {
       role: 'system',
       key: 'notice.groupCreated',
@@ -595,8 +610,11 @@ export class Team {
     }
     if (kind === 'once' && !runAt) throw new EngineError('invalid', t('err.scheduleInMinutes'));
     const schedule = existing ?? { id: newId('sch'), createdAt: Date.now() };
-    if (!existing) list.push(schedule);
-    Object.assign(schedule, {
+    // Build the next value beside the live object and publish it only once the save went through.
+    // Editing in place and restoring on failure would also undo an update another caller completed
+    // while this save was in flight: it wrote into the same object this call is holding.
+    const next = {
+      ...schedule,
       name: String(input.name ?? '').trim().slice(0, 40) || prompt.slice(0, 20),
       botId: bot.id,
       prompt: prompt.slice(0, 4000),
@@ -605,11 +623,26 @@ export class Team {
       everyMinutes,
       runAt: kind === 'once' ? runAt : undefined,
       enabled: input.enabled !== false,
-    });
-    schedule.nextRunAt = nextRun(schedule, Date.now());
-    await this.store.save();
-    this.changed();
-    return schedule;
+    };
+    next.nextRunAt = nextRun(next, Date.now());
+    if (!existing) list.push(next);
+    else list[list.indexOf(schedule)] = next;
+    try {
+      await this.store.save();
+      return next;
+    } catch (error) {
+      // Put the list back the way it was; a concurrent caller that got here first keeps its value.
+      if (!existing) {
+        const at = list.indexOf(next);
+        if (at !== -1) list.splice(at, 1);
+      } else {
+        const at = list.indexOf(next);
+        if (at !== -1) list[at] = schedule;
+      }
+      throw error;
+    } finally {
+      this.changed();
+    }
   }
 
   /**

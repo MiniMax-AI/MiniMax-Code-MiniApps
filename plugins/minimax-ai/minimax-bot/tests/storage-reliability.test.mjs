@@ -125,6 +125,52 @@ test('a session created while another chat is being deleted survives in memory a
   assert.equal(restored.getSession(other, bot.id)?.sessionId, 'session-other');
 });
 
+test('a create that cannot be saved leaves nothing behind for a later save to publish', async (t) => {
+  const { dir, store, chat } = await fixture(t);
+  const { Team } = await import('../miniapp/node/team.mjs');
+  const team = new Team({ store, memory: undefined, engine: { cancelBot() {}, cancelChat() {} }, broadcast() {} });
+  const bot = store.state.bots[0];
+
+  // A directory where state.json belongs makes every save in this test fail.
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+
+  // Every create refuses, and the refusal has to be complete: a Bot or group left in memory would
+  // be published by the next unrelated save, after the user was told it had failed.
+  await assert.rejects(team.createBot(null, { name: 'Ghost Bot', instructions: 'x' }));
+  assert.equal(store.state.bots.some((item) => item.name === 'Ghost Bot'), false);
+  await assert.rejects(team.createGroup(null, { name: 'Ghost Group', members: [bot.id] }));
+  assert.equal(store.state.groups.some((item) => item.name === 'Ghost Group'), false);
+  await assert.rejects(team.saveSchedule({ botId: bot.id, prompt: 'Ghost Schedule', kind: 'daily', time: '09:00' }));
+  assert.equal(store.state.schedules.some((item) => item.prompt === 'Ghost Schedule'), false);
+
+  // Storage recovers and something unrelated writes the state: the refused objects must stay gone.
+  await rm(statePath, { recursive: true, force: true });
+  await store.save();
+  const onDisk = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.equal(onDisk.bots.some((item) => item.name === 'Ghost Bot'), false);
+  assert.equal(onDisk.groups.some((item) => item.name === 'Ghost Group'), false);
+  assert.equal(onDisk.schedules.some((item) => item.prompt === 'Ghost Schedule'), false);
+});
+
+test('a schedule update that cannot be saved keeps the values the user was shown', async (t) => {
+  const { dir, store } = await fixture(t);
+  const { Team } = await import('../miniapp/node/team.mjs');
+  const team = new Team({ store, memory: undefined, engine: { cancelBot() {}, cancelChat() {} }, broadcast() {} });
+  const bot = store.state.bots[0];
+  const schedule = await team.saveSchedule({ botId: bot.id, prompt: 'Original prompt', kind: 'daily', time: '09:00' });
+  await store.writeChain;
+
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+  await assert.rejects(team.saveSchedule({ id: schedule.id, botId: bot.id, prompt: 'Refused prompt', kind: 'daily', time: '09:00' }));
+
+  // The in-memory object must go back to what is still on disk, not keep the refused values.
+  const current = store.state.schedules.find((item) => item.id === schedule.id);
+  assert.equal(current.prompt, 'Original prompt');
+});
 test('legacy sequence migration preserves text/tool order and stable cursors across restarts', async (t) => {
   const { dir, store, chat } = await fixture(t);
   const parts = [{ type: 'text', text: 'The current conclusion: ' }, { type: 'tool', name: 'build', state: 'ok' }, { type: 'text', text: 'The current conclusion: publish after the build passes.' }];
@@ -248,4 +294,41 @@ test('delivery transitions commit a complete batch or leave every message unchan
   const saved = (await restored.getMessages(chat)).filter((message) => message.role === 'user');
   assert.deepEqual(saved.map((message) => message.dispatchState), ['delivered', 'delivered']);
   assert.deepEqual(saved.map((message) => message.dispatchRevision), [1, 1]);
+});
+
+test('a refused schedule update does not undo an update that succeeded while it was saving', async (t) => {
+  const { dir, store } = await fixture(t);
+  const { Team } = await import('../miniapp/node/team.mjs');
+  const team = new Team({ store, memory: undefined, engine: { cancelBot() {}, cancelChat() {} }, broadcast() {} });
+  const bot = store.state.bots[0];
+  const schedule = await team.saveSchedule({ botId: bot.id, prompt: 'A', kind: 'daily', time: '09:00' });
+  await store.writeChain;
+
+  // B starts saving and is held; C then saves successfully; B finally fails.
+  let releaseB;
+  const heldB = new Promise((resolve) => { releaseB = resolve; });
+  const realSave = store.save.bind(store);
+  let holding = true;
+  store.save = async () => {
+    if (holding && store.state.schedules.some((item) => item.prompt === 'B')) { holding = false; await heldB; }
+    return realSave();
+  };
+  const b = team.saveSchedule({ id: schedule.id, botId: bot.id, prompt: 'B', kind: 'daily', time: '09:00' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const c = await team.saveSchedule({ id: schedule.id, botId: bot.id, prompt: 'C', kind: 'daily', time: '09:00' });
+  assert.equal(store.state.schedules.find((item) => item.id === schedule.id).prompt, 'C');
+
+  // Make B's write fail, then let it go.
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+  releaseB();
+  await assert.rejects(b);
+  store.save = realSave;
+
+  // B's refusal must not roll the shared object back past C's success.
+  const current = store.state.schedules.find((item) => item.id === schedule.id);
+  assert.equal(current.prompt, 'C');
+  assert.equal(store.state.schedules.length, 1);
+  assert.equal(c.prompt, 'C');
 });
