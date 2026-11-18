@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>连锁门店 2026年10月 经营报表（审核用演示数据）</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --ink:#1f2430; --muted:#6b7280;
+    --brand:#2563eb; --good:#16a34a; --bad:#dc2626; --warn:#d97706;
+    --line:#e5e7eb; --demo:#b45309;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;padding:16px}
+  .demo-banner{background:repeating-linear-gradient(45deg,#fef3c7,#fef3c7 12px,#fde68a 12px,#fde68a 24px);border:2px dashed var(--demo);color:var(--demo);font-weight:700;text-align:center;padding:10px;border-radius:8px;margin-bottom:12px;font-size:15px}
+  h1{font-size:20px;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .kpi .label{font-size:12px;color:var(--muted)}
+  .kpi .value{font-size:20px;font-weight:700;margin-top:2px}
+  .kpi .note{font-size:12px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:13px;background:#fafafa}
+  .pos{color:var(--good)} .neg{color:var(--bad)} .na{color:var(--muted)}
+  .bar-wrap{background:#eef1f5;border-radius:4px;height:8px;min-width:80px}
+  .bar{height:8px;border-radius:4px;background:var(--brand)}
+  .bar.full{background:var(--good)}
+  .demo-tag{display:inline-block;background:#fef3c7;color:var(--demo);border:1px solid var(--demo);border-radius:4px;font-size:11px;padding:1px 6px;margin-left:6px;vertical-align:middle}
+  ul{padding-left:18px;font-size:14px}
+  li{margin-bottom:6px}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .chart-title{font-size:14px;font-weight:600;margin-bottom:8px}
+  .hbar{margin-bottom:8px}
+  .hbar .row1{display:flex;justify-content:space-between;font-size:13px}
+  .hbar .track{background:#eef1f5;border-radius:4px;height:10px;margin-top:3px}
+  .hbar .fill{height:10px;border-radius:4px;background:var(--brand)}
+  footer{color:var(--muted);font-size:12px;margin-top:8px}
+  @media (max-width:600px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .charts{grid-template-columns:1fr}
+    body{padding:12px}
+    table{font-size:13px}
+  }
+  @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+</style>
+</head>
+<body>
+  <div class="demo-banner">⚠️ 审核用演示数据 — 本页全部数字为虚构演示，不代表任何真实经营情况</div>
+
+  <h1>连锁门店经营报表 · 2026年10月 <span class="demo-tag">演示数据</span></h1>
+  <div class="sub">币种：人民币（CNY）｜单位：元｜口径：同口径收入｜数据来源：用户提供演示数据（静态快照，非实时）｜同比数据未提供</div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="label">销售额合计</div><div class="value">¥250,000.00</div><div class="note">3 家门店</div></div>
+    <div class="kpi"><div class="label">目标合计</div><div class="value">¥300,000.00</div><div class="note">—</div></div>
+    <div class="kpi"><div class="label">目标达成率</div><div class="value">83.33%</div><div class="note">250,000 / 300,000</div></div>
+    <div class="kpi"><div class="label">环比</div><div class="value">0.00%</div><div class="note">上月 250,000.00；同比未提供</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="chart-title">门店明细（按销售额排名）</div>
+    <table>
+      <thead><tr><th>门店</th><th>销售额(元)</th><th>目标(元)</th><th>达成率</th><th>达成进度</th><th>上月(元)</th><th>环比</th></tr></thead>
+      <tbody>
+        <tr><td>1. A店</td><td>120,000.00</td><td>150,000.00</td><td>80.00%</td><td><div class="bar-wrap"><div class="bar" style="width:80%"></div></div></td><td>100,000.00</td><td class="pos">+20.00%</td></tr>
+        <tr><td>2. B店</td><td>80,000.00</td><td>100,000.00</td><td>80.00%</td><td><div class="bar-wrap"><div class="bar" style="width:80%"></div></div></td><td>90,000.00</td><td class="neg">-11.11%</td></tr>
+        <tr><td>3. C店</td><td>50,000.00</td><td>50,000.00</td><td>100.00%</td><td><div class="bar-wrap"><div class="bar full" style="width:100%"></div></div></td><td>60,000.00</td><td class="neg">-16.67%</td></tr>
+        <tr><td><b>合计</b></td><td><b>250,000.00</b></td><td><b>300,000.00</b></td><td><b>83.33%</b></td><td><div class="bar-wrap"><div class="bar" style="width:83.33%"></div></div></td><td><b>250,000.00</b></td><td><b>0.00%</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="charts">
+      <div>
+        <div class="chart-title">销售额对比（万元）</div>
+        <div class="hbar"><div class="row1"><span>A店</span><span>12.0 万</span></div><div class="track"><div class="fill" style="width:80%"></div></div></div>
+        <div class="hbar"><div class="row1"><span>B店</span><span>8.0 万</span></div><div class="track"><div class="fill" style="width:53.3%"></div></div></div>
+        <div class="hbar"><div class="row1"><span>C店</span><span>5.0 万</span></div><div class="track"><div class="fill" style="width:33.3%"></div></div></div>
+        <div class="hbar"><div class="row1"><b>合计</b><b>25.0 万</b></div><div class="track"><div class="fill" style="width:100%;background:#0f172a"></div></div></div>
+      </div>
+      <div>
+        <div class="chart-title">对账核验（与销售额合计 250,000.00 比较）</div>
+        <table>
+          <thead><tr><th>维度</th><th>分组金额(元)</th><th>小计</th><th>差额</th><th>结果</th></tr></thead>
+          <tbody>
+            <tr><td>日合计分组</td><td>100,000 / 150,000</td><td>250,000.00</td><td>0.00</td><td class="pos">一致 ✓</td></tr>
+            <tr><td>品类合计</td><td>150,000 / 100,000</td><td>250,000.00</td><td>0.00</td><td class="pos">一致 ✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title">待验证事项与行动建议</div>
+    <ul>
+      <li><b>日合计分组仅 2 组、品类合计仅 2 类，但门店有 3 家</b> —— 分组与门店维度无法一一对应，仅能验证总额一致。待验证原因：未提供分组的门店/日期/品类明细。建议：由数据提供方（待分配）补充分门店×日、分门店×品类明细后再做交叉核对。</li>
+      <li><b>同比数据未提供</b> —— 同比增长无法计算，页面显示"未提供"，不做推断。建议：如需同比，请提供 2025 年 10 月同口径收入（待分配）。</li>
+      <li><b>B店、C店环比为负</b>（-11.11%、-16.67%）—— 事实层面仅能确认收入下降；可能原因（季节、客流、品类结构等）未经数据支持，不作结论。建议：核对 B/C 店 10 月每日流水与上月口径是否一致，并确认是否存在闭店日或促销档期差异（待分配）。</li>
+      <li><b>整体达成率 83.33%，缺口 50,000 元</b> —— 全部缺口来自 A 店（差 30,000）与 B 店（差 20,000）。建议：向 A、B 店长核实 11 月目标分解与补差计划（待分配）。</li>
+      <li><b>本页为静态快照</b> —— 数据不随后台更新，仅供审核演示使用。</li>
+    </ul>
+  </div>
+
+  <footer>口径说明见同目录《口径说明.md》；指标由套件核算脚本 calculate_metrics.py 计算并核对。全部数据为审核用虚构演示。</footer>
+</body>
+</html>
