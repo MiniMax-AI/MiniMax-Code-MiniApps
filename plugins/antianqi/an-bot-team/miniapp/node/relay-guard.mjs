@@ -24,20 +24,20 @@
 import { t } from './i18n.mjs';
 
 /** Opens the block that carries the previous hop's conclusion. */
-export const HANDOVER_BLOCK_MARK = '<minimax-bot-handover>';
+export const HANDOVER_BLOCK_MARK = '<an-bot-team-handover>';
 /** Closes the block that carries the previous hop's conclusion. */
-export const HANDOVER_BLOCK_END = '</minimax-bot-handover>';
+export const HANDOVER_BLOCK_END = '</an-bot-team-handover>';
 /** Marks the prompt that asks the current speaker to wrap up. */
-export const CONVERGE_MARK = '<minimax-bot-relay-converge>';
+export const CONVERGE_MARK = '<an-bot-team-relay-converge>';
 /**
  * Opens the block that carries the Bot's standing context.
  *
  * The context block wraps the whole brief, so a reply that ends with its closing tag would
  * close the block early and make the rest of the text look like it sits outside the context.
  */
-export const CONTEXT_BLOCK_MARK = '<minimax-bot-context>';
+export const CONTEXT_BLOCK_MARK = '<an-bot-team-context>';
 /** Closes the block that carries the Bot's standing context. */
-export const CONTEXT_BLOCK_END = '</minimax-bot-context>';
+export const CONTEXT_BLOCK_END = '</an-bot-team-context>';
 /** Longest summary handed over to the next hop. */
 export const HANDOVER_MAX = 600;
 /** How much of the previous reply's tail is kept when the group keeps no note. */
@@ -47,18 +47,18 @@ export const HANDOVER_TAIL = 400;
  * Protocol marks a reply must never be able to forge: a Bot that writes them into its answer
  * would otherwise be able to open a block of its own in the next Bot's prompt.
  *
- * The pattern matches any `minimax-bot-…` tag rather than a fixed list, so a mark that is
+ * The pattern matches any `an-bot-team-…` tag rather than a fixed list, so a mark that is
  * spelled differently — with spaces, with an attribute, in another case — is caught as well.
  *
  * The attribute is read as an attribute — the characters a tag attribute is made of — rather
- * than as "anything up to the next `>`. A model that writes `<minimax-bot-context` into a
+ * than as "anything up to the next `>`. A model that writes `<an-bot-team-context` into a
  * sentence and closes the thought with a `>` a line later would otherwise lose that whole
  * stretch of its own text, so only the name of the mark is taken when no tag-shaped attribute
  * follows it.
  */
 const MARK_PATTERN = new RegExp(
-  `<\\s*\\/?\\s*minimax-bot-[a-z0-9-]+(?:[ \\t]+[A-Za-z0-9_:.=/"'()\\-]*)?\\s*>`
-  + `|<\\s*\\/?\\s*minimax-bot-[a-z0-9-]+`,
+  `<\\s*\\/?\\s*an-bot-team-[a-z0-9-]+(?:[ \\t]+[A-Za-z0-9_:.=/"'()\\-]*)?\\s*>`
+  + `|<\\s*\\/?\\s*an-bot-team-[a-z0-9-]+`,
   'gi',
 );
 
@@ -70,7 +70,7 @@ const MARK_PATTERN = new RegExp(
  * tag from it the same way it removes a protocol mark — the tag goes, the words around it stay.
  *
  * The list holds the Host's own vocabulary, not the plugin's: the plugin's wire format
- * (`minimax-bot-…`) and its delivery format (`<media src="…"/>`) are not in it and stay.
+ * (`an-bot-team-…`) and its delivery format (`<media src="…"/>`) are not in it and stay.
  */
 export const HOST_TAGS = [
   'system-reminder',

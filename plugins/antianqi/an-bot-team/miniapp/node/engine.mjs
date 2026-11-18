@@ -55,7 +55,7 @@ function slotLane(kind) {
 
 /** True for the plugin's own MCP tools, whose calls the plugin can refuse with a reason. */
 function isPluginTool(name) {
-  return String(name ?? '').startsWith('mcp__minimax-bot-pro__');
+  return String(name ?? '').startsWith('mcp__an-bot-team__');
 }
 const GROUP_CONTEXT_MESSAGES = 30;
 /** A group message shorter than this is a remark, not a hand-over worth a brief. */
@@ -1135,7 +1135,7 @@ export class Engine {
   resolveToolTurn(botId, toolName) {
     if (!botId) return undefined;
     const turns = [...this.running.values()].filter((turn) => turn.botId === botId && this.isActiveTurn(turn));
-    const full = `mcp__minimax-bot-pro__${toolName}`;
+    const full = `mcp__an-bot-team__${toolName}`;
     const matched = turns.filter((turn) => (turn.toolStarts ?? []).some((item) => item.name === toolName || item.name === full));
     if (matched.length) {
       // The Host starts the call it is about to make: the latest observation is the right turn.
@@ -1266,7 +1266,7 @@ export class Engine {
   }
 
   bindToolPart(turn, name) {
-    const candidates = turn?.message.parts.filter((part) => part.type === 'tool' && part.state === 'running' && part.name === `mcp__minimax-bot-pro__${name}`) ?? [];
+    const candidates = turn?.message.parts.filter((part) => part.type === 'tool' && part.state === 'running' && part.name === `mcp__an-bot-team__${name}`) ?? [];
     return candidates.length === 1 ? candidates[0] : undefined;
   }
 

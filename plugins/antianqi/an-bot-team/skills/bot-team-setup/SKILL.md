@@ -1,13 +1,13 @@
 ---
 name: bot-team-setup
-description: Use this skill when the user wants to build or change a team of MiniMax Bots - decide how many Bots are needed and what each one does, create them with create_bot, write the identity files every Bot carries (AGENTS.md, IDENTITY.md, SOUL.md), keep the common and the shared files in shape, put the Bots into a group chat and hand the first task over. Read it before the first create_bot call of a session.
+description: Use this skill when the user wants to build or change a team of Bots - decide how many Bots are needed and what each one does, create them with create_bot, write the identity files every Bot carries (AGENTS.md, IDENTITY.md, SOUL.md), keep the common and the shared files in shape, put the Bots into a group chat and hand the first task over. Read it before the first create_bot call of a session.
 license: Apache-2.0
 metadata:
   author: antianqi
-  version: 1.0.1
+  version: 1.1.0
 ---
 
-# MiniMax Bot 团队搭建
+# An-bot-team 团队搭建
 
 这个插件把 MiniMax Code 变成一支常驻的 Bot 团队：一个主 Bot 接单与调度，若干成员 Bot 在私聊里干活，群聊里 @ 某人就是派活。每个 Bot 带着自己的身份文件、记忆和定时任务，这些文件每一轮都进它的提示词。
 
@@ -116,7 +116,7 @@ metadata:
 
 ---
 
-# Building a MiniMax Bot team (English)
+# Building a Bot team (English)
 
 This plugin turns MiniMax Code into an always-on team of Bots: one chief Bot takes the work and hands it to the members, every Bot carries its own identity files, memory and schedules, and an @-mention in a group chat is how the work is handed over.
 

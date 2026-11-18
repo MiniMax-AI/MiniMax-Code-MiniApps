@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import { renameWithRetry } from './fs-retry.mjs';
 
 /** The protocol marks the agent block opens and closes with. */
-export const AGENT_BLOCK_MARK = '<minimax-bot-agent>';
-export const AGENT_BLOCK_END = '</minimax-bot-agent>';
+export const AGENT_BLOCK_MARK = '<an-bot-team-agent>';
+export const AGENT_BLOCK_END = '</an-bot-team-agent>';
 
 /** The files a Bot usually owns. Any other safe `.md` name is accepted as well. */
 export const AGENT_FILES = Object.freeze(['AGENTS.md', 'IDENTITY.md', 'SOUL.md', 'USER.md', 'ENV.md']);

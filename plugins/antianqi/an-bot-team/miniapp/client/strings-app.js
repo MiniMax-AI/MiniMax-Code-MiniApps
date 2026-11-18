@@ -82,7 +82,7 @@ export default {
     'side.empty.direct': '还没有单聊',
     'main.loading': '正在加载…',
     'main.noBots': '还没有 Bot',
-    'boot.failed': '无法连接 MiniMax Bot 服务：{error}',
+    'boot.failed': '无法连接 An-bot-team 服务：{error}',
     'boot.noAgent': '当前 MiniMax Code 版本不支持 Mini App 运行 Agent，Bot 暂时无法回复',
     'pill.detailsLabel': '{name}，查看详情',
     // feed
@@ -353,7 +353,7 @@ export default {
     'side.empty.direct': 'No direct chats yet',
     'main.loading': 'Loading…',
     'main.noBots': 'No Bots yet',
-    'boot.failed': "Couldn't connect to the MiniMax Bot service: {error}",
+    'boot.failed': "Couldn't connect to the An-bot-team service: {error}",
     'boot.noAgent': "This version of MiniMax Code can't run Agents for Mini Apps, so Bots can't reply right now",
     'pill.detailsLabel': '{name}, view details',
     'connection.connecting': 'Connecting to the service…',

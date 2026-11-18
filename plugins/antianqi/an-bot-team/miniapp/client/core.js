@@ -1,5 +1,5 @@
 // @ts-check
-// Shared state, API, icons and helpers for the MiniMax Bot client.
+// Shared state, API, icons and helpers for the An-bot-team client.
 import { PALETTES, botMark, groupMark, inkOf } from './octopus.js';
 import { localeTag, setLocale, systemLocale, t } from './i18n.js';
 
@@ -8,7 +8,7 @@ export { t };
 /** @typedef {import('./client-api.js').McodeClientAPI} McodeClientAPI */
 
 // ------------------------------------------------------------------ prefs (view preferences only)
-const PREF_KEY = 'minimax-bot-pro.prefs.v1';
+const PREF_KEY = 'an-bot-team.prefs.v1';
 export const prefs = (() => {
   const base = { theme: 'system', accent: 'ocean', motion: 'normal', lastRead: {}, lastChat: '' };
   try {

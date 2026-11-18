@@ -9,7 +9,7 @@
  */
 
 /** The plugin id: the MCP server name and the endpoint path. */
-export const PLUGIN_ID = 'minimax-bot-team';
+export const PLUGIN_ID = 'an-bot-team';
 
 /** The version the Host and the MCP tools report. */
-export const PLUGIN_VERSION = '1.0.1';
+export const PLUGIN_VERSION = '1.1.0';
