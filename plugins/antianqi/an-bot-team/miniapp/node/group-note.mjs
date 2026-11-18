@@ -29,9 +29,9 @@ import { t } from './i18n.mjs';
  * Both marks are listed in the forged-marks list of `relay-guard.mjs`, so a reply that writes
  * them into its own text cannot open a block of its own in another Bot's prompt.
  */
-export const GROUP_NOTE_MARK = '<minimax-bot-group-summary>';
+export const GROUP_NOTE_MARK = '<an-bot-team-group-summary>';
 /** Closes the block that carries the group's note. */
-export const GROUP_NOTE_END = '</minimax-bot-group-summary>';
+export const GROUP_NOTE_END = '</an-bot-team-group-summary>';
 /** How many entries the note keeps. The newest ones win. */
 export const NOTE_MAX_ENTRIES = 6;
 /** How many characters the whole note may take. */

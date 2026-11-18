@@ -18,6 +18,6 @@
       "minHeight": 480
     }
   },
-  "mcpEndpoints": [{ "server": "minimax-bot-team", "path": "/mcp/minimax-bot-team" }],
+  "mcpEndpoints": [{ "server": "an-bot-team", "path": "/mcp/an-bot-team" }],
   "agentAccess": ["session.run"]
 }

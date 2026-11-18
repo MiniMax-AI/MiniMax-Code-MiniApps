@@ -1,13 +1,12 @@
-# MiniMax Bot Team
+# An-bot-team
 
 English | [简体中文](README.zh-CN.md)
 
-Today's bot is one person wearing several masks, taking turns with you. MiniMax
-Bot Team gives you a team instead: members with different skills and different
+Today's bot is one person wearing several masks, taking turns with you. An-bot-team gives you a team instead: members with different skills and different
 temperaments, each guarding one field, and they can sit down together and argue about the
 same question from different angles.
 
-Author: [antianqi](https://github.com/antianqi) - Version: `1.0.1`
+Author: [antianqi](https://github.com/antianqi) - Version: `1.1.0`
 
 ## What it does
 
@@ -44,19 +43,19 @@ Author: [antianqi](https://github.com/antianqi) - Version: `1.0.1`
    git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
    ```
 
-2. Copy the whole directory `plugins/antianqi/minimax-bot-team/`, **including the hidden
-   `.minimax-plugin` directory**, into `<dataDir>/plugins/minimax-bot-team/`. By default
+2. Copy the whole directory `plugins/antianqi/an-bot-team/`, **including the hidden
+   `.minimax-plugin` directory**, into `<dataDir>/plugins/an-bot-team/`. By default
    `<dataDir>` is `~/.minimax`, so the plugin goes to
-   `~/.minimax/plugins/minimax-bot-team/`. The author directory only groups the
+   `~/.minimax/plugins/an-bot-team/`. The author directory only groups the
    contributions in this repository - do not copy it into `plugins/`.
 
    From MiniMax Code 3.1.11 you can import the package instead of copying it: on the
    Plugins page choose **Create**, then **Import from a Git repository** under Mini App,
    and paste
-   `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/antianqi/minimax-bot-team`.
+   `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/antianqi/an-bot-team`.
 
 3. Restart MiniMax Code, confirm that the plugin is recognized and enabled, and open the
-   panel. Ask the Agent to open "MiniMax Bot", or use the plugin entry in the plugin list.
+   panel. Ask the Agent to open "An-bot-team", or use the plugin entry in the plugin list.
 
 Nothing has to be configured: no API key, no account, no service to sign up for. The Bots
 run on the models the Host already uses.

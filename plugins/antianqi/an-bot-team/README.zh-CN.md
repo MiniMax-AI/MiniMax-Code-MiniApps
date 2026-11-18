@@ -1,11 +1,11 @@
-# MiniMax Bot 团队
+# An-bot-team 团队
 
 [English](README.md) | 简体中文
 
-现在的 bot 像一个人轮流带着几个面具跟你聊天。MiniMax Bot Team 给你的是一支真正各有
+现在的 bot 像一个人轮流带着几个面具跟你聊天。An-bot-team 给你的是一支真正各有
 能力、各有性格的团队，各自守着一个领域，也能围坐一起，从不同角度讨论同一个问题。
 
-作者：[antianqi](https://github.com/antianqi) - 版本：`1.0.1`
+作者：[antianqi](https://github.com/antianqi) - 版本：`1.1.0`
 
 ## 它做什么
 
@@ -35,16 +35,16 @@
    git clone https://github.com/MiniMax-AI/MiniMax-Code-MiniApps.git
    ```
 
-2. 把整个目录 `plugins/antianqi/minimax-bot-team/`（**包含隐藏的 `.minimax-plugin` 目录**）
-   复制到 `<dataDir>/plugins/minimax-bot-team/`。默认 `<dataDir>` 是 `~/.minimax`，所以装到
-   `~/.minimax/plugins/minimax-bot-team/`。作者目录只是本仓库里的分组，别把它一起复制进
+2. 把整个目录 `plugins/antianqi/an-bot-team/`（**包含隐藏的 `.minimax-plugin` 目录**）
+   复制到 `<dataDir>/plugins/an-bot-team/`。默认 `<dataDir>` 是 `~/.minimax`，所以装到
+   `~/.minimax/plugins/an-bot-team/`。作者目录只是本仓库里的分组，别把它一起复制进
    `plugins/`。
 
    MiniMax Code 3.1.11 起可以直接导入：在插件页选 **Create**，Mini App 下选 **Import from a Git
    repository**，粘贴
-   `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/antianqi/minimax-bot-team`。
+   `https://github.com/MiniMax-AI/MiniMax-Code-MiniApps/tree/main/plugins/antianqi/an-bot-team`。
 
-3. 重启 MiniMax Code，确认插件被识别并启用，然后打开面板。让 Agent 打开「MiniMax Bot」，或在
+3. 重启 MiniMax Code，确认插件被识别并启用，然后打开面板。让 Agent 打开「An-bot-team」，或在
    插件列表里点开它。
 
 不需要配置任何东西：没有 API key，没有账号，没有要注册的服务。Bot 跑在宿主已经在用的模型上。

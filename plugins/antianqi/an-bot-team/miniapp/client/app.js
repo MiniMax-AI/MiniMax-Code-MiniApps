@@ -66,7 +66,7 @@ const TOOL_PHRASES = [
   [/image|video|audio|music|speech/i, 'tool.media'],
 ];
 const baseToolName = (name) => String(name ?? '').replace(/^mcp__.*?__/, '');
-const isTeamTool = (name) => String(name).includes('minimax-bot-pro') || TEAM_TOOLS.has(baseToolName(name));
+const isTeamTool = (name) => String(name).includes('an-bot-team') || TEAM_TOOLS.has(baseToolName(name));
 /** What a tool call does, in words; `bare` drops the "use" wrapper for unknown tools. */
 const toolPhrase = (name, bare = false) => {
   const key = TOOL_PHRASES.find(([re]) => /** @type {RegExp} */ (re).test(baseToolName(name)))?.[1];
