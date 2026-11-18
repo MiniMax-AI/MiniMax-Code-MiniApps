@@ -610,11 +610,11 @@ export class Team {
     }
     if (kind === 'once' && !runAt) throw new EngineError('invalid', t('err.scheduleInMinutes'));
     const schedule = existing ?? { id: newId('sch'), createdAt: Date.now() };
-    // The previous values, so a failed save can put the object back: a schedule left in memory
-    // would be published by the next unrelated save, at a time the user was told was refused.
-    const before = existing ? { ...existing } : undefined;
-    if (!existing) list.push(schedule);
-    Object.assign(schedule, {
+    // Build the next value beside the live object and publish it only once the save went through.
+    // Editing in place and restoring on failure would also undo an update another caller completed
+    // while this save was in flight: it wrote into the same object this call is holding.
+    const next = {
+      ...schedule,
       name: String(input.name ?? '').trim().slice(0, 40) || prompt.slice(0, 20),
       botId: bot.id,
       prompt: prompt.slice(0, 4000),
@@ -623,17 +623,26 @@ export class Team {
       everyMinutes,
       runAt: kind === 'once' ? runAt : undefined,
       enabled: input.enabled !== false,
-    });
-    schedule.nextRunAt = nextRun(schedule, Date.now());
+    };
+    next.nextRunAt = nextRun(next, Date.now());
+    if (!existing) list.push(next);
+    else list[list.indexOf(schedule)] = next;
     try {
       await this.store.save();
+      return next;
     } catch (error) {
-      if (before) Object.assign(schedule, before);
-      else this.store.state.schedules = this.store.state.schedules.filter((item) => item.id !== schedule.id);
+      // Put the list back the way it was; a concurrent caller that got here first keeps its value.
+      if (!existing) {
+        const at = list.indexOf(next);
+        if (at !== -1) list.splice(at, 1);
+      } else {
+        const at = list.indexOf(next);
+        if (at !== -1) list[at] = schedule;
+      }
       throw error;
+    } finally {
+      this.changed();
     }
-    this.changed();
-    return schedule;
   }
 
   /**

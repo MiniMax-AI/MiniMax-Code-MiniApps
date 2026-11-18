@@ -295,3 +295,40 @@ test('delivery transitions commit a complete batch or leave every message unchan
   assert.deepEqual(saved.map((message) => message.dispatchState), ['delivered', 'delivered']);
   assert.deepEqual(saved.map((message) => message.dispatchRevision), [1, 1]);
 });
+
+test('a refused schedule update does not undo an update that succeeded while it was saving', async (t) => {
+  const { dir, store } = await fixture(t);
+  const { Team } = await import('../miniapp/node/team.mjs');
+  const team = new Team({ store, memory: undefined, engine: { cancelBot() {}, cancelChat() {} }, broadcast() {} });
+  const bot = store.state.bots[0];
+  const schedule = await team.saveSchedule({ botId: bot.id, prompt: 'A', kind: 'daily', time: '09:00' });
+  await store.writeChain;
+
+  // B starts saving and is held; C then saves successfully; B finally fails.
+  let releaseB;
+  const heldB = new Promise((resolve) => { releaseB = resolve; });
+  const realSave = store.save.bind(store);
+  let holding = true;
+  store.save = async () => {
+    if (holding && store.state.schedules.some((item) => item.prompt === 'B')) { holding = false; await heldB; }
+    return realSave();
+  };
+  const b = team.saveSchedule({ id: schedule.id, botId: bot.id, prompt: 'B', kind: 'daily', time: '09:00' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const c = await team.saveSchedule({ id: schedule.id, botId: bot.id, prompt: 'C', kind: 'daily', time: '09:00' });
+  assert.equal(store.state.schedules.find((item) => item.id === schedule.id).prompt, 'C');
+
+  // Make B's write fail, then let it go.
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+  releaseB();
+  await assert.rejects(b);
+  store.save = realSave;
+
+  // B's refusal must not roll the shared object back past C's success.
+  const current = store.state.schedules.find((item) => item.id === schedule.id);
+  assert.equal(current.prompt, 'C');
+  assert.equal(store.state.schedules.length, 1);
+  assert.equal(c.prompt, 'C');
+});
