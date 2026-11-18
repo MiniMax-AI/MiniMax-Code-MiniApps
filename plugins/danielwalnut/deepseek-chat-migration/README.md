@@ -83,14 +83,32 @@ the `~/DeepSeek` folder in the file manager instead.
 
 ## Data & access
 
-- **Files read:** only the official DeepSeek ZIP or a compatible DeepSeek JSON the user explicitly
-  picks in the page. Parsing happens locally. The app does not inspect browser sessions, scrape
-  `chat.deepseek.com`, upload the export, or read any other Host file.
-- **Files written:** the selected ZIP is streamed to a temporary directory under the Host-owned,
+- **DeepSeek files read:** only the official DeepSeek ZIP or a compatible DeepSeek JSON the user
+  explicitly picks in the page. Parsing happens locally. The app does not inspect browser sessions,
+  scrape `chat.deepseek.com` or upload the export.
+- **MiniMax Code files read and written:** the bundled importer works directly on MiniMax Code's
+  own storage under `~/.minimax` (fixed path, not configurable). There is no supported API for
+  this, so it relies on an unspecified, version-dependent layout:
+  - `v2/sqlite/runtime-state.sqlite`. Opening the page runs one read-only query (SQLite
+    `mode=ro`) for the number of sessions in the `DeepSeek` project and the latest one. **Preview**
+    reads it read-only too. Only **Confirm import** writes: it inserts rows into
+    `local_runtime_sessions`, `local_runtime_message_rows`, `local_runtime_pi_history_file_migrations`,
+    `local_runtime_session_fts_keys` and `local_runtime_sessions_fts`, inserts the `~/DeepSeek` row
+    into `local_runtime_projects` if it is missing, and otherwise updates only that project row
+    (`hidden` and its sidebar-restore marker).
+  - `v2/sessions/<date>/<time>-session_<id>/`: one new directory per imported session with
+    `messages.jsonl`, `manifest.json`, `deepseek-migration.json` (provenance) and
+    `deepseek-source.json` (the full source conversation, including other branches). Existing
+    session directories are never modified.
+  - `deepseek-migration/<run>/`: the undo journal and batch reports; `zcode-migration/writer.lock`:
+    the write lock shared with the MiniMax Code migration plugin.
+  - **撤销本次导入** deletes exactly the rows and directories its journal lists and restores the
+    project row's before-image if that row is still as the import left it; it refuses when any of those sessions changed since the import,
+    unless the user confirms a second time.
+- **Mini App state:** the selected ZIP is streamed to a temporary directory under the Host-owned,
   opaque `context.dataDir`; it is replaced on the next upload and removed when the runtime stops.
-  Successful import hashes are written atomically
-  to `context.dataDir/state.json`. The migration process writes native sessions under the target
-  MCode data directory only after the user confirms the plan.
+  Successful import hashes and the undoable runs are written atomically to
+  `context.dataDir/state.json`.
 - **Process spawned:** `python3 miniapp/python/import_deepseek.py` (bundled with this Mini App),
   first with `plan` and then, after confirmation, with `apply` on the same report. Arguments are
   passed as an array without a shell: `--source <temporary ZIP>`, one `--session <id>` per

@@ -52,8 +52,13 @@ Markdown 档案导出仍然保留，方便额外备份；主要入口是原生�
 
 ## Data & access
 
-- **读取文件：** 只读你亲自选择的 DeepSeek 官方 ZIP，或兼容的 DeepSeek JSON，并且全程在本机解析。不会读取浏览器登录状态，不会抓取 `chat.deepseek.com`，不会上传导出包，也不会碰宿主的其他文件。
-- **写入文件：** 选中的 ZIP 会流式写入宿主管理的私有 `context.dataDir` 临时目录；再次上传时会替换，运行时停止时会删除。成功导入的哈希会原子写入 `context.dataDir/state.json`。只有你确认迁移计划后，导入脚本才会向目标 MCode 数据目录写入原生会话。
+- **读取的 DeepSeek 文件：** 只读你亲自选择的 DeepSeek 官方 ZIP，或兼容的 DeepSeek JSON，全程在本机解析。不会读取浏览器登录状态，不会抓取 `chat.deepseek.com`，也不会上传导出包。
+- **读写的 MiniMax Code 文件：** 自带的导入脚本直接操作 MiniMax Code 自己在 `~/.minimax` 下的存储（路径固定，不能配置）。这件事没有官方接口，依赖的是没有公开约定、可能随版本变化的目录和表结构：
+  - `v2/sqlite/runtime-state.sqlite`。打开页面时只做一次只读查询（SQLite `mode=ro`），读出 `DeepSeek` 项目里的会话数和最近的那个会话；生成预览也是只读。只有点 **Confirm import** 才会写入：向 `local_runtime_sessions`、`local_runtime_message_rows`、`local_runtime_pi_history_file_migrations`、`local_runtime_session_fts_keys` 和 `local_runtime_sessions_fts` 插入新行；`local_runtime_projects` 里没有 `~/DeepSeek` 这一行就插入，有的话只改这一行（`hidden` 和侧栏恢复标记）。
+  - `v2/sessions/<日期>/<时间>-session_<id>/`：每个导入的会话新建一个目录，里面有 `messages.jsonl`、`manifest.json`、`deepseek-migration.json`（来源记录）和 `deepseek-source.json`（完整的原始对话，包括其他分支）。已有的会话目录一概不动。
+  - `deepseek-migration/<run>/` 放撤销记录和各批次报告；`zcode-migration/writer.lock` 是和 MiniMax Code 迁移插件共用的写锁。
+  - **撤销本次导入** 只删除撤销记录里列出的行和目录，项目那一行如果还是导入后的样子，就恢复成导入前的样子；其中任何一个会话导入后有改动，就拒绝撤销，除非你再确认一次。
+- **Mini App 自己的状态：** 选中的 ZIP 会流式写入宿主管理的私有 `context.dataDir` 临时目录，再次上传时替换，运行时停止时删除。成功导入的哈希和可撤销的导入记录原子写入 `context.dataDir/state.json`。
 - **启动进程：** 先后运行 Mini App 自带的 `python3 miniapp/python/import_deepseek.py plan` 和 `apply`，两步用同一份报告。参数用数组传递，不经过 shell；包含临时 ZIP、所选会话 ID、临时报告、`--data-dir ~/.minimax`、`--agent mavis`、`--workspace ~/DeepSeek` 和 `--restore-projects`（DeepSeek 项目被从侧栏移除过时，导入会让它重新显示），`apply` 另加 `--batch-size 10`。进度条读的是脚本写到 stderr 的进度行。每次导入的撤销记录和各批次报告在 `~/.minimax/deepseek-migration/<run>/`，写锁和 MiniMax Code 迁移插件共用 `~/.minimax/zcode-migration/`。**撤销本次导入** 运行同一个脚本的 `undo --run <undo.json> --data-dir ~/.minimax`（第二次确认后加 `--force`）；顶部按钮用 `project` 子命令读取 DeepSeek 会话数和最近的那个会话。
 - **打开文件夹（仅作兜底）：** 还没导入过，或者宿主打不开导入的会话时，点 **打开 DeepSeek 项目** 会先确保 `~/DeepSeek` 存在，再在 macOS 上运行 `open ~/DeepSeek`，Windows 上运行 `explorer.exe ~/DeepSeek`，Linux 上运行 `xdg-open ~/DeepSeek`。参数用数组传递，不经过 shell。
 - **Agent 与现有对话：** Mini App 不运行 Agent 回合，不读取 MiniMax Code 历史会话，也不调用 `message.append`。原生会话由自带的导入脚本创建。
