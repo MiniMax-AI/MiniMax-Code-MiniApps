@@ -1385,3 +1385,32 @@ test('a failed save in the schedule tick is reported, not thrown as an unhandled
   engine.dispose();
   await store.writeChain.catch(() => {});
 });
+
+test('a successful retry marks the request it answered as delivered', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  engine.agent = { async run(input, options) {
+    return { ...started(input, options, 'retry-reply'), status: 'finished', text: 'The answer' };
+  } };
+  // The first attempt failed and left its verdict on the user's line.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text: 'Do the thing', clientMessageId: 'retry-1',
+    clientMessageHash: engine.userMessageFingerprint('Do the thing', []), dispatchState: 'failed',
+  });
+  const failed = await store.appendMessage(chatId, {
+    role: 'bot', botId: bot.id, text: '', status: 'error', sourceMessageId: user.id,
+    retryable: true, retryInput: 'Do the thing', errorCode: 'agent_unavailable',
+  });
+  await store.writeChain;
+
+  await engine.retryMessage(chatId, failed.id);
+  await until(() => idle(engine));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  // The retry answered the same request, so its line is delivered now, not still "not sent".
+  const input = (await store.getMessages(chatId)).find((message) => message.id === user.id);
+  assert.equal(input.dispatchState, 'delivered');
+  engine.dispose();
+  await store.writeChain;
+});
