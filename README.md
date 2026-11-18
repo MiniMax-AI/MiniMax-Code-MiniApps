@@ -57,6 +57,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 
 | MiniApp | What it does | Author |
 | --- | --- | --- |
+| [LivePage Workbench / 活页场景工作台](plugins/ersiwangluo/livepage-workbench/) | Preview templates and prepare editable Agent task briefs for industry daily briefs, business invitations, store reports and shareable pages; optional authorized LivePage publication | [二四网络](https://github.com/ersiwangluo) |
 | [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | Run OpenFilm inside MiniMax Code with the desktop interface: Studio editor, chat column and local agents, with a web-Studio fallback | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Dynamic Workflow Console](plugins/stevenjj33/workflow-console/) | Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export | [stevenjj33](https://github.com/stevenjj33) |
 | [MiniMax Photo](plugins/webguhui/minimax-photo/) | Layered image editing with an in-app AI assistant, local recovery and programmatic editing tools | [WebGuHui](https://github.com/WebGuHui) |
