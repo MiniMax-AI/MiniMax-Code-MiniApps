@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "github-star-shelf": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/github-star-shelf",
+      "headers": {},
+      "description": "管理 GitHub 收藏夹：收藏夹、项目、备注、搜索、导入 Star。",
+      "timeout": 60000
+    }
+  }
+}

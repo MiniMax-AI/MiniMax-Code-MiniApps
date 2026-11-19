@@ -1,0 +1,3 @@
+# 统一用 LF：Mini App 的内容摘要按字节算，Windows 上把换行转成 CRLF 会让同一个版本算出不同的摘要
+* text=auto eol=lf
+*.png binary

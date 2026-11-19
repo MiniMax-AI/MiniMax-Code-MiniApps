@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      # 全部离线：假 gh / 假 git / 假 AI，不访问 GitHub
+      - run: npm test
+
+  package:
+    name: official package checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # 官方社区仓库（MiniMax-AI/MiniMax-Code-MiniApps）里的包校验脚本，固定在一个已验证过的提交上。
+      # 只拉目录结构和 scripts/ 里的文件（不下载仓库里的截图和动图），几秒钟就好。
+      # 想跟进它的新规则：把下面的哈希换成社区仓库的新提交，再看本地和 CI 是否仍然通过。
+      - name: Fetch the community validator (pinned, scripts only)
+        run: |
+          git init --quiet "$RUNNER_TEMP/community"
+          cd "$RUNNER_TEMP/community"
+          git remote add origin https://github.com/MiniMax-AI/MiniMax-Code-MiniApps
+          git sparse-checkout set --cone scripts
+          git fetch --quiet --depth 1 --filter=blob:none origin cfcaa0f74fe08d2b40f598ae27e540c94f4bd026
+          git checkout --quiet FETCH_HEAD
+      # 校验的是 git 跟踪的文件（不带 .git，和「从 Git 仓库导入」看到的一样）；目录名必须等于插件 ID
+      - name: Validate this package
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg/github-star-shelf"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/pkg/github-star-shelf"
+          node "$RUNNER_TEMP/community/scripts/validate.mjs" "$RUNNER_TEMP/pkg/github-star-shelf"
