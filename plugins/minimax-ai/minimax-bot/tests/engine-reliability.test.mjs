@@ -648,6 +648,44 @@ test('an interrupted associated assistant is reported as uncertain, and legacy m
   await restored.writeChain;
 });
 
+test('a request whose queue died with the process is still sendable from the page', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  // The process died after the inbox marked the batch processing and before any reply existed.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text: 'Ship the hotfix', clientMessageId: 'orphan-1',
+    clientMessageHash: engine.userMessageFingerprint('Ship the hotfix', []), dispatchState: 'processing',
+  });
+  await store.writeChain;
+
+  const restored = new Store(dir);
+  await restored.init();
+  let runs = 0;
+  const reopened = new Engine({ store: restored, memory, logger: { warn() {} }, broadcast() {}, retryDelaysMs: [], agent: {
+    async run(input, options) { runs += 1; return { ...started(input, options, 'resumed'), status: 'finished', text: 'Shipped' }; },
+  } });
+  reopened.startScheduler();
+  reopened.tasks.start();
+
+  // The load-time mapping keeps `pending`, which the client retry path needs. The queue that owned
+  // it is gone, so the resume route has to recognise it too or the request is stranded for good.
+  const afterRestart = (await restored.getMessages(chatId)).find((message) => message.id === user.id);
+  assert.equal(afterRestart.dispatchState, 'pending');
+  await until(() => idle(reopened));
+  // Nothing replays it on its own: the turn may already have run tools before the process died.
+  assert.equal(runs, 0);
+
+  await reopened.inbox.resume(chatId);
+  await until(() => idle(reopened));
+  assert.equal(runs, 1);
+  const messages = await restored.getMessages(chatId);
+  assert.equal(messages.find((message) => message.id === user.id).dispatchState, 'delivered');
+  assert.equal(messages.filter((message) => message.sourceMessageId === user.id).length, 1);
+  reopened.dispose();
+  await restored.writeChain;
+});
+
 test('repeated pending submissions do not duplicate queued turns or revive a deliberately cancelled queue', async (t) => {
   const { store, engine } = await fixture(t);
   const bot = store.state.bots[0];
@@ -1236,4 +1274,48 @@ test('sending after Stop does not restore an explicitly cancelled request that n
   assert.doesNotMatch(calls[0].text, /Cancelled task/);
   assert.equal(original.dispatchState, 'cancelled');
   assert.equal(replacement.dispatchState, 'delivered');
+});
+
+test('a resume that loses the race to a same-id retry does not send the request twice', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const text = 'Ship the hotfix';
+  // A request the restart left pending, with no reply.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text, clientMessageId: 'race-1',
+    clientMessageHash: engine.userMessageFingerprint(text, []), dispatchState: 'pending',
+  });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'reply'), status: 'finished', text: 'Reply' };
+  } };
+
+  // Hold the resume's write, so the retry gets in first.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const realUpdate = store.updateMessages.bind(store);
+  let held = false;
+  store.updateMessages = async (id, ids, patch, options) => {
+    if (!held && patch?.dispatchState === 'pending') { held = true; await gate; }
+    return realUpdate(id, ids, patch, options);
+  };
+
+  const resuming = engine.inbox.resume(chatId).catch((error) => error);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await engine.sendUserMessage(chatId, text, [], 'race-1').catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  release();
+  await resuming;
+  await until(() => idle(engine));
+
+  // One request, one turn, one reply that answers it.
+  assert.equal(runs, 1);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.role === 'bot' && message.sourceMessageId === user.id).length, 1);
+  engine.dispose();
+  await store.writeChain;
 });

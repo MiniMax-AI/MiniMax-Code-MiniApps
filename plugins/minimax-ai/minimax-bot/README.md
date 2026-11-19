@@ -105,6 +105,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Creating a Bot, a group or a scheduled task writes into the live state and then saves it. When that save failed, the new object stayed in memory: the request reported a failure while the Bot, group or task was already there, and the next unrelated save — changing a setting, any other write — published it to disk. After a restart the thing the user was told had failed was in the team.
 - A failed save now puts the state back: a new object is removed and a changed schedule returns to the values still on disk, so a refusal leaves nothing for a later save to publish. This is the rule `updateBot` already followed; the three create paths now do the same.
 
+## 0.7.31 A request the plugin already accepted is still sendable after a restart
+
+- MiniMax Code may stop the plugin's Node process while no page is visible, and it does so without a callback. A request that was already accepted and had produced no reply used to come back as waiting for a queue that no longer existed: it stayed in the chat with no answer, the page offered no way to send it again, and the resume route refused it. The request was unreachable for good.
+- The page now offers the same **Continue with follow-ups** button for it, and the resume route accepts it, so the request can be sent again. Nothing is replayed on its own: the turn may already have run tools before the process stopped, so sending it again stays the user's decision.
+- A request whose reply had already started is unchanged, and a request this page has just sent never offers to resume itself.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
