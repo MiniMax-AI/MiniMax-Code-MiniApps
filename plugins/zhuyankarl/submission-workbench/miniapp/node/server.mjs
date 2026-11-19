@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { Store, sha256 } from './lib/store.mjs';
+import { Store, sha256, InvalidIdError } from './lib/store.mjs';
 import { validateDraft } from './lib/listing-rules.mjs';
 import { buildPreview, buildPackage } from './lib/package-builder.mjs';
 import { probeSubmissionChannel } from './lib/channel.mjs';
@@ -304,6 +304,12 @@ export async function start(context) {
       sendJson(response, 404, { error: 'not_found', message: `未知的路由：${route}` });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof InvalidIdError) {
+        // The id never came from this server, so it is refused before it can
+        // reach the filesystem.
+        sendJson(response, 400, { error: 'invalid_id', message: '素材或材料包的 id 不合法。' });
+        return;
+      }
       context.logger.error('miniapp.request.failed', { route, message });
       sendJson(response, 500, { error: 'server_error', message });
     }

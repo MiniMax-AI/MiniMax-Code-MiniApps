@@ -6,7 +6,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 /**
  * @typedef {{
@@ -30,6 +30,50 @@ import { join } from 'node:path';
  *   manifest: Record<string, unknown> | null,
  * }} PackageRecord
  */
+
+/**
+ * Every id in this store is produced by `randomUUID()`, so a legitimate id is a
+ * canonical v4 UUID. Anything else never reaches the filesystem.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Raised when a caller-supplied id is not a server-generated id, or when the
+ * path it would produce leaves the directory it belongs to.
+ */
+export class InvalidIdError extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = 'InvalidIdError';
+  }
+}
+
+/**
+ * Resolve `<id><suffix>` inside `directory`, or refuse.
+ *
+ * Two independent checks: the id must look like a server-generated UUID, and
+ * the resolved path must still sit inside `directory`. The first one keeps
+ * separators out of the path at all; the second one is the check that actually
+ * closes the hole, so it stays even if the id format ever changes.
+ *
+ * @param {string} directory
+ * @param {string} id
+ * @param {string} suffix
+ * @returns {string}
+ */
+function resolveInside(directory, id, suffix) {
+  if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+    throw new InvalidIdError('id 不是服务端生成的 UUID。');
+  }
+  const base = resolve(directory);
+  const target = resolve(base, `${id}${suffix}`);
+  const inside = relative(base, target);
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    throw new InvalidIdError('id 指向了目录之外。');
+  }
+  return target;
+}
 
 /**
  * @param {string} file
@@ -90,7 +134,7 @@ export class Store {
    * @param {Buffer} bytes
    */
   async saveAsset(asset, bytes) {
-    await writeAtomic(join(this.assetsDir, `${asset.id}.bin`), bytes);
+    await writeAtomic(resolveInside(this.assetsDir, asset.id, '.bin'), bytes);
     const list = await this.listAssets();
     const next = list.filter((item) => item.id !== asset.id);
     next.push(asset);
@@ -109,7 +153,7 @@ export class Store {
    */
   async readAssetBytes(id) {
     try {
-      return await readFile(join(this.assetsDir, `${id}.bin`));
+      return await readFile(resolveInside(this.assetsDir, id, '.bin'));
     } catch (error) {
       const code = /** @type {NodeJS.ErrnoException} */ (error).code;
       if (code === 'ENOENT') return null;
@@ -119,10 +163,11 @@ export class Store {
 
   /** @param {string} id */
   async deleteAsset(id) {
+    const file = resolveInside(this.assetsDir, id, '.bin');
     const list = await this.listAssets();
     const next = list.filter((item) => item.id !== id);
     await writeAtomic(join(this.assetsDir, 'index.json'), JSON.stringify(next, null, 2));
-    await rm(join(this.assetsDir, `${id}.bin`), { force: true });
+    await rm(file, { force: true });
   }
 
   /**
@@ -130,7 +175,7 @@ export class Store {
    * @param {Buffer} bytes
    */
   async savePackage(record, bytes) {
-    await writeAtomic(join(this.packagesDir, `${record.id}.zip`), bytes);
+    await writeAtomic(resolveInside(this.packagesDir, record.id, '.zip'), bytes);
     const list = await this.listPackages();
     const next = list.filter((item) => item.id !== record.id);
     next.unshift(record);
@@ -149,7 +194,7 @@ export class Store {
    */
   async readPackageBytes(id) {
     try {
-      return await readFile(join(this.packagesDir, `${id}.zip`));
+      return await readFile(resolveInside(this.packagesDir, id, '.zip'));
     } catch (error) {
       const code = /** @type {NodeJS.ErrnoException} */ (error).code;
       if (code === 'ENOENT') return null;
@@ -159,12 +204,13 @@ export class Store {
 
   /** @param {string} id */
   async deletePackage(id) {
+    const file = resolveInside(this.packagesDir, id, '.zip');
     const list = await this.listPackages();
     await writeAtomic(
       join(this.packagesDir, 'index.json'),
       JSON.stringify(list.filter((item) => item.id !== id), null, 2),
     );
-    await rm(join(this.packagesDir, `${id}.zip`), { force: true });
+    await rm(file, { force: true });
   }
 }
 

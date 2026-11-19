@@ -65,6 +65,8 @@ https://github.com/zhuyankarl/mcode-plugins/tree/main/plugins/submission-workben
 - **读取的文件**：只有本插件包内的文件。
 - **写入的位置**：草稿、上传的素材与生成的上架材料包，写在宿主为该插件提供的可写数据目录里
   （`<dataDir>/v2/plugin-data/liveboards/submission-workbench/`），不写插件包本身。
+  素材与材料包的 id 一律是本服务生成的 UUID；不是 UUID 的 id 在落到文件之前就被拒绝，
+  解析后的路径还会再检查一次是否仍在素材目录与材料包目录内。
 - **网络请求**：运行检查时，Node 服务会发三次 HTTPS GET，用来判断官方受理通道是否可达 ——
   `code.minimax.cn` 上的上架指南，以及 `vrfi1sk8a0.feishu.cn` 上的两个飞书表单地址。
   除此之外没有任何对外流量。Node 服务自身监听宿主分配的回环端口。
@@ -87,6 +89,7 @@ GitHub 仓库，所以它只产出可审核的材料——并在报告里如实�
 node tests/selftest.mjs        # 后端规则
 node tests/client-harness.mjs   # 页面 DOM 打桩
 node tests/server-harness.mjs   # 真实 Node 服务的 HTTP 集成
+node tests/path-traversal.mjs   # 两个带 id 路由的 id 处理
 ```
 
 ## 许可证

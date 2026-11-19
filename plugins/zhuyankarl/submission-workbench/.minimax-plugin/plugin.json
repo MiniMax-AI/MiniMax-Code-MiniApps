@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "submission-workbench",
   "displayName": "插件上架材料工作台",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "检查插件清单与上架信息，生成可审核的上架材料包，并标出缺失项。",
   "author": "明殊",
   "icon": "icon.png",

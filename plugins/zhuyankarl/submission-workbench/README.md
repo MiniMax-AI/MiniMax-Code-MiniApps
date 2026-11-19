@@ -76,7 +76,9 @@ bump rule, the package limits and the two official intake channels — so the Ag
 - **Files it writes**: the working draft, the uploaded assets and the generated listing packages,
   under the writable data directory the Host provides for this plugin
   (`<dataDir>/v2/plugin-data/liveboards/submission-workbench/`). It never writes into the plugin
-  package itself.
+  package itself. Every asset and package id is a UUID this server generates; an id that is not one
+  is refused before it can name a file, and the resolved path is checked to stay inside the asset
+  and package directories.
 - **Network requests**: when you run a check, the Node service makes three HTTPS `GET` requests
   to see whether the documented intake channels are reachable — the submission guide on
   `code.minimax.cn` and two Feishu form URLs on `vrfi1sk8a0.feishu.cn`. There is no other
@@ -102,6 +104,7 @@ Run these inside the package directory:
 node tests/selftest.mjs        # backend rules
 node tests/client-harness.mjs   # the page against a DOM stub
 node tests/server-harness.mjs   # the real Node service over HTTP
+node tests/path-traversal.mjs   # id handling on the two id-taking routes
 ```
 
 ## License
