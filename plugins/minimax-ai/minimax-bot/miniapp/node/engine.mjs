@@ -1483,6 +1483,19 @@ export class Engine {
       this.broadcast({ type: 'message.upsert', chatId, message });
       const run = async () => {
         const result = await this.runBotTurn({ bot, chatId, text, kind: group ? 'group' : message.kind ?? 'private' });
+        // The retry answers the same request, so the input it belongs to is delivered now. Without
+        // this the user's line keeps the failed badge the first attempt set, and reads as "not sent"
+        // next to a reply that did arrive.
+        if (result.accepted && message.sourceMessageId) {
+          const history = await this.store.getMessages(chatId);
+          const input = history.find((m) => m.id === message.sourceMessageId);
+          // Only a line that still carries the first attempt's verdict: a later state (a newer
+          // supplement, a cancel) outranks this retry and must not be overwritten.
+          if (input && (input.dispatchState === 'failed' || input.dispatchState === 'uncertain')) {
+            await this.store.updateMessage(chatId, input.id, { dispatchState: 'delivered' });
+            this.broadcast({ type: 'message.upsert', chatId, message: input });
+          }
+        }
         if (!group || result.status !== 'done' || result.pendingQuestion || PASS_RE.test(result.text)) return;
         const next = this.mentionsIn(result.text, group, bot.id);
         if (next.length) await this.driveGroup(group, next);
