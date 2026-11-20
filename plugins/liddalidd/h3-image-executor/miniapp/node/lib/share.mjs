@@ -24,6 +24,9 @@ const DEFAULTS = {
   // 大图的总预算（编码后的字节数，base64 之前；base64 之后约再大三分之一）。
   // 按交付顺序加，超出预算的几张只带普通预览，免得交付图多的会话整页大到部署不动。
   largeBudget: 4 * 1024 * 1024,
+  // GIF 原样内嵌（重新编码成 JPEG 会丢掉动画）。一张 768px、8 帧的 GIF 实测约 0.4 MB。
+  // 按交付顺序加，超出预算的只带静态的参考图预览。
+  gifBudget: 3 * 1024 * 1024,
   includeSheets: true,
   includeRefs: true,
   // 内嵌 JPEG 质量。86 是给「看图材料上有编号文字」留的余量：q82 在照片上已经看不出差别，
@@ -179,6 +182,19 @@ async function collectImages(snapshot, dirs, options) {
   const images = {};
   for (const [key, dataUrl] of entries) {
     if (dataUrl) images[key] = dataUrl;
+  }
+  let gifBytes = 0;
+  for (const item of (snapshot.delivery && snapshot.delivery.items) || []) {
+    const parts = item.gif && item.gif.file ? String(item.gif.file).split('/') : [];
+    if (parts.length !== 2) continue;
+    try {
+      const buffer = await readFile(join(dirs.deliver, parts[0], parts[1]));
+      if (gifBytes + buffer.length > options.gifBudget) continue;
+      gifBytes += buffer.length;
+      images['gif/' + item.gif.file] = 'data:image/gif;base64,' + buffer.toString('base64');
+    } catch {
+      /* 读不到就只放静态预览 */
+    }
   }
   return images;
 }

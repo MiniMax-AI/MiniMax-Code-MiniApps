@@ -7,6 +7,7 @@
 
 const TOOL_MATCH = 'search_images';
 const MAX_QUERIES = 6;
+export const REF_USES = new Set(['subject', 'detail', 'style', 'layout', 'scene']);
 // 每个实体保留的候选池大小。池子只是"待选名单"，不会一次全下：
 // 运行时按 3 张一批下载并判定，不合格才取下一批（见 workflow.mjs 的 refBatch）。
 // 池子留大一点，是为了让"这一批不行"时有下一批可取，而不是立刻放弃整个实体。
@@ -201,7 +202,21 @@ export function normalizeRefQueries(raw) {
     if (!taskName) taskName = 'ref' + (out.length + 1);
     while (seen.has(taskName)) taskName += '1';
     seen.add(taskName);
-    out.push({ task_name: taskName, query, prompt: asText(item.prompt).trim() });
+    // alt_query：同一个实体换一种说法（原产地语言或英文的正式名称）。一批候选全被否时先用它重搜。
+    const alt = normalizeQuery(asText(item.alt_query)).slice(0, 120);
+    const use = asText(item.use).trim().toLowerCase();
+    out.push({
+      task_name: taskName,
+      query,
+      alt_query: alt && alt !== normalizeQuery(query) ? alt : '',
+      prompt: asText(item.prompt).trim(),
+      // 这张参考图拿来做什么（主体外观 / 局部 / 画风 / 版式 / 场景），以及从它身上取什么。
+      // 筛选按用途判，生图时逐张告诉模型：参考图一多，不说清用途模型就会照搬其中一张的构图和内容。
+      use: REF_USES.has(use) ? use : 'subject',
+      take: asText(item.take).trim().slice(0, 80),
+      // 追问里重新检索时用：这一项找到的新图替换掉哪张旧参考图（R 编号）。
+      replaces: /^R\d+$/i.test(asText(item.replaces).trim()) ? asText(item.replaces).trim().toUpperCase() : '',
+    });
     if (out.length >= MAX_QUERIES) break;
   }
   return out;
@@ -258,9 +273,10 @@ export async function searchRefImages(context, queries) {
   const list = (queries || []).filter((item) => item && asText(item.query));
   if (!list.length) return { ok: false, reason: '没有检索意图', hits: [], notes: [] };
   const resolved = await resolveTool(context);
-  if (resolved.error) return { ok: false, reason: resolved.error, hits: [], notes: [] };
+  // stop：工具没有或被拒，换说法再搜也一样，调用方不要再试（见 workflow.runRefSearch）。
+  if (resolved.error) return { ok: false, stop: true, reason: resolved.error, hits: [], notes: [] };
   const blocked = await ensureAllowed(context, resolved);
-  if (blocked) return { ok: false, reason: blocked, hits: [], notes: [] };
+  if (blocked) return { ok: false, stop: true, reason: blocked, hits: [], notes: [] };
 
   const failures = [];
   const notes = [];
@@ -268,7 +284,7 @@ export async function searchRefImages(context, queries) {
   // 权限被拒：整次检索停下，并丢掉「已放行」的缓存，下一次检索重新列工具、读到最新的权限。
   const stopForPermission = (reason) => {
     nameCache.delete(context);
-    return { ok: false, reason: '搜图工具不可用：' + reason, hits: [], notes };
+    return { ok: false, stop: true, reason: '搜图工具不可用：' + reason, hits: [], notes };
   };
 
   // 批量只试一次：这个 provider 对多条 queries 经常直接报错，单条才稳定。

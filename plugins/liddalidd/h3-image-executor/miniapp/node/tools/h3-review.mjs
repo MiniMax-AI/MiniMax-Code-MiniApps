@@ -81,7 +81,12 @@ async function main() {
     // 不带 -o 时写到当前工作目录。以前默认写到插件根目录，那是 Host 安装的包目录，不该往里写东西。
     const out = resolve(flags.out || join(process.cwd(), command + '-sheet.png'));
     const items = inputs.map((path, index) => ({ path, label: command === 'refs' ? 'R' + (index + 1) : String(index + 1) }));
-    return emit(await buildGridSheet(items, out, { perRow: flags.perRow || 4 }));
+    const built = await buildGridSheet(items, out, { perRow: flags.perRow || 4 });
+    // 一张都解不开时不写文件，按失败退出；解不开的个别图列在 skipped 里，编号仍对应输入顺序。
+    if (!built.sheet) {
+      throw new Error('没有一张图能解码：' + built.skipped.map((item) => item.path + '（' + item.error + '）').join('；'));
+    }
+    return emit(built);
   }
 
   if (command === 'stats') {

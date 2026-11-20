@@ -96,33 +96,60 @@ export async function buildCandidateSheets(entries, outDir) {
 // ---------------------------------------------------------------- 参考图 / 并排对比
 
 // 把多张图拼成一张带编号的对比图。labels 决定左上角标签文字。
+//
+// 解不开的图不占格子，结果里的 skipped 写明是哪张、为什么。以前解不开的图会留一个空格子，
+// 剩下的图仍按原下标编号：判定提示词说「共 1 张，编号 1」，图上却标着「2」，
+// 判定节点照图上的数字回答就会被算成「都不符合」（真机 20261112-8a442a 的大屋根第 1 批）。
+// options.renumber：按实际画进去的顺序重新编号 1、2、3……，调用方用返回的 items[].index 对回原列表。
+// 每张解完先缩到不超过画布宽度再排版：排版要等知道最终张数才能定，缩小后留在内存里的只有几 MB。
 export async function buildGridSheet(items, outPath, options) {
   const width = (options && options.width) || SHEET_WIDTH;
-  const perRow = Math.min(items.length, (options && options.perRow) || 4);
-  const rows = Math.ceil(items.length / perRow);
-  const cellW = Math.floor(width / perRow);
-  const cellH = cellW;
-  const canvas = createCanvas(width, cellH * rows, 3);
-  const used = [];
+  const loaded = [];
+  const skipped = [];
   for (let index = 0; index < items.length; index += 1) {
-    let image;
     try {
-      image = decodeImage(await readFile(items[index].path));
-    } catch {
-      continue;
+      const image = decodeImage(await readFile(items[index].path));
+      loaded.push({ index, source: items[index], width: image.width, height: image.height, image: downsample(image, width) });
+    } catch (error) {
+      skipped.push({ index, path: items[index].path, label: items[index].label, error: String(error && error.message ? error.message : error) });
     }
-    const box = fitBox(image.width, image.height, cellW, cellH);
-    const col = index % perRow;
-    const row = Math.floor(index / perRow);
+  }
+  if (!loaded.length) return { sheet: null, items: [], skipped };
+  const { canvas, used } = layoutGridSheet(loaded, options);
+  await writeImage(outPath, canvas);
+  return { sheet: outPath, items: used, skipped };
+}
+
+// 已经解码好的图拼成同样版式的对比图（GIF 的帧条、h3-gif 的帧拼图用）：entries 是 [{ image, label }]。
+export function renderGridSheet(entries, options) {
+  const width = (options && options.width) || SHEET_WIDTH;
+  const loaded = entries.map((entry, index) => ({ index, source: { label: entry.label, path: '' }, width: entry.image.width, height: entry.image.height, image: downsample(entry.image, width) }));
+  return layoutGridSheet(loaded, options).canvas;
+}
+
+function layoutGridSheet(loaded, options) {
+  const width = (options && options.width) || SHEET_WIDTH;
+  const perRow = Math.max(1, Math.min(loaded.length, (options && options.perRow) || 4));
+  const rows = Math.ceil(loaded.length / perRow);
+  const cellW = Math.floor(width / perRow);
+  // 帧条的格子按帧的画幅定高：横图的帧放进方格里上下各空一大截。
+  const cellH = options && options.cellAspect ? Math.max(1, Math.round(cellW / options.cellAspect)) : cellW;
+  const canvas = createCanvas(width, cellH * rows, 3);
+  // 空格子默认是黑的；给了 fill 就铺成这个灰度（交付的帧条用浅色，空格不扎眼）。
+  if (options && Number.isFinite(options.fill)) canvas.data.fill(options.fill);
+  const used = [];
+  loaded.forEach((entry, position) => {
+    const box = fitBox(entry.image.width, entry.image.height, cellW, cellH);
+    const col = position % perRow;
+    const row = Math.floor(position / perRow);
     const dx = col * cellW + Math.floor((cellW - box.w) / 2);
     const dy = row * cellH + Math.floor((cellH - box.h) / 2);
-    drawImage(canvas, image, dx, dy, box.w, box.h);
-    const label = items[index].label || String(index + 1);
+    drawImage(canvas, entry.image, dx, dy, box.w, box.h);
+    const label = options && options.renumber ? String(position + 1) : entry.source.label || String(position + 1);
     drawLabel(canvas, label, col * cellW, row * cellH);
-    used.push({ label, path: items[index].path, width: image.width, height: image.height });
-  }
-  await writeImage(outPath, canvas);
-  return { sheet: outPath, items: used };
+    used.push({ label, index: entry.index, path: entry.source.path, width: entry.width, height: entry.height });
+  });
+  return { canvas, used };
 }
 
 export async function buildReferenceSheet(refs, outPath) {
@@ -198,6 +225,13 @@ const DIGITS = {
   8: ['111', '101', '111', '101', '111'],
   9: ['111', '101', '111', '001', '111'],
   R: ['111', '101', '111', '110', '101'],
+  // 帧条里补的过渡格标「格子号+」：第 3 格之后补的那一格是 3+。
+  '+': ['000', '010', '111', '010', '000'],
+  // 过渡格评审的候选标字母，和同一行里标数字的格子分开（以前同一行是「1 1 2 2」：前一格和候选 1 都标 1）。
+  A: ['010', '101', '111', '101', '101'],
+  B: ['110', '101', '110', '101', '110'],
+  C: ['011', '100', '100', '100', '011'],
+  D: ['110', '101', '101', '101', '110'],
 };
 
 // 在 (x, y) 处画一个黑底白字的编号标签，让材料图自解释，评审可以直接说"第 5 块"。

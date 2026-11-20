@@ -1,11 +1,13 @@
 // 图片格式分发：harness 只认"给我一个 buffer，还我 {width,height,channels,data}"。
-// PNG 走 png.mjs，JPEG 走 jpeg.mjs；WebP/HEIC 明确不支持，调用方按需跳过。
+// PNG 走 png.mjs，JPEG 走 jpeg.mjs，GIF 取第一帧（动图由 gif.mjs 合成）；WebP/HEIC 明确不支持，调用方按需跳过。
 import { decodePng, readPngHeader } from './png.mjs';
-import { decodeJpeg, isJpeg } from './jpeg.mjs';
+import { decodeJpeg, isJpeg, jpegUnsupportedReason } from './jpeg.mjs';
+import { decodeGif, isGif } from './gif.mjs';
 
 export function sniffFormat(buffer) {
   if (buffer.length > 8 && buffer[0] === 0x89 && buffer.subarray(1, 4).toString('ascii') === 'PNG') return 'png';
   if (isJpeg(buffer)) return 'jpeg';
+  if (isGif(buffer)) return 'gif';
   if (buffer.length > 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'webp';
   if (buffer.length > 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return 'heif';
   return 'unknown';
@@ -18,6 +20,7 @@ export function sniffFormat(buffer) {
 export function extensionFor(buffer) {
   const format = sniffFormat(buffer);
   if (format === 'jpeg') return '.jpg';
+  if (format === 'gif') return '.gif';
   if (format === 'webp') return '.webp';
   if (format === 'heif') return '.heic';
   return '.png';
@@ -27,6 +30,7 @@ export function decodeImage(buffer) {
   const format = sniffFormat(buffer);
   if (format === 'png') return decodePng(buffer);
   if (format === 'jpeg') return decodeJpeg(buffer);
+  if (format === 'gif') return decodeGif(buffer).frames[0].image;
   throw new Error('unsupported_image_format:' + format);
 }
 
@@ -48,7 +52,10 @@ export function undecodableReason(buffer) {
     if (![0, 2, 4, 6].includes(header.colorType)) return '颜色类型 ' + header.colorType + ' 不支持';
     return '';
   }
-  if (format === 'jpeg') return imageSize(buffer) ? '' : 'JPEG 头损坏';
+  // JPEG 要看帧类型，不能只看有没有尺寸：以前只要读得到尺寸就放行，渐进式 JPEG 于是被当成
+  // 「能用」缓存下来，到拼判定图时才解不开，被悄悄跳过（真机 20261112-8a442a）。
+  // 现在渐进式能解了，剩下解不了的（算术编码、CMYK 等）在这里就如实拒掉。
+  if (format === 'jpeg') return jpegUnsupportedReason(buffer);
   return '格式不支持（' + format + '）';
 }
 
