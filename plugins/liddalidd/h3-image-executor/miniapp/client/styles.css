@@ -1396,6 +1396,11 @@ details.group-item-detail[open] > .group-item-head .group-item-text { color: var
   line-height: 1.6;
   color: var(--mcode-text-muted);
 }
+.app .fail-hint.deliver-interrupted { color: var(--mcode-warning); }
+.app .meta.deliver-text {
+  font-size: 11px;
+  line-height: 1.6;
+}
 
 /* ---------------------------------------------------------------- 分享页 */
 
@@ -2220,3 +2225,8 @@ body.app {
   color: var(--mcode-text-subtle);
 }
 
+/* GIF 的帧条：放在说明里，比大图矮一截，和上下文字留出间距。 */
+.app .deliver-item img.deliver-strip {
+  margin: 8px 0 4px;
+  border: 1px solid var(--mcode-border);
+}

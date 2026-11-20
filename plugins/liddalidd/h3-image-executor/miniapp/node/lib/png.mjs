@@ -202,6 +202,11 @@ function crc32(buffer) {
 }
 
 // 色彩统计：通道均值、红/蓝相对增益、锐度代理（平均梯度能量）。
+// neutralRedGain：只在接近中性的像素（浅色背景、白墙、灰路）上量的红增益。整图均值分不清「整体偏红」和
+// 「主体本身就是红的」（橘猫、红裙子）：后者整图 redGain 一样很高，中性的地方却是正的。
+// neutralShare 是这类像素占的比例，太少就量不准。
+// whiteRGB / whiteCast：只在接近白色的像素（白纸、白底）上量的平均色和通道差。白纸偏粉紫这种偏色，
+// 整图均值看不出来：上面一大幅蓝色插图就把它盖过去了（真机 20261116-41535c，纸面 (245,242,248)）。
 export function analyze(image) {
   const { width, height, channels, data } = image;
   const step = Math.max(1, Math.floor((width * height) / 400000));
@@ -210,20 +215,42 @@ export function analyze(image) {
   let sumB = 0;
   let count = 0;
   let clipped = 0;
+  let neutralR = 0;
+  let neutralG = 0;
+  let neutralB = 0;
+  let neutral = 0;
+  let whiteR = 0;
+  let whiteG = 0;
+  let whiteB = 0;
+  let white = 0;
   for (let p = 0; p < width * height; p += step) {
     const i = p * channels;
-    if (channels === 1) {
-      sumR += data[i];
-      sumG += data[i];
-      sumB += data[i];
-    } else if (channels === 2) {
-      sumR += data[i];
-      sumG += data[i];
-      sumB += data[i];
+    let r;
+    let g;
+    let b;
+    if (channels < 3) {
+      r = g = b = data[i];
     } else {
-      sumR += data[i];
-      sumG += data[i + 1];
-      sumB += data[i + 2];
+      r = data[i];
+      g = data[i + 1];
+      b = data[i + 2];
+    }
+    sumR += r;
+    sumG += g;
+    sumB += b;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max >= 40 && max - min <= max * 0.12) {
+      neutralR += r;
+      neutralG += g;
+      neutralB += b;
+      neutral += 1;
+    }
+    if (min >= 200 && max - min <= 24) {
+      whiteR += r;
+      whiteG += g;
+      whiteB += b;
+      white += 1;
     }
     if (data[i] > 250 || data[i + Math.min(1, channels - 1)] > 250) clipped += 1;
     count += 1;
@@ -258,6 +285,11 @@ export function analyze(image) {
     clippedRatio: round(clipped / count, 4),
     sharpness: round(gcount ? gradient / gcount : 0, 3),
     balance: round(avg, 2),
+    neutralRedGain: neutral ? round(neutralR / Math.max(1, (neutralG + neutralB) / 2), 4) : 0,
+    neutralShare: round(neutral / count, 4),
+    whiteShare: round(white / count, 4),
+    whiteRGB: white ? [round(whiteR / white, 1), round(whiteG / white, 1), round(whiteB / white, 1)] : null,
+    whiteCast: white ? round(Math.max(whiteR, whiteG, whiteB) / white - Math.min(whiteR, whiteG, whiteB) / white, 2) : 0,
   };
 }
 

@@ -301,11 +301,29 @@
         grid.appendChild(node);
         return;
       }
-      const picture = img('deliver/' + item.previewFile, item.title, null, 'large/' + item.file);
+      // GIF 放动图本身；动图超出分享页预算没内嵌的，放参考图的预览并注明。
+      const gifKey = item.gif ? 'gif/' + item.gif.file : '';
+      const picture = gifKey && images[gifKey]
+        ? img(gifKey, item.title)
+        : img('deliver/' + item.previewFile, item.title, null, 'large/' + item.file);
       if (picture) node.appendChild(picture);
       node.appendChild(el('h3', null, item.id + ' · ' + item.title));
       node.appendChild(el('span', 'pill ' + (item.status === 'passed' ? 'pass' : 'unpassed'),
         item.status === 'passed' ? '通过' : '未通过（选优交付）'));
+      if (item.gif) {
+        // 组图拼的 GIF 按「格」说：每一帧就是组图里的一格。程序转出来的按「一圈」说。
+        const panels = item.gif.source === 'panels';
+        const motion = item.gif.source === 'motion';
+        node.appendChild(kv('GIF', item.gif.width + '×' + item.gif.height + ' · ' + item.gif.frames + (panels ? ' 格 · 每格 ' : ' 帧 · 每帧 ') +
+          Math.round(item.gif.keyMs || item.gif.frameMs) / 1000 + ' 秒' + (item.gif.durationMs ? ' · 共 ' + Math.round(item.gif.durationMs / 100) / 10 + ' 秒' : '') + (item.gif.loop ? ' · 循环' : '') +
+          (item.gif.transition === 'cut' ? (panels && item.gif.bounce ? ' · 切换时弹一下' : panels && item.gif.tweens ? '' : ' · 直接切换') : item.gif.transition === 'fade' ? ' · 渐变过渡' : '') +
+          (panels ? ' · 组图切格拼成' + (item.gif.tweens ? '，补了 ' + item.gif.tweens + ' 格过渡' : '') : '') + (motion ? ' · 程序绕圆心转出来的' : '') +
+          (images[gifKey] ? '' : panels ? ' · 动图太大没放进分享页，这里是组图' : ' · 动图太大没放进分享页，这里是参考图')));
+      }
+      for (const one of (item.chart && item.chart.items) || []) {
+        node.appendChild(kv('图表', one.typeLabel + (one.title ? '「' + one.title + '」' : '') + ' · ' + (one.ok ? '程序按数据画入，核对通过' : '没画上') +
+          ((one.unverified || []).length ? ' · 有 ' + one.unverified.length + ' 个数没在原话里找到' : '')));
+      }
       node.appendChild(kv('尺寸', item.size || '-'));
       node.appendChild(kv('轮次', String(item.rounds)));
       if (item.verdict) node.appendChild(kv('hard', item.verdict.hardPassed + '/' + item.verdict.hardTotal));

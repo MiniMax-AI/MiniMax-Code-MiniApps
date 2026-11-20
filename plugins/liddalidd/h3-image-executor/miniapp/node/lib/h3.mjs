@@ -20,6 +20,44 @@ const TIMEOUT_MS = 600000;
 // 单张生成图的字节上限。4K PNG 一般在几十 MB 以内，留足余量。
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
 
+// 服务端的临时故障：网关 502/503/504、限流 429、500，以及连不上、连接被重置。这些等一等再试有意义；
+// 400/401/403/404 是请求本身的问题，重试多少次都一样。
+// 生图、上传、下载各自在这里退避重试两次，间隔逐次拉长，给网关恢复的时间。重试完还失败，
+// 抛出的错误带 transient = true，上层据此决定「先交付手上已有的图」，而不是把整个会话判死
+// （真机 20261112-23b706 / 463fcd：网关一次 502 就让两个会话各丢掉 8 张、4 张已经生成好的图）。
+// delays 导出成可改的对象，测试里改小，不用真等。
+export const RETRY = { delays: [4000, 12000] };
+const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504]);
+// 上传接口 base_resp 里表示临时故障的状态码：1001 超时、1002 / 1039 限流、1013 服务内部错误。
+const TRANSIENT_BASE_CODES = new Set([1001, 1002, 1013, 1039]);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 连不上、连接被重置、DNS 一时解析不了。等满 10 分钟的超时不在此列：再等一轮不划算。
+function isNetworkError(error) {
+  if (!error || error.name === 'TimeoutError' || error.name === 'AbortError') return false;
+  const cause = error.cause || {};
+  const code = String(cause.code || error.code || '');
+  return /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|UND_ERR_CLOSED)$/.test(code) ||
+    /fetch failed|socket hang up|other side closed/i.test(String(error.message || ''));
+}
+
+function markTransient(error, transient) {
+  if (transient) error.transient = true;
+  return error;
+}
+
+// 网关回的错误页常常是一整段 HTML（真机：<html><head><title>502 Bad Gateway</title>…），
+// 原样塞进时间线既难看又看不出要点。取 title，没有就去掉标签。
+function briefBody(text) {
+  const raw = String(text || '');
+  const title = /<title>([^<]*)<\/title>/i.exec(raw);
+  const plain = title ? title[1] : raw.replace(/<[^>]*>/g, ' ');
+  return plain.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 let cached = null;
 // 页面里保存的配置。放在模块作用域，由 server 启动时从 dataDir 读进来、
 // 保存时更新。Key 只在 Node 进程里流转，绝不回传给页面。
@@ -132,27 +170,45 @@ function applySize(payload, options) {
 async function post(config, path, payload, label) {
   if (!config.apiKey) throw new Error('missing_api_key');
   if (!config.baseUrl) throw new Error('missing_base_url');
-  const response = await fetch(config.baseUrl + path, {
-    method: 'POST',
-    headers: { ...authHeaders(config), 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  const text = await response.text();
-  let body = null;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = null;
+  for (let attempt = 0; ; attempt += 1) {
+    const canRetry = attempt < RETRY.delays.length;
+    let response;
+    try {
+      response = await fetch(config.baseUrl + path, {
+        method: 'POST',
+        headers: { ...authHeaders(config), 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (error) {
+      const transient = isNetworkError(error);
+      if (transient && canRetry) {
+        await sleep(RETRY.delays[attempt]);
+        continue;
+      }
+      throw markTransient(error, transient);
+    }
+    const text = await response.text();
+    let body = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+    if (response.status !== 200) {
+      const transient = TRANSIENT_STATUS.has(response.status);
+      if (transient && canRetry) {
+        await sleep(RETRY.delays[attempt]);
+        continue;
+      }
+      const message = (body && body.error && body.error.message) || briefBody(text);
+      const error = new Error(label + '失败 HTTP ' + response.status + '：' + message);
+      error.status = response.status;
+      error.requestId = body && body.request_id;
+      throw markTransient(error, transient);
+    }
+    return normalize(body);
   }
-  if (response.status !== 200) {
-    const message = (body && body.error && body.error.message) || text.slice(0, 300);
-    const error = new Error(label + '失败 HTTP ' + response.status + '：' + message);
-    error.status = response.status;
-    error.requestId = body && body.request_id;
-    throw error;
-  }
-  return normalize(body);
 }
 
 function normalize(body) {
@@ -181,32 +237,64 @@ export async function uploadReference(config, filePath) {
   if (!config.apiKey) throw new Error('missing_api_key');
   if (!config.baseUrl) throw new Error('missing_base_url');
   const buffer = await readFile(filePath);
-  const form = new FormData();
-  form.append('purpose', 'image_generation_input');
-  form.append('file', new Blob([buffer]), basename(filePath));
-  const response = await fetch(config.baseUrl + '/v1/files/upload', {
-    method: 'POST',
-    headers: authHeaders(config),
-    body: form,
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  const body = await response.json().catch(() => null);
-  const baseResp = (body && body.base_resp) || {};
-  if (response.status !== 200 || baseResp.status_code !== 0) {
-    throw new Error('参考图上传失败：' + (baseResp.status_msg || 'HTTP ' + response.status));
+  for (let attempt = 0; ; attempt += 1) {
+    const canRetry = attempt < RETRY.delays.length;
+    const form = new FormData();
+    form.append('purpose', 'image_generation_input');
+    form.append('file', new Blob([buffer]), basename(filePath));
+    let response;
+    try {
+      response = await fetch(config.baseUrl + '/v1/files/upload', {
+        method: 'POST',
+        headers: authHeaders(config),
+        body: form,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (error) {
+      const transient = isNetworkError(error);
+      if (transient && canRetry) {
+        await sleep(RETRY.delays[attempt]);
+        continue;
+      }
+      throw markTransient(new Error('参考图上传失败：' + String(error && error.message ? error.message : error), { cause: error }), transient);
+    }
+    const body = await response.json().catch(() => null);
+    const baseResp = (body && body.base_resp) || {};
+    if (response.status === 200 && baseResp.status_code === 0 && body.file && body.file.file_id) {
+      return 'mm_file://' + body.file.file_id;
+    }
+    const transient = response.status === 200
+      ? TRANSIENT_BASE_CODES.has(Number(baseResp.status_code))
+      : TRANSIENT_STATUS.has(response.status);
+    if (transient && canRetry) {
+      await sleep(RETRY.delays[attempt]);
+      continue;
+    }
+    const error = new Error('参考图上传失败：' + (baseResp.status_msg || 'HTTP ' + response.status));
+    error.status = response.status;
+    throw markTransient(error, transient);
   }
-  return 'mm_file://' + body.file.file_id;
 }
 
 export async function download(url, targetPath) {
   // 成图地址来自接口返回。接口本身可能是内网地址（放行），但云元数据段必须拦，
   // 而且每一跳重定向都要重新拦一遍——fetchImage 负责这两件事，并给响应体封顶。
+  // 图已经生成好了（已经计费），下载失败不该让整轮重画：连接类错误和服务端 5xx 退避重试两次。
   let buffer;
-  try {
-    buffer = await fetchImage(url, { maxBytes: MAX_IMAGE_BYTES, timeoutMs: 180000 });
-  } catch (error) {
-    const message = String(error && error.message ? error.message : error);
-    throw new Error(error && error.blocked ? '图片' + message : '图片下载失败 ' + message);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      buffer = await fetchImage(url, { maxBytes: MAX_IMAGE_BYTES, timeoutMs: 180000 });
+      break;
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      const status = /^HTTP (\d{3})/.exec(message);
+      const transient = !(error && error.blocked) && (isNetworkError(error) || Boolean(status && TRANSIENT_STATUS.has(Number(status[1]))));
+      if (transient && attempt < RETRY.delays.length) {
+        await sleep(RETRY.delays[attempt]);
+        continue;
+      }
+      throw markTransient(new Error(error && error.blocked ? '图片' + message : '图片下载失败 ' + message), transient);
+    }
   }
   // targetPath 可省略：调用方要先看字节才知道该用什么扩展名（接口回的不一定是 PNG）。
   if (targetPath) await writeFile(targetPath, buffer);
