@@ -1055,3 +1055,27 @@ test("a discussion in which every member passes finishes as done with an empty r
   assert.ok(passes.length >= 1, "the member's pass is still in the chat, marked as a pass");
   assert.ok(passes.every((message) => /^\s*\[?PASS\]?\s*[.。]?\s*$/i.test(message.text)));
 });
+
+test("a report that had to shorten a result says so", async (t) => {
+  const { engine } = await fixture(t);
+  const long = "x".repeat(9000);
+  const batch = {
+    id: "batch_clip",
+    tasks: [
+      // Longer than the report window and already shortened in the record: both are silent cuts.
+      { id: "task_long", botId: "bot_b", status: "done", result: long.slice(0, 8000), resultTruncated: true },
+      // Longer than the report window only.
+      { id: "task_window", botId: "bot_b", status: "done", result: long.slice(0, 5000) },
+      // Short enough: nothing was cut, so nothing is said.
+      { id: "task_short", botId: "bot_b", status: "done", result: "All good" },
+    ],
+  };
+
+  const report = engine.tasks.batchReport(batch);
+  const [longPart, windowPart, shortPart] = report.split("\n\n");
+
+  assert.ok(longPart.includes("(truncated)"), "a result shortened in the record says so");
+  assert.ok(windowPart.includes("(truncated)"), "a result longer than the report window says so");
+  assert.ok(!shortPart.includes("(truncated)"), "a result that fits is not marked");
+  assert.ok(shortPart.includes("All good"), "a short result is still shown in full");
+});
