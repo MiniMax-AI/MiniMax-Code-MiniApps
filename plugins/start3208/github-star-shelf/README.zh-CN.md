@@ -60,9 +60,9 @@
 - **MiniMax Code 3.1.16，macOS（Apple 芯片）**，`gh` 2.96 已登录，`git` 是苹果自带的。1.1.0 在这个窗口里实际用过：导入 Star、云讲解和本地讲解、备注、追问、设置页。
 - **MiniMax Code，Windows 11**：用「从 Git 仓库导入」装的就是这份公开包 `3e508ea`（版本 1.2.0），配真实 GitHub 账号走了一遍：导入 50 个 Star（录屏期间 README 缓存还在从 33 涨到 50）、搜索、收藏夹下拉、云讲解（MiniMax-M3.1-Flash，能停能重讲）、追问（实际调了 2 次工具）、README 页签，以及 Agent 调用 MCP 工具（`list_collections`、`list_projects`、`get_project`）读回来的书架。本地讲解、设置页、备注、编辑收藏夹在 Windows 上也用过。录屏里看不到客户端具体版本；导入对话框显示这个包的最低版本是 `>=3.1.6`。
 - **从 Git 仓库导入**在 macOS 和 Windows 上都用过：插件市场的「从 Git 仓库导入」预览认出了这个包，显示出了名称、版本、commit、声明的权限（`agentAccess: session.run`）和下面的最低版本；导入后的副本本地也用过。
-- **离线测试**（`npm test`，约 130 条，不到 30 秒）：macOS（Apple 芯片）上的 Node 22、24 和 26。CI 在 Ubuntu 和 macOS 上跑 Node 22 和 24。
+- **离线测试**（`npm test`，约 130 条，不到 30 秒）：macOS（Apple 芯片）上的 Node 22、24 和 26。CI 在 Ubuntu 和 macOS 上跑 Node 22 和 24。Windows 11 上手动跑过和 Windows 相关的那一部分：11 过、2 跳过、0 失败。
 - **页面本身**（1.2.0）：在无头 Chrome 里，对着这份 Mini App 的隔离副本（假的 `gh`、`git` 和 AI）渲染过，明暗两套主题、从 360 到 1400 px 的各种宽度：没有控制台报错，也没有横向滚动。上面那两张截图就是这么来的。这不是一套真实的浏览器测试：脚本不在本仓库里，也不在 CI 里跑。
-- **没有验证：** Windows 已经有真机结果（见上），但端到端测试在它上面仍会跳过——这些测试要用 POSIX 的 `sh` 来假装 `gh` 和 `git`——所以它的路径规则只有对着模拟平台做的单元测试。Linux 只在 CI 里跑过。AI 的权限确认卡只用模拟的 Agent 测过，这台机器上的真实 AI 从没要过权限。「在侧边栏打开会话」到底有没有弹出侧边栏，从页面里看不到。不支持 GitHub Enterprise（`GH_HOST` 固定为 `github.com`）。
+- **没有验证：** Windows 上剩下那部分测试——导入、讲解会话、克隆、取消、限流，共 99 条——跑不起来，因为它们要用 POSIX 的 `sh` 来假装 `gh` 和 `git`；这部分只在 macOS、Ubuntu 和 CI 里覆盖。Linux 只在 CI 里跑过。AI 的权限确认卡只用模拟的 Agent 测过，这台机器上的真实 AI 从没要过权限。「在侧边栏打开会话」到底有没有弹出侧边栏，从页面里看不到。不支持 GitHub Enterprise（`GH_HOST` 固定为 `github.com`）。
 
 ## 数据与访问
 
