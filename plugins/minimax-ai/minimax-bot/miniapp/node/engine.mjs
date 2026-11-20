@@ -1801,6 +1801,9 @@ export class Engine {
   }
 
   async runHelper(helper) {
+    // The stop button can be pressed while the helper is still `queued` and no run exists yet; that
+    // path marks the helper stopped instead of aborting a controller. Nothing to do here then.
+    if (helper.status === 'stopped') return;
     const controller = new AbortController();
     const run = { controller };
     const approvals = new Set();
@@ -2004,9 +2007,21 @@ export class Engine {
     const helper = (this.store.state.helpers ?? []).find((h) => h.id === String(id ?? ''));
     if (!helper) throw new EngineError('not_found', t('err.helperMissing', { id: String(id ?? '') }));
     if (caller && !caller.isMain && helper.botId !== caller.id) throw new EngineError('forbidden', t('err.helperNotYours'));
+    const who = caller ? caller.name : 'user';
     const run = this.helperRuns.get(helper.id);
-    if (!run || !HELPER_ACTIVE.has(helper.status)) return { stopped: false, status: helper.status };
-    run.stoppedBy = caller ? caller.name : 'user';
+    if (!run) {
+      // A helper is in the list before `runHelper` registers a run for it, and the page offers the
+      // stop button for `queued` too. Without this the request is answered `stopped: false` and the
+      // job starts anyway: mark it so `runHelper` sees it and leaves it alone.
+      if (helper.status !== 'queued') return { stopped: false, status: helper.status };
+      helper.status = 'stopped';
+      helper.endedAt = Date.now();
+      void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_stop_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
+      this.broadcastHelpers();
+      return { stopped: true, status: 'stopped' };
+    }
+    if (!HELPER_ACTIVE.has(helper.status)) return { stopped: false, status: helper.status };
+    run.stoppedBy = who;
     run.controller.abort();
     return { stopped: true, status: 'stopped' };
   }

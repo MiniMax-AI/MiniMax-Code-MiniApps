@@ -1385,3 +1385,45 @@ test('a failed save in the schedule tick is reported, not thrown as an unhandled
   engine.dispose();
   await store.writeChain.catch(() => {});
 });
+
+test('stopping a helper while its admission is still being saved stops it for good', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const finish = deferred();
+  const saveEntered = deferred();
+  const finishSave = deferred();
+  t.after(() => { finish.resolve(); finishSave.resolve(); });
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    const ids = started(input, options, 'source');
+    runs += 1;
+    await finish.promise;
+    return { ...ids, status: 'finished', text: 'Done' };
+  } };
+  const source = engine.runBotTurn({ bot, chatId, text: 'Start background work', kind: 'private' });
+  await until(() => runs === 1);
+
+  // Hold the save that admits the helper, so the stop lands while it is still `queued` and no run
+  // exists yet. That is the window the page's stop button can be pressed in.
+  const save = store.save.bind(store);
+  store.save = async () => {
+    if (store.state.helpers.some((helper) => helper.status === 'queued')) { saveEntered.resolve(); await finishSave.promise; }
+    return save();
+  };
+  const starting = engine.startHelper(bot, { task: 'A new task' });
+  await saveEntered.promise;
+  const queued = store.state.helpers.find((helper) => helper.status === 'queued');
+  assert.equal(engine.helperRuns.size, 0);
+  const stopped = engine.stopHelper(null, queued.id);
+  assert.equal(stopped.stopped, true);
+  finishSave.resolve();
+  await starting;
+
+  // The helper must stay stopped and must never start a background turn.
+  finish.resolve();
+  await source;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(store.state.helpers.find((helper) => helper.id === queued.id).status, 'stopped');
+  assert.equal(runs, 1);
+});
