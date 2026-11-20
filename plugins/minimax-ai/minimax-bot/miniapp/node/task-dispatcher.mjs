@@ -201,7 +201,13 @@ export class TaskDispatcher {
 
   batchReport(batch) {
     return reportBody(t("task.results", { id: batch.id }) + "\n" + batch.tasks.map((task) => {
-      const report = `${this.store.getBot(task.botId)?.name ?? task.title} [${task.status}] (${task.id})\n${clip(task.result || task.error || "-", 4000)}`;
+      const stored = String(task.result || task.error || "-");
+      // The report carries the first part of each result. Saying so matters: the task record may
+      // already hold a shortened copy (`resultTruncated`), and this window is shorter still, so a
+      // reader who is not told would take the cut for the end of the work.
+      const shown = clip(stored, 4000);
+      const cut = shown.length < stored.length || task.resultTruncated;
+      const report = `${this.store.getBot(task.botId)?.name ?? task.title} [${task.status}] (${task.id})\n${shown}${cut ? `\n${t("clip.truncated")}` : ""}`;
       // An unconfirmed outcome has no output to show: say so instead of a bare status code.
       return task.status === "unknown" ? `${report}\n${t("task.unknownOutcome")}` : report;
     }).join("\n\n"));

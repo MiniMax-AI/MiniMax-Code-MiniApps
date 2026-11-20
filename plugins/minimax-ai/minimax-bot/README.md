@@ -116,6 +116,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Two writes the plugin fires and forgets had nothing to catch their failure: the session id recorded when a turn starts, and the scheduled-task scan that runs every 30 seconds. A failed write there became an unhandled rejection, and the Host fails the whole Mini App process on one of those — so a disk that would not take a write took every running turn with it, and the scheduled task kept retrying every 30 seconds.
 - Both now report the failure through the plugin log, the way the task save next to one of them already did. The turn carries on, and the scan keeps running.
 
+## 0.7.36 A shortened task result says that it was shortened
+
+- The report a finished task batch hands back was trimmed to 4,000 characters per task without saying so. The task record already carries a marker when it had to shorten a result itself, and the report did not consult it, so a reader had no way to tell "this is the whole answer" from "this is the first part of it".
+- A result that was cut now ends with the same truncation mark the rest of the plugin uses. A result that fits is unchanged, and the full text is still read back with `get_tasks`.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
