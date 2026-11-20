@@ -116,6 +116,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Two writes the plugin fires and forgets had nothing to catch their failure: the session id recorded when a turn starts, and the scheduled-task scan that runs every 30 seconds. A failed write there became an unhandled rejection, and the Host fails the whole Mini App process on one of those — so a disk that would not take a write took every running turn with it, and the scheduled task kept retrying every 30 seconds.
 - Both now report the failure through the plugin log, the way the task save next to one of them already did. The turn carries on, and the scan keeps running.
 
+## 0.7.37 A round of passes does not hand [PASS] back as its outcome
+
+- When a member of a group has nothing to add it replies `[PASS]` and is skipped. That turn was still kept as the round's result, so a discussion that ended on a pass reported `[PASS]` as what it produced. A group task opened from a private chat showed exactly that in its result line.
+- It was worse when an earlier member had said something real: the last pass replaced the round's text with `[PASS]`, so the work that was actually done was dropped from the result and only the chat still had it.
+- A pass is no longer kept as the round's result. The pass itself is still marked and still skipped, so nothing changes about who speaks; a round in which everybody passes now hands back nothing, and a round that ends on a pass keeps the last thing that was really said.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

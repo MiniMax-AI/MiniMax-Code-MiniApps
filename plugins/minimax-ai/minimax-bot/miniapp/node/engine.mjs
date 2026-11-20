@@ -1333,18 +1333,20 @@ export class Engine {
         const handover = this.handoverFor(fresh, noteRound);
         hops += 1;
         const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId, handover });
-        lastResult = result;
         accepted ||= result.accepted;
         if (result.status === 'aborted' && (options.signal?.aborted || loop.cancelled)) queue.unshift(botId);
-        if (result.safeToContinue === false) break;
-        // Resume this member's verification under the same task before advancing the group.
-        if (result.status === 'done' && result.waitingForTasks) break;
+        // A member that passed said nothing this round: it does not become the round's result.
+        // Every other turn does, whichever way the round ends next.
         if (result.status === 'done' && !result.pendingQuestion && PASS_RE.test(result.text)) {
           await this.store.updateMessage(chatId, result.messageId, { status: 'pass' });
           const updated = (await this.store.getMessages(chatId)).find((m) => m.id === result.messageId);
           this.broadcast({ type: 'message.upsert', chatId, message: updated });
           continue;
         }
+        lastResult = result;
+        if (result.safeToContinue === false) break;
+        // Resume this member's verification under the same task before advancing the group.
+        if (result.status === 'done' && result.waitingForTasks) break;
         if (result.status === 'error' && !loop.cancelled) {
           // One member could not reply (its error and a retry button are in the chat): the round
           // goes on. If nobody else is queued, the admin picks it up so the user is not left hanging.
