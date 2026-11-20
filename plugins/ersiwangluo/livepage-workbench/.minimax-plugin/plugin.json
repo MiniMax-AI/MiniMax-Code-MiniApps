@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "livepage-workbench",
+  "displayName": "LivePage 活页场景工作台",
+  "version": "1.0.0",
+  "description": "需要预览日报、邀请函、经营报表模板并整理交付任务时，打开活页场景工作台。选择场景、填写资料，把可编辑草稿填入当前对话；在线发布另需活页连接。",
+  "author": "广州二四网络科技有限公司",
+  "icon": "icon.png",
+  "category": "Office",
+  "exampleQueries": [
+    "打开活页场景工作台，预览行业日报模板",
+    "用活页工作台整理商务邀请函任务",
+    "打开活页工作台，准备门店经营报表",
+    "在活页工作台准备周报分享页"
+  ],
+  "apps": [
+    "livepage.app.json"
+  ],
+  "mcpServers": [],
+  "skills": [
+    "skills/livepage-business-invite/SKILL.md",
+    "skills/livepage-business-report/SKILL.md",
+    "skills/livepage-industry-daily/SKILL.md",
+    "skills/livepage-pages/SKILL.md"
+  ]
+}
