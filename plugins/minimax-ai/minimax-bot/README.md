@@ -116,6 +116,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Two writes the plugin fires and forgets had nothing to catch their failure: the session id recorded when a turn starts, and the scheduled-task scan that runs every 30 seconds. A failed write there became an unhandled rejection, and the Host fails the whole Mini App process on one of those — so a disk that would not take a write took every running turn with it, and the scheduled task kept retrying every 30 seconds.
 - Both now report the failure through the plugin log, the way the task save next to one of them already did. The turn carries on, and the scan keeps running.
 
+## 0.7.35 An uploaded file whose name carries `..` can be attached
+
+- An upload kept the file name as given apart from a few forbidden characters, so a name containing `..` reached the stored id. The attachment reader refuses any id with `..` in it, and the file could never be attached again — the upload looked fine and the message that tried to use it failed.
+- The stored name now replaces a run of dots, and a long name is cut on a whole character so an emoji is never left half-written.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

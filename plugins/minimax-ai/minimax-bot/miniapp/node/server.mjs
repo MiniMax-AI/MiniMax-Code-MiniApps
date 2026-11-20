@@ -95,7 +95,15 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 /** A file name safe to keep on disk and show back: no path parts, controls or leading dots. */
 function safeUploadName(raw) {
   const base = String(raw ?? '').split(/[\\/]/).pop() ?? '';
-  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^\.+/, '').trim().slice(0, 140);
+  // `..` reaches the stored id, and the attachment reader refuses any id carrying it, so the file
+  // could never be attached again. Cut by code point so a character such as an emoji is not left
+  // half-written, but stay inside the id's own byte-length budget.
+  const points = [...base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/\.{2,}/g, '_').replace(/^\.+/, '').trim()];
+  let clean = '';
+  for (const point of points) {
+    if (clean.length + point.length > 140) break;
+    clean += point;
+  }
   return clean || 'file';
 }
 

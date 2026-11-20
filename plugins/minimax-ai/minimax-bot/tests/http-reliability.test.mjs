@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 const pluginRoot = resolve(process.env.BOT_PLUGIN_ROOT ?? resolve(import.meta.dirname, '..'));
 const { start } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/server.mjs')).href);
 const { Store } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/store.mjs')).href);
+const { UPLOAD_NAME_RE } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/engine.mjs')).href);
 
 async function fixture(t, { messages = 0, prepare, agent } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'bot-http-reliability-'));
@@ -358,4 +359,21 @@ test('HTTP task snapshot and stop endpoint control an admitted MCP delegation', 
   let status;
   for(let i=0;i<100;i++){ status=(await (await fetch(`${base}/api/state`)).json()).tasks[0].status;if(status==='cancelled')break;await new Promise((resolve)=>setTimeout(resolve,5)); }
   assert.equal(status,'cancelled');
+});
+
+test('an upload whose name carries .. still produces an id the attachment reader accepts', async (t) => {
+  const { base } = await fixture(t);
+  // The attachment reader refuses any id containing `..`, so the stored name must not carry it.
+  const response = await fetch(`${base}/api/uploads?name=${encodeURIComponent('report..final.txt')}`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.upload.id.includes('..'), false, body.upload.id);
+  assert.equal(UPLOAD_NAME_RE.test(body.upload.id), true, body.upload.id);
+  // A normal name is left alone.
+  const plain = await fetch(`${base}/api/uploads?name=notes.txt`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  assert.equal((await plain.json()).upload.name, 'notes.txt');
 });
