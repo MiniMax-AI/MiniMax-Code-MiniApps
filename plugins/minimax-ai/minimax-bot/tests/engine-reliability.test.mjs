@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -1318,4 +1318,70 @@ test('a resume that loses the race to a same-id retry does not send the request 
   assert.equal(messages.filter((message) => message.role === 'bot' && message.sourceMessageId === user.id).length, 1);
   engine.dispose();
   await store.writeChain;
+});
+
+test('a failed session write during a turn is reported, not thrown as an unhandled rejection', async (t) => {
+  const { dir, store, memory } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const rejected = [];
+  const onRejection = (error) => rejected.push(error);
+  process.on('unhandledRejection', onRejection);
+  t.after(() => process.removeListener('unhandledRejection', onRejection));
+
+  const logged = [];
+  const engine = new Engine({ store, memory, broadcast() {}, retryDelaysMs: [], logger: { warn: (key) => logged.push(key) }, agent: {
+    async run(input, options) {
+      options.onEvent({ type: 'turn.started', sessionId: 'host-session', turnId: 'turn-1' });
+      return { sessionId: 'host-session', turnId: 'turn-1', status: 'finished', text: 'Done' };
+    },
+  } });
+  // Every state write fails from here on.
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+
+  await engine.sendUserMessage(chatId, 'Ship the hotfix', [], 'session-write').catch(() => {});
+  await until(() => idle(engine));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // The Host fails the whole Mini App process on an unhandled rejection, so this one has to be caught.
+  assert.deepEqual(rejected.map((error) => error?.code ?? 'unknown'), []);
+  assert.ok(logged.includes('minimax_bot.session_save_failed'), `logged: ${logged.join(',')}`);
+  engine.dispose();
+  await store.writeChain.catch(() => {});
+});
+
+test('a failed save in the schedule tick is reported, not thrown as an unhandled rejection', async (t) => {
+  const { dir, store, memory } = await fixture(t);
+  const bot = store.state.bots[0];
+  const rejected = [];
+  const onRejection = (error) => rejected.push(error);
+  process.on('unhandledRejection', onRejection);
+  t.after(() => process.removeListener('unhandledRejection', onRejection));
+
+  // A schedule that is already due, so one tick touches it.
+  store.state.schedules.push({
+    id: 'sch_due', createdAt: Date.now(), name: 'Due', botId: bot.id, prompt: 'Ping',
+    kind: 'interval', time: '09:00', everyMinutes: 60, enabled: true, nextRunAt: Date.now() - 1000,
+  });
+  await store.save();
+
+  const logged = [];
+  const engine = new Engine({ store, memory, logger: { warn: (key) => logged.push(key) }, broadcast() {}, retryDelaysMs: [], agent: {
+    async run() { return { sessionId: 's', turnId: 'turn-2', status: 'finished', text: 'ok' }; },
+  } });
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+
+  // The scheduler fires the tick without awaiting it, so a rejection would surface as an unhandled
+  // rejection unless the engine catches it.
+  engine.startScheduler();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.deepEqual(rejected.map((error) => error?.code ?? 'unknown'), []);
+  assert.ok(logged.includes('minimax_bot.schedule_tick_failed'), `logged: ${logged.join(',')}`);
+  engine.dispose();
+  await store.writeChain.catch(() => {});
 });
