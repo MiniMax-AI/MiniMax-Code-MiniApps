@@ -1385,3 +1385,38 @@ test('a failed save in the schedule tick is reported, not thrown as an unhandled
   engine.dispose();
   await store.writeChain.catch(() => {});
 });
+
+test('a group round whose members pass does not report a pass as its outcome', async (t) => {
+  const { store, engine } = await fixture(t);
+  const { a, chatId } = groupFixture(store);
+  // The only member to speak passes: the round produced nothing, so there is nothing to report.
+  engine.agent = { async run(input, options) {
+    return { ...started(input, options, 'pass-session'), status: 'finished', text: '[PASS]' };
+  } };
+
+  const result = await engine.driveGroup(store.state.groups[0], [a.id], undefined);
+
+  assert.equal(result.text, '', 'a round that only passed has no outcome to hand over');
+  assert.doesNotMatch(String(result.text ?? ''), /PASS/i);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.status === 'pass').length, 1, 'the pass is still recorded in the chat');
+});
+
+test('a pass by the last speaker does not overwrite what an earlier one said', async (t) => {
+  const { store, engine } = await fixture(t);
+  const { a, b, chatId } = groupFixture(store);
+  store.state.groups[0].memberIds = [a.id, b.id];
+  // Alice speaks, Bob adds nothing: the round's outcome is Alice's text, not Bob's pass.
+  engine.agent = { async run(input, options) {
+    const alice = input.text.includes("It's your turn (Alice)");
+    return { ...started(input, options, alice ? 'a-session' : 'b-session'), status: 'finished',
+      text: alice ? '@Bob take a look' : '[PASS]' };
+  } };
+
+  const result = await engine.driveGroup(store.state.groups[0], [a.id], undefined);
+
+  assert.equal(result.text, '@Bob take a look');
+  assert.doesNotMatch(String(result.text ?? ''), /PASS/i);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.status === 'pass').length, 1);
+});
