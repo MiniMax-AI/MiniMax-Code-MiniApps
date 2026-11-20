@@ -896,24 +896,43 @@ function onSpritePointerDown(e) {
   } catch (error) {
     console.warn('[pet] pointer_capture_failed:', errCode(error), error);
   }
+  const origin = app.winPos ? { ...app.winPos } : null;
   app.drag = {
     pointerId: e.pointerId,
-    startX: e.screenX,
-    startY: e.screenY,
-    win: app.winPos ? { ...app.winPos } : null,
+    // The pointer is measured inside the window, so the window follows the
+    // pointer offset from the grab point.
+    grabX: e.clientX,
+    grabY: e.clientY,
+    // Latest client coordinates of the pointer.
+    pointer: { x: e.clientX, y: e.clientY },
+    // How many pointer events arrived; the request in flight remembers the
+    // count it was built from.
+    moves: 0,
+    sentMoves: -1,
+    // Window origin the Host confirmed; null when it reported no position.
+    origin: origin ? { ...origin } : null,
+    // Whether an update is in flight.
+    sending: false,
+    // Reference for the run direction: the window origin when it is known,
+    // otherwise the pointer position inside the window.
+    ref: origin ? origin.x : e.clientX,
     active: false,
     dir: null,
-    extreme: e.screenX,
+    extreme: origin ? origin.x : e.clientX,
   };
 }
 
 function onSpritePointerMove(e) {
   const d = app.drag;
   if (!d || e.pointerId !== d.pointerId) return;
-  const dx = e.screenX - d.startX;
-  const dy = e.screenY - d.startY;
+  // While an update is in flight only the latest pointer position is kept:
+  // the target is recomputed from the confirmed origin when the Host answers.
+  d.pointer = { x: e.clientX, y: e.clientY };
+  d.moves += 1;
   if (!d.active) {
-    if (Math.hypot(dx, dy) <= DRAG_THRESHOLD) return;
+    // How far the pointer travelled on screen, not inside the window.
+    const travel = { x: e.clientX - d.grabX, y: e.clientY - d.grabY };
+    if (Math.hypot(travel.x, travel.y) <= DRAG_THRESHOLD) return;
     d.active = true;
     app.dragging = true;
     app.oneShotToken++;
@@ -922,14 +941,55 @@ function onSpritePointerMove(e) {
     hideQuickbar();
     els.sprite.classList.add('is-dragging');
     refreshInteractivity();
-    if (!d.win) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
+    if (!d.origin) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
   }
-  updateDragDirection(d, e.screenX);
-  if (!d.win) return;
-  callBridge(() => win.update({ x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy) })).catch((error) => {
+  if (!d.origin) {
+    // No window position: the pet still runs, but nothing can move.
+    updateDragDirection(d, e.clientX);
+    return;
+  }
+  flushDrag(d);
+}
+
+// Where the window belongs: the origin the Host confirmed plus the pointer
+// offset from the grab point. The Host answers with the position it holds, so
+// the target is recomputed from the confirmed origin whenever it changes.
+function dragTarget(d) {
+  return {
+    x: Math.round(d.origin.x + (d.pointer.x - d.grabX)),
+    y: Math.round(d.origin.y + (d.pointer.y - d.grabY)),
+  };
+}
+
+// One window update at a time. While it is in flight the pointer keeps
+// moving, so the target is recomputed from the confirmed origin when the Host
+// answers, and a refused update never rolls the window back past a later
+// accepted one.
+function flushDrag(d) {
+  if (d.sending || !d.origin) return;
+  const target = dragTarget(d);
+  if (target.x === d.origin.x && target.y === d.origin.y) return;
+  d.sending = true;
+  d.sentMoves = d.moves;
+  if (app.drag === d) updateDragDirection(d, target.x);
+  callBridge(() => win.update({ x: target.x, y: target.y })).then((state) => {
+    d.sending = false;
+    const moved = state?.window;
+    if (moved) {
+      d.origin = { x: moved.x, y: moved.y };
+      app.winPos = { x: moved.x, y: moved.y };
+    } else if (app.winPos) d.origin = { ...app.winPos };
+    // A pointer event that arrived after the request means the pointer may
+    // have moved: recompute the target from the confirmed origin.
+    if (d.moves !== d.sentMoves) flushDrag(d);
+  }, (error) => {
+    d.sending = false;
+    // The Host refused the move and kept the window where it was.
+    if (app.winPos) d.origin = { ...app.winPos };
     const code = errCode(error);
     if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
+    if (d.moves !== d.sentMoves) flushDrag(d);
   });
 }
 
@@ -947,8 +1007,8 @@ function updateDragDirection(d, sx) {
       d.dir = 'right';
       d.extreme = sx;
     }
-  } else if (Math.abs(sx - d.startX) > DIRECTION_HYSTERESIS / 2) {
-    d.dir = sx > d.startX ? 'right' : 'left';
+  } else if (Math.abs(sx - d.ref) > DIRECTION_HYSTERESIS / 2) {
+    d.dir = sx > d.ref ? 'right' : 'left';
     d.extreme = sx;
   }
   if (d.dir !== before) {
@@ -960,6 +1020,14 @@ function finishDrag(e, cancelled) {
   const d = app.drag;
   if (!d || e.pointerId !== d.pointerId) return;
   app.drag = null;
+  if (!cancelled) {
+    // The release position is the most accurate one: the pointer may have
+    // moved since the last pointermove. While an update is in flight the
+    // final position goes out once the Host answers it.
+    d.pointer = { x: e.clientX, y: e.clientY };
+    d.moves += 1;
+    flushDrag(d);
+  }
   try {
     if (els.sprite.hasPointerCapture(e.pointerId)) els.sprite.releasePointerCapture(e.pointerId);
   } catch (error) {
