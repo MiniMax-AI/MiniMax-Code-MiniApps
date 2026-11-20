@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "github-star-shelf",
+  "displayName": "GitHub 收藏夹",
+  "version": "1.2.0",
+  "description": "把 GitHub Star 导进收藏夹，用 AI 大白话讲清每个项目是干嘛的。云讲解不下载代码，本地讲解拉到缓存里看；一个项目一个会话，支持备注，按名称、README、备注搜索，AI 也能通过接口整理收藏夹。",
+  "author": "start3208",
+  "icon": "icon.png",
+  "category": "Other",
+  "exampleQueries": [
+    "打开 GitHub 收藏夹",
+    "把我的 GitHub Star 整理成收藏夹",
+    "用大白话讲讲这个开源项目是干什么的"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "servers.mcp.json"
+  ],
+  "skills": []
+}

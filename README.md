@@ -93,6 +93,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [Site QA](plugins/lonelyguy-se1/site-qa/) | Check local HTML/robots/sitemap for SEO and accessibility gaps, then ask the agent to fix them (Mini App + skill/CLI). Requires MiniMax Code 3.1.6 or later | [LonelyGuySE1](https://github.com/LonelyGuy-SE1) |
 | [H3-Image-Executor](plugins/liddalidd/h3-image-executor/) | Turn one sentence into verified 4K images: it plans the shot list, searches for reference images, generates, reviews each image by looking at it, corrects colour cast, runs a bounded fix loop and delivers the result with an acceptance report; multi-image runs generate a character sheet first so the same subject stays the same subject. Needs an H3-Image endpoint and key you configure yourself. Requires MiniMax Code 3.1.6 or later | [liddalidd](https://github.com/liddalidd) |
 | [Express Media](plugins/andre-1998/express-media/) | Compress a video to the size each platform accepts and report whether it fits; the bundled limits table shows where every number comes from | [Andre-1998](https://github.com/Andre-1998) |
+| [GitHub Star Shelf](plugins/start3208/github-star-shelf/) | Turn your GitHub stars into collections you can search and ask the AI to explain in plain language: from the README alone, or after it has read a shallow clone of the code. One session per project, your own notes, and collections the Agent can arrange | [start3208](https://github.com/start3208) |
 
 <details>
 <summary>Preview: Cutline</summary>
