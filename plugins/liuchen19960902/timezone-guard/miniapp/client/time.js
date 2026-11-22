@@ -122,6 +122,18 @@
     return Math.round((t - h) / 86400000);
   }
 
+  const DAY_NOTES = {
+    '-2': '对方还在前天',
+    '-1': '对方还在昨天',
+    1: '对方那边已是明天',
+    2: '对方那边已是后天',
+  };
+
+  /** 按对方相对我方的日历日差生成提示，同日省略。 */
+  function relativeDayNote(target, home) {
+    return DAY_NOTES[dayDelta(target, home)] || '';
+  }
+
   return {
     STORAGE_KEY: STORAGE_KEY,
     resolveZone: resolveZone,
@@ -130,5 +142,6 @@
     parseOffset: parseOffset,
     formatDiff: formatDiff,
     dayDelta: dayDelta,
+    relativeDayNote: relativeDayNote,
   };
 });

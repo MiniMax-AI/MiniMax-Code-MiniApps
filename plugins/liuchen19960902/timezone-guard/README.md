@@ -9,7 +9,7 @@ follows the **other** city's local time, because what matters is whether *they* 
 > and the date format are all in Chinese. This README and `README.zh-CN.md` are the two languages it
 > ships in; the page itself has no language switch.
 
-Author: [FineCat](https://github.com/LiuChen19960902) · Version: `1.0.2`
+Author: [FineCat](https://github.com/LiuChen19960902) · Version: `1.0.3`
 
 ![A/时差保安 showing the verdict, with the target city clock above the local one](docs/preview.png)
 
@@ -148,8 +148,8 @@ npm test
 
 Run it from the package directory. The suite covers the band thresholds landing exactly on the
 hour (06:00 / 09:00 / 18:00 / 22:00), offset parsing including non-integral zones such as
-`GMT+05:45`, the time-difference wording, and the calendar-day difference used for "still
-yesterday".
+`GMT+05:45`, and the time-difference wording for cities on the same date or one or two calendar
+days apart.
 
 ## License
 
