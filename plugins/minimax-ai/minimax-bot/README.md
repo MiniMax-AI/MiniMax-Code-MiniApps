@@ -116,6 +116,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Two writes the plugin fires and forgets had nothing to catch their failure: the session id recorded when a turn starts, and the scheduled-task scan that runs every 30 seconds. A failed write there became an unhandled rejection, and the Host fails the whole Mini App process on one of those — so a disk that would not take a write took every running turn with it, and the scheduled task kept retrying every 30 seconds.
 - Both now report the failure through the plugin log, the way the task save next to one of them already did. The turn carries on, and the scan keeps running.
 
+## 0.7.33 Stopping a queued background task actually stops it
+
+- The Stop button is offered for a background task that is still queued, but the request only found a run to abort once that task had started: pressed before then, it answered `stopped: false`, left the task queued, and the task started anyway. A queued task could not be stopped at all.
+- Stopping before the run exists now marks the task stopped and saves that, and a task already marked stopped no longer starts a background turn.
+- A task that had already started is unchanged: it is stopped by aborting its run, as before.
+
 ## 0.7.34 A retry that succeeds clears the "not delivered" line it answers
 
 - When a turn failed, the user's message kept the failed delivery state even after the reply was retried successfully: the chat showed a reply next to an input still marked as not delivered, and the line stayed that way for good.
