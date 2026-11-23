@@ -1,0 +1,19 @@
+# 新手引导用的示例报告：数字来自 results/guide-summary.json。
+# 流程：检查 → 封存 → 签收 → 导入；导入后账里会多一条 guide.guide-1.p95。
+schema = "factscribe/report@1"
+id = "guide-1"
+experiment = "guide"
+status = "final"
+generated_at = "2026-11-15T00:00:00Z"
+population = { id = "guide" }
+
+[[metric]]
+id = "p95"
+claim = "端到端时延 p95（毫秒）"
+value = "12.5"
+value_type = "float"
+precision = 1
+display = "12.5"
+sources = [
+  { role = "value", path = "results/guide-summary.json", probe = "json.pointer", pointer = "/p95_ms" },
+]

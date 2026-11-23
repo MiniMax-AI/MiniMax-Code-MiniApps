@@ -1,0 +1,35 @@
+# 事实账：只追加。改数＝新增一条并写 supersedes = ["旧 id"]。
+
+[[fact]]
+id = "A1"
+claim = "开臂 resolved（16 题）"
+value = "10/16"
+source = "results/swb16.md"
+source_sha256 = "0147ea0c82fd08052ff62cca1f13f2436264e2998db5d69a2ae051848c63808a"
+locator = "§二 汇总表 open 行"
+confidence = "high"
+derived_from = []
+note = "开臂＝允许工具调用的那一臂"
+
+[[fact]]
+id = "A3"
+claim = "对比臂 resolved（16 题）"
+value = "8/16"
+source = "results/swb16.md"
+source_sha256 = "0147ea0c82fd08052ff62cca1f13f2436264e2998db5d69a2ae051848c63808a"
+locator = "§二 汇总表 closed 行"
+confidence = "high"
+derived_from = []
+note = "对比臂＝不允许工具调用"
+
+[[fact]]
+id = "A2"
+claim = "两臂合计准确率"
+value = "56.25%"
+source = "results/swb16.md"
+source_sha256 = "0147ea0c82fd08052ff62cca1f13f2436264e2998db5d69a2ae051848c63808a"
+locator = "§三 平均行"
+confidence = "med"
+derived_from = ["A1", "A3"]
+expr = "(A1.num + A3.num) / (A1.den + A3.den) * 100"
+note = "推算值，非实验直接读数；(10+8)/(16+16)"
