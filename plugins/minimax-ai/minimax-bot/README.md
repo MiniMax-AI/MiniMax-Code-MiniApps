@@ -127,6 +127,13 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - When a turn failed, the user's message kept the failed delivery state even after the reply was retried successfully: the chat showed a reply next to an input still marked as not delivered, and the line stayed that way for good.
 - A retry that reaches the Host now marks the request it answered as delivered, so the badge matches what happened. Only a line still carrying the first attempt's verdict is changed; anything a later action wrote stays as it is.
 
+## 0.7.35 A round of passes does not hand [PASS] back as its outcome
+
+- When a member of a group has nothing to add it replies `[PASS]` and is skipped. That turn was still kept as the round's result, so a discussion that ended on a pass reported `[PASS]` as what it produced. A group task opened from a private chat showed exactly that in its result line.
+- It was worse when an earlier member had said something real: the last pass replaced the round's text with `[PASS]`, so the work that was actually done was dropped from the result and only the chat still had it.
+- A pass is no longer kept as the round's result, so a round that ends on a pass keeps the last thing that was really said. The pass itself is still marked and still skipped: nothing changes about who speaks.
+- A round in which every member passed still finished, so it ends as a finished round with an empty reply — not as a turn that never reached the Agent. Before this section, such a round settled its task as `cancelled`; it settles as `done` now.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

@@ -137,6 +137,15 @@ function skippedTurn() {
 }
 
 /**
+ * Result of a round that ran to the end without producing any text: every member that was called
+ * passed. The round did finish, so this is a finished turn with an empty reply — not a turn that
+ * never reached the Agent, which would settle a group task as cancelled.
+ */
+function quietTurn() {
+  return { status: 'done', text: '', messageId: '', safeToContinue: true, accepted: true };
+}
+
+/**
  * Answer failures raised before the Host saved the answer: the questionnaire is still pending,
  * so the user may submit it again. Anything else (notably AGENT_OUTCOME_UNKNOWN) may already
  * have been recorded and must not be offered for a blind resend.
@@ -1333,18 +1342,21 @@ export class Engine {
         const handover = this.handoverFor(fresh, noteRound);
         hops += 1;
         const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId, handover });
-        lastResult = result;
         accepted ||= result.accepted;
         if (result.status === 'aborted' && (options.signal?.aborted || loop.cancelled)) queue.unshift(botId);
-        if (result.safeToContinue === false) break;
+        if (result.safeToContinue === false) { lastResult = result; break; }
         // Resume this member's verification under the same task before advancing the group.
-        if (result.status === 'done' && result.waitingForTasks) break;
+        if (result.status === 'done' && result.waitingForTasks) { lastResult = result; break; }
         if (result.status === 'done' && !result.pendingQuestion && PASS_RE.test(result.text)) {
           await this.store.updateMessage(chatId, result.messageId, { status: 'pass' });
           const updated = (await this.store.getMessages(chatId)).find((m) => m.id === result.messageId);
           this.broadcast({ type: 'message.upsert', chatId, message: updated });
+          // A member that passes said nothing, so its turn is not the round's result: a round
+          // that ends on a pass hands over the last thing that was really said, not `[PASS]`.
+          // `lastResult` therefore keeps whatever the round produced before this pass.
           continue;
         }
+        lastResult = result;
         if (result.status === 'error' && !loop.cancelled) {
           // One member could not reply (its error and a retry button are in the chat): the round
           // goes on. If nobody else is queued, the admin picks it up so the user is not left hanging.
@@ -1390,7 +1402,11 @@ export class Engine {
         this.broadcastSummary(chatId);
       }
       if (!paused && loop.cancelled && queue.length) paused = 'interrupted';
-      return { ...(lastResult ?? skippedTurn()), accepted, paused, remaining: [...queue] };
+      // A round where every turn that ran only passed has no text to hand over, but it did run
+      // to the end: report it as a finished turn with an empty reply rather than as a turn that
+      // never reached the Agent, which settles a group task as cancelled instead of done.
+      const everybodyPassed = !lastResult && hops > 0;
+      return { ...(lastResult ?? (everybodyPassed ? quietTurn() : skippedTurn())), accepted, paused, remaining: [...queue] };
     } finally {
       if (this.groupLoops.get(chatId) === loop) this.groupLoops.delete(chatId);
       loop.cancelled = true;
