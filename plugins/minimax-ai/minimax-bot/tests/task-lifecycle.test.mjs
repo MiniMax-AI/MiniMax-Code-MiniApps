@@ -31,6 +31,8 @@ async function fixture(t) {
   const memory = new MemoryStore(dir);
   await memory.init();
   setLocale("en");
+  // A restarted store restores the locale from its saved settings.
+  store.state.settings.language = "en";
   const a = { id: "bot_a", name: "Alice", isMain: true };
   const b = { id: "bot_b", name: "Bob" };
   const group = {

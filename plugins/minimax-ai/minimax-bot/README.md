@@ -122,6 +122,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Stopping before the run exists now marks the task stopped and saves that, and a task already marked stopped no longer starts a background turn.
 - A task that had already started is unchanged: it is stopped by aborting its run, as before.
 
+## 0.7.34 A retry that succeeds clears the "not delivered" line it answers
+
+- When a turn failed, the user's message kept the failed delivery state even after the reply was retried successfully: the chat showed a reply next to an input still marked as not delivered, and the line stayed that way for good.
+- A retry that reaches the Host now marks the request it answered as delivered, so the badge matches what happened. Only a line still carrying the first attempt's verdict is changed; anything a later action wrote stays as it is.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
