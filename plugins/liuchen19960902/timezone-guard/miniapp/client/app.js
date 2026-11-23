@@ -13,7 +13,7 @@
 // 时区规范化、档位判定、偏移解析、时差文案都放在 time.js 里：
 // 那份文件浏览器与 Node 共用同一份源码，可以直接跑 node --test，
 // 也不用在这里和别处各留一份、改一处漏一处。
-const { resolveZone, periodOf, parseOffset, formatDiff, dayDelta } = window.TZ_TIME;
+const { resolveZone, periodOf, parseOffset, formatDiff, relativeDayNote } = window.TZ_TIME;
 
 /* ------------------------------------------------------------------ *
  * 城市库
@@ -696,9 +696,8 @@ function render() {
     // 非整小时是「5 小时 45 分钟」，直接接在「快」后面会连成一团，这里补一个空格。
     const gap = diffMinutes % 60 === 0 ? '' : ' ';
     const parts = [`${ahead}比${behind}快${gap}${formatDiff(diffMinutes)}`];
-    const dayDiff = dayDelta(target, home);
-    if (dayDiff < 0) parts.push('对方还在昨天');
-    else if (dayDiff > 0) parts.push('对方那边已是明天');
+    const dayNote = relativeDayNote(target, home);
+    if (dayNote) parts.push(dayNote);
     setText(el.factDiff, parts.join(' · '));
   }
 }
