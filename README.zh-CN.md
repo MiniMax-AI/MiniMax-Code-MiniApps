@@ -93,6 +93,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [Site QA](plugins/lonelyguy-se1/site-qa/) | 检查本地 HTML/robots/sitemap 的 SEO / 无障碍问题，再让 Agent 修复（Mini App + skill/CLI）。需要 MiniMax Code 3.1.6 或更高版本（说明文档为英文） | [LonelyGuySE1](https://github.com/LonelyGuy-SE1) |
 | [H3-Image-Executor](plugins/liddalidd/h3-image-executor/README.zh-CN.md) | 把一句话需求跑成经过校验的 4K 图片：规划分镜、检索参考图、生成、看图评审、色偏校正、有限次修正，最后交付图片和验收报告；多图任务会先生成角色设定图锁定主体外观。需要自备 H3-Image 接口地址和 Key。需要 MiniMax Code 3.1.6 或更高版本 | [liddalidd](https://github.com/liddalidd) |
 | [急件 · 视频投递](plugins/andre-1998/express-media/README.zh-CN.md) | 把视频压到各平台能收的体积，并如实告诉你发不发得出去；内置上限表标明每个数字的来源 | [Andre-1998](https://github.com/Andre-1998) |
+| [FactScribe 论文工作台](plugins/unclemoc/factscribe/README.zh-CN.md) | 写论文的本地工作台：打开你的稿盘，看检查报告、事实账与知识库，助手给的改动先成提议单，你在页面上点采纳才落盘。17 个 MCP 工具以只读为主，写盘一律由你确认。需要 MiniMax Code 3.1.2 或更高版本 | [UncleMoc (BGISMALL)](https://github.com/UncleMoc) |
 
 <details>
 <summary>预览：Cutline</summary>

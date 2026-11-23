@@ -1,0 +1,10 @@
+# 人签清单：results/ 下每个文件钉一个 sha256。
+# 工具只保证「从签过那刻起没被改」，不保证「当初没编」。
+[manifest]
+signed_by = "moc"
+signed_at = "2026-11-07T12:00:00Z"
+version = 1
+
+[files]
+"results/swb16.md" = "0147ea0c82fd08052ff62cca1f13f2436264e2998db5d69a2ae051848c63808a"
+"results/guide-summary.json" = "21c5eec0d46677d5c67be825baf9aa25def9bd174c21144a706fa80a58e5e8af"

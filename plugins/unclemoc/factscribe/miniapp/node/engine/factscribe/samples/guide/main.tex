@@ -1,0 +1,13 @@
+\documentclass[11pt]{article}
+\usepackage[UTF8]{ctex}
+% 正文的 \fact{A1} 是 factscribe 的账目绑定标记：排出来只是个小上标，
+% 但 audit 会拿它把这一行的数字钉到 A1 的 value 上。定义放导言区。
+\newcommand{\fact}[1]{\textsuperscript{\textsf{\footnotesize[#1]}}}
+\title{factscribe 最小验收样例}
+\author{factscribe}
+\date{}
+\begin{document}
+\maketitle
+\input{sections/01-intro}
+\input{sections/02-results}
+\end{document}

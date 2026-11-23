@@ -1,0 +1,39 @@
+# factscribe 论文术语表——由 scripts/import-glossary.py 覆盖生成，请勿手改。
+# 来源：paper-zh/GLOSSARY.md（表格：英文 | 中文 | 备注）
+# 备注里的「不写「X」」进 blocked(cn) 列：仍是同义匹配形式，但按禁用变体报。
+# 生成命令：env PYTHONPATH=src python3 scripts/import-glossary.py
+# 规模：33 个 canonical，76 个表面形式
+canonical	aliases(en)	aliases(cn)	category	blocked(cn)
+上下文编译	context compilation		论文术语	上下文编排|上下文工程
+定位卡	locator card		论文术语	
+机械闸门	mechanical gate		论文术语	
+判定修复	resolved		论文术语	
+基线红	baseline-red		论文术语	
+证据送达	evidence delivery		论文术语	证据投递|证据传递
+推理 token	reasoning tokens		论文术语	
+装配面	assembly surface		论文术语	
+记账面	accounting surface		论文术语	
+分类型小节	typed section		论文术语	类型化区块
+份额预算	share budget		论文术语	
+按类份额	per-kind share		论文术语	
+不变式	invariant		论文术语	不变量
+失败即拒绝	fail-closed		论文术语	
+账本	ledger		论文术语	
+只追加	append-only		论文术语	
+预检	preflight		论文术语	
+指针	pointer		论文术语	
+对象存储	object store		论文术语	
+纪元	epoch		论文术语	
+harness			论文术语	
+脚手架	scaffold		论文术语	
+臂	arm		论文术语	
+送达 bug	delivery bug		论文术语	
+失效模式	failure mode		论文术语	失败模式|故障模式
+收口规则	close-out rule		论文术语	
+交卷	submit|hand in		论文术语	
+轮	turn		论文术语	
+推理力度	reasoning effort		论文术语	
+新鲜输入	fresh input		论文术语	
+缓存输入	cached input		论文术语	
+噪声	noise		论文术语	
+预注册	preregistration		论文术语	事前登记|预先登记

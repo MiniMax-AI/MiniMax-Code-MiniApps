@@ -1,0 +1,1601 @@
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#f6f5f1;color:#1c1e22;
+ font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Source Han Sans SC",sans-serif;
+ font-size:16px;line-height:1.9;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+/* ---------- 顶栏 ---------- */
+.topbar{position:sticky;top:0;z-index:60;background:rgba(255,254,250,.96);backdrop-filter:saturate(140%) blur(8px);
+ border-bottom:1px solid #e7e3d7}
+.tb-in{max-width:1520px;margin:0 auto;padding:10px 26px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.tb-title{font-size:15px;font-weight:650;letter-spacing:.2px}
+.tb-sub{font-size:12px;color:#8a8577;margin-top:1px}
+.tb-st{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.st{font-size:13px;padding:4px 11px;border-radius:999px;border:1px solid transparent;white-space:nowrap;cursor:pointer;background:none;font-family:inherit}
+.st.ok{background:#eaf5ef;color:#1c6b4c;border-color:#cbe6d7}
+.st.warn{background:#fdf3e3;color:#8a5a10;border-color:#f0dcb8}
+.st.warn:hover{background:#fbeacd}
+.st.done{background:#f1f0ea;color:#8a8577;border-color:#e3e0d5;text-decoration:line-through;cursor:default}
+/* ---------- 布局 ---------- */
+.shell{max-width:1520px;margin:0 auto;display:flex;align-items:flex-start}
+.rail{width:222px;flex:0 0 222px;position:sticky;top:57px;align-self:flex-start;max-height:calc(100vh - 57px);
+ overflow:auto;padding:26px 14px 30px 22px;border-right:1px solid #ebe7da}
+.rail-h{font-size:11px;letter-spacing:1.6px;color:#a49e8d;text-transform:uppercase;margin:0 0 12px 4px}
+.rail ul{list-style:none;margin:0;padding:0}
+.rail li a{display:block;padding:7px 10px;border-radius:7px;font-size:13.5px;color:#54514a;text-decoration:none;line-height:1.5}
+.rail li a:hover{background:#eeece3;color:#1c1e22}
+.rail li a.on{background:#e9e6da;color:#1c1e22;font-weight:600}
+.rail li a .en{display:block;font-size:11px;color:#a8a294;font-weight:400}
+.rail-foot{margin-top:22px;padding-top:14px;border-top:1px solid #ebe7da}
+.mv-link{display:block;padding:8px 10px;border-radius:7px;font-size:12.5px;color:#8a8577;text-decoration:none;border:1px dashed #d8d3c3}
+.mv-link:hover{border-color:#b6b0a0;color:#54514a}
+/* ---------- 正文列 ---------- */
+.doc{flex:1 1 auto;min-width:0;padding:34px 300px 120px 34px}
+.page{max-width:700px;margin:0 auto}
+.cover{background:#fffefb;border:1px solid #e9e5d7;border-radius:14px;padding:34px 36px 30px;margin-bottom:34px;
+ box-shadow:0 1px 2px rgba(40,36,20,.03)}
+.cover h1{margin:0 0 8px;font-size:26px;line-height:1.35;font-weight:700;letter-spacing:-.2px}
+.cover .sub{font-size:15px;color:#6f6a5d;margin-bottom:18px}
+.cover .st-line{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:#1c6b4c;background:#eaf5ef;
+ border:1px solid #cbe6d7;border-radius:8px;padding:6px 12px}
+.cover .meta{margin-top:16px;font-size:12.5px;color:#9b9585;line-height:1.8}
+/* ---------- 章节 ---------- */
+.sec-h{margin:52px 0 6px;scroll-margin-top:80px}
+.sec-h .sec-cn{display:block;font-size:22px;font-weight:700;letter-spacing:-.1px;line-height:1.4}
+.sec-h .sec-en{display:block;font-size:12px;color:#a49e8d;font-weight:400;margin-top:3px;letter-spacing:.3px}
+.sub-h{margin:30px 0 4px;font-size:16px;font-weight:650;color:#3a3730;scroll-margin-top:80px}
+.abstract{background:#fffefb;border:1px solid #e9e5d7;border-left:3px solid #cfc9b6;border-radius:0 12px 12px 0;
+ padding:20px 26px 18px;margin:0 0 30px}
+.ab-label{font-size:11.5px;letter-spacing:2px;color:#a49e8d;margin-bottom:6px}
+p{margin:0 0 1.15em;font-size:16.5px;line-height:1.92;text-align:left;color:#23262b}
+p.lead{margin-bottom:.7em}
+p.lead b{font-weight:700;color:#1c1e22}
+/* 事实芯片：小圆点妆容只留给不带 prot-chip 的遗留场景（见文件后段 .fc:not(.prot-chip)）。
+   v5：这里原有的无作用域 .fc 规则已撤——它把「有据的数字」芯片（.fc.prot-chip）也压成
+   0.62em 的小圆点，芯片里的「✓ B1」撑不进盒子，渲染成一竖条碎片。 */
+/* 引用 */
+.cite{white-space:nowrap}
+.cite.miss{color:#9a5b06;background:#fdf4e6;border-bottom:1px dashed #d9a441;padding:0 2px;border-radius:3px}
+.cite .na{font-weight:600}
+.xref{color:#6f6a5d}
+/* 表 */
+figure.tbl{margin:26px 0}
+figure.tbl table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.6}
+figure.tbl th{text-align:left;font-weight:600;color:#54514a;border-bottom:1.5px solid #ddd8c6;padding:7px 9px;font-size:12.5px}
+figure.tbl td{padding:7px 9px;border-bottom:1px solid #efecdf;color:#3a3730}
+figure.tbl tr:hover td{background:#fbfaf4}
+figcaption{font-size:12.5px;color:#8a8577;margin-top:9px;line-height:1.7}
+figure.fig{margin:26px 0}
+figure.fig pre{background:#fffefb;border:1px solid #e9e5d7;border-radius:10px;padding:16px 18px;overflow-x:auto;
+ font-size:12.5px;line-height:1.65;color:#3a3730;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* ---------- 批注 ---------- */
+.blk-with-margin{position:relative}
+.note{border-radius:11px;padding:13px 15px 12px;font-size:13.5px;line-height:1.72;margin:10px 0}
+.note.ref{background:#fdf7ea;border:1px solid #eddcb4}
+.note.cost{background:#eef4fb;border:1px solid #cfdff2}
+.note .n-head{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.note .n-dot{width:7px;height:7px;border-radius:50%;background:#d9a441;flex:0 0 7px}
+.note.cost .n-dot{background:#6f9fd0}
+.note .n-title{font-weight:650;font-size:13px;color:#5a4a24}
+.note.cost .n-title{color:#2f5279}
+.note .n-body{color:#4a463c}
+.note.cost .n-body{color:#3d4d5e}
+.note .n-quote{margin-top:8px;padding:7px 10px;background:rgba(255,255,255,.66);border-left:2px solid #d9c9a4;
+ border-radius:0 6px 6px 0;font-size:12.5px;color:#6b6152;line-height:1.6}
+.note.cost .n-quote{border-left-color:#a9c6e6;color:#5a6b7c}
+.note .n-meta{margin-top:7px;font-size:12px;color:#8a8577;line-height:1.6}
+.n-btns{margin-top:10px;display:flex;gap:7px;flex-wrap:wrap}
+.nbtn{font-family:inherit;font-size:12.5px;padding:5px 12px;border-radius:7px;border:1px solid #d9d2bd;background:#fffdf7;
+ color:#5a4a24;cursor:pointer}
+.nbtn:hover{background:#f4e9d2}
+.note.cost .nbtn{border-color:#c3d6ea;color:#2f5279}
+.note.cost .nbtn:hover{background:#e2edf9}
+.note.state-done{opacity:.5}
+.note.state-done .n-btns{display:none}
+/* 三张缺作者卡横排 */
+.notes-inline{margin:14px 0 22px}
+.notes-inline-h{font-size:11.5px;color:#a49e8d;letter-spacing:.4px;margin-bottom:8px}
+.note-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.note-row .note{margin:0}
+/* 宽屏：批注落到右边距 */
+@media (min-width:1250px){
+ .blk-with-margin>.note.cost{position:absolute;left:calc(100% + 26px);top:0;width:238px;margin:0}
+}
+@media (max-width:1249px){
+ .blk-with-margin>.note.cost{position:static;width:auto;margin-top:12px}
+}
+/* ---------- 结尾 ---------- */
+.endnote{margin:60px 0 0;padding:26px 28px;background:#fffefb;border:1px solid #e9e5d7;border-radius:12px;
+ font-size:15px;color:#54514a;line-height:1.9}
+.endnote b{color:#1c6b4c}
+footer.doc-foot{margin-top:34px;font-size:12.5px;color:#9b9585;line-height:1.95;border-top:1px solid #ebe7da;padding-top:18px}
+/* ---------- 抽屉 ---------- */
+.backdrop{position:fixed;inset:0;background:rgba(30,28,20,.32);opacity:0;pointer-events:none;transition:opacity .18s;z-index:70}
+.backdrop.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(860px,94vw);background:#fbfaf6;border-left:1px solid #ddd8c6;
+ transform:translateX(102%);transition:transform .22s ease;z-index:80;display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(40,36,20,.1)}
+.drawer.on{transform:none}
+.d-head{padding:16px 22px;border-bottom:1px solid #ebe7da;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.d-head .t{font-size:15px;font-weight:650}
+.d-head .sub{font-size:12px;color:#9b9585}
+.d-close{margin-left:auto;border:1px solid #ddd8c6;background:#fff;border-radius:7px;font-size:12.5px;padding:4px 11px;cursor:pointer;color:#54514a}
+.tabs{display:flex;gap:4px;padding:10px 18px 0;border-bottom:1px solid #ebe7da;flex-wrap:wrap}
+.tab{border:none;background:none;font-family:inherit;font-size:13px;color:#8a8577;padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent}
+.tab.on{color:#1c1e22;border-bottom-color:#b6b0a0;font-weight:600}
+.d-body{flex:1;overflow:auto;padding:18px 22px 40px}
+.d-note{font-size:12px;color:#9b9585;margin:0 0 14px;line-height:1.7}
+table.mt{width:100%;border-collapse:collapse;font-size:12.5px}
+table.mt th{text-align:left;padding:6px 8px;border-bottom:1.5px solid #ddd8c6;color:#54514a;font-size:11.5px;position:sticky;top:0;background:#fbfaf6}
+table.mt td{padding:5px 8px;border-bottom:1px solid #efecdf;color:#3a3730;vertical-align:top}
+table.mt tr.hit td{background:#f2f8f4}
+table.mt code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8a8577;word-break:break-all}
+.ycard{background:#fff;border:1px solid #eddcb4;border-left:3px solid #d9a441;border-radius:0 10px 10px 0;padding:15px 18px;margin-bottom:14px}
+.ycard h4{margin:0 0 8px;font-size:14px;color:#5a4a24}
+.ycard dl{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;margin:0;font-size:12.5px}
+.ycard dt{color:#9b9585}
+.ycard dd{margin:0;color:#3a3730}
+.ycard code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8a8577}
+/* ---------- 悬浮小卡 ---------- */
+#fcard{position:absolute;z-index:90;width:298px;background:#fffefb;border:1px solid #dcd7c6;border-radius:10px;
+ padding:12px 14px;box-shadow:0 8px 26px rgba(40,36,20,.16);display:none;font-size:12.5px;line-height:1.7}
+#fcard .fc-h{display:flex;align-items:center;gap:7px;font-weight:650;color:#1c6b4c;margin-bottom:7px;font-size:12.5px}
+#fcard .fc-h .k{color:#1c6b4c}
+#fcard .fc-row{display:flex;gap:8px;color:#4a463c;margin-top:4px}
+#fcard .fc-row .k{color:#9b9585;flex:0 0 42px}
+#fcard .fc-v{font-weight:600;color:#23262b}
+#fcard .fc-foot{margin-top:9px;padding-top:8px;border-top:1px solid #efecdf;display:flex;gap:10px;align-items:center}
+#fcard .fc-foot a{font-size:11.5px;color:#6f9fd0;cursor:pointer;text-decoration:underline}
+/* ---------- toast ---------- */
+#toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(14px);background:#2b2924;color:#f6f5f1;
+ padding:10px 18px;border-radius:9px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;z-index:95}
+#toast.on{opacity:1;transform:translateX(-50%)}
+#toast.lock{background:#7a3b1e}
+/* v2.1：问 AI 抽屉打开时把正文列往左让一让，别盖住段落的悬浮按钮 */
+.doc{transition:padding-right .22s ease}
+@media (min-width:1300px){ body.ai-on .doc{padding-right:440px} }
+/* ---------- v2.1 段落工具条（悬停出「编辑／问 AI」） ---------- */
+#ptools{position:absolute;z-index:76;display:none;gap:6px;align-items:center}
+#ptools.on{display:flex}
+.pt{font-family:inherit;font-size:12px;line-height:1;padding:7px 11px;border-radius:7px;border:1px solid #ddd8c6;
+ background:#fffefb;color:#54514a;cursor:pointer;box-shadow:0 2px 8px rgba(40,36,20,.09);white-space:nowrap}
+.pt:hover{border-color:#b6b0a0;color:#1c1e22}
+.pt.ask{border-color:#c9d8ea;color:#2f5279;background:#f4f8fc}
+.pt.ask:hover{background:#e6eff8}
+/* ---------- 事实芯片 ---------- */
+/* 条目 43：正文事实芯片带保护面身份（fc＋prot-chip 一体）——
+   旧的小圆点妆容只留给不带 prot-chip 的遗留场景，不再压扁新芯片。 */
+.fc:not(.prot-chip){display:inline-block;width:.62em;height:.62em;border-radius:50%;background:#dff0e7;border-bottom:1px dashed #4f9d78;
+ color:#1c6b4c;font-size:9px;line-height:.62em;text-align:center;vertical-align:super;margin:0 1px;cursor:help;outline:none}
+.fc:not(.prot-chip):hover,.fc:not(.prot-chip):focus{background:#bfe3cf;box-shadow:0 0 0 3px rgba(79,157,120,.16)}
+/* v5：有据的数字＝绿药丸＋事实号（账本色），不再是小圆点。 */
+.fc.prot-chip{cursor:pointer;white-space:nowrap;font-size:.74em;line-height:1.55;
+ background:#e7f4ec;border-color:#bfe3cf;color:#1c6b4c;padding:0 4px;border-radius:4px}
+.fc.prot-chip:hover,.fc.prot-chip:focus{background:#d5efe1;border-color:#8fcfae;
+ box-shadow:0 0 0 3px rgba(79,157,120,.16)}
+/* ---------- v2.1 受保护芯片 ---------- */
+.pchip{display:inline-flex;align-items:baseline;gap:4px;border-radius:6px;padding:0 6px;margin:0 2px;
+ font-size:14.5px;line-height:1.65;white-space:nowrap;vertical-align:baseline;border:1px solid transparent;
+ cursor:not-allowed;user-select:none;-webkit-user-select:none;transition:box-shadow .12s}
+.pchip .plock{font-size:10px;opacity:.7;font-family:system-ui,sans-serif}
+.pchip-cite{background:#eceef1;border-color:#d2d8de;color:#3d4550}
+.pchip-cite.miss{background:#fdf4e6;border-color:#e7cb92;color:#8f5606}
+.pchip-data{background:#e4eef9;border-color:#c2d7ee;color:#2f5279}
+.pchip:hover{box-shadow:0 0 0 3px rgba(80,100,120,.16)}
+.pchip.p-locked{animation:chipshake .28s ease}
+@keyframes chipshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+/* 改过／被采纳的段落留个记号 */
+p.p-edited::after{content:'改';display:inline-block;margin-left:7px;font-size:10px;line-height:1.5;color:#8f5606;
+ background:#fdf4e6;border:1px solid #ecd9b2;border-radius:4px;padding:0 4px;vertical-align:super;letter-spacing:.5px}
+p.p-adopted::after{content:'AI 采纳';color:#2f5279;background:#e9f1fa;border-color:#c7dcee}
+/* ---------- v2.1 问 AI 抽屉 ---------- */
+/* 条目 34：浮层的竖排抽屉钮随浮层一起删除；清空钮改用 .ai-clear。 */
+.ai-drawer{position:fixed;top:0;right:0;height:100vh;width:min(412px,96vw);background:#fbfaf6;border-left:1px solid #ddd8c6;
+ transform:translateX(102%);transition:transform .22s ease;z-index:78;display:flex;flex-direction:column;
+ box-shadow:-8px 0 30px rgba(40,36,20,.12)}
+.ai-drawer.on{transform:none}
+.ai-head{padding:15px 18px 13px;border-bottom:1px solid #ebe7da;display:flex;align-items:flex-start;gap:10px}
+.ai-title{font-size:15px;font-weight:650;color:#1c1e22}
+.ai-bound{margin-top:4px;font-size:12px;color:#8a5a10;background:#fdf3e3;border:1px solid #f0dcb8;border-radius:6px;
+ padding:3px 8px;display:inline-block}
+.ai-ctx{padding:10px 18px;border-bottom:1px solid #ebe7da;background:#f6f4ec;font-size:12px;color:#6f6a5d;
+ line-height:1.65;display:none}
+.ai-ctx.on{display:block}
+.ai-ctx .ctx-h{font-size:11px;color:#a49e8d;letter-spacing:.4px;margin-bottom:3px}
+.ai-ctx .ctx-q{color:#3d4550;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ai-ctx .ctx-chips{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
+.ai-ctx .cc{font-size:10.5px;border:1px solid #dcd7c6;border-radius:4px;padding:1px 5px;background:#fffefb}
+.ai-msgs{flex:1;overflow:auto;padding:16px 18px 8px}
+.msg{margin-bottom:14px;max-width:100%}
+.msg .who{font-size:11px;color:#a49e8d;margin-bottom:4px}
+.msg .bub{font-size:13.5px;line-height:1.75;border-radius:11px;padding:10px 13px;background:#fff;
+ border:1px solid #e9e5d7;color:#2c2f34;white-space:pre-wrap}
+.msg.me .bub{background:#eef4fb;border-color:#cfdff2}
+.msg .bub b{color:#1c1e22}
+.msg .bub .hl{background:#fdf3e3;border-radius:3px;padding:0 3px;color:#8a5a10}
+.ai-quick{padding:8px 18px 0;display:flex;flex-wrap:wrap;gap:6px}
+.aq{font-family:inherit;font-size:12px;padding:5px 10px;border-radius:999px;border:1px solid #dcd7c6;background:#fffefb;
+ color:#54514a;cursor:pointer}
+.aq:hover{border-color:#b6b0a0;color:#1c1e22}
+.aq:disabled{opacity:.45;cursor:default}
+.ai-input{padding:10px 18px 14px;display:flex;gap:8px;border-top:1px solid #ebe7da;margin-top:10px}
+.ai-input input{flex:1;min-width:0;font-family:inherit;font-size:13.5px;padding:9px 11px;border:1px solid #ddd8c6;
+ border-radius:8px;background:#fff;color:#1c1e22}
+.ai-input input:focus{outline:none;border-color:#b6b0a0}
+.ai-input button{font-family:inherit;font-size:13px;padding:9px 15px;border-radius:8px;border:1px solid #b6d8c4;
+ background:#f2faf5;color:#1c6b4c;cursor:pointer;font-weight:600}
+.ai-input button:hover{background:#e2f3e9}
+/* ---------- v2.1 建议卡／解释卡 ---------- */
+.aicard{border:1px solid #cfdff2;background:#f6fafe;border-radius:10px;padding:12px 14px;font-size:12.5px;line-height:1.7}
+.aicard-h{font-weight:650;font-size:13px;color:#2f5279;margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.aicard-h .tag{font-size:10.5px;font-weight:500;color:#5a6b7c;background:#e4eef9;border:1px solid #c2d7ee;
+ border-radius:4px;padding:1px 6px}
+.aicard-row{display:flex;gap:9px;margin-bottom:7px}
+.aicard-k{flex:0 0 44px;color:#9b9585;font-size:11.5px;padding-top:2px}
+.aicard-v{flex:1;color:#3d4550}
+.aicard-v.sug{color:#1c3d5c;background:#e9f1fa;border-radius:7px;padding:7px 10px;border:1px solid #d5e4f2}
+.aicard-why{color:#8a8577;font-size:11.5px;margin-top:8px;padding-top:8px;border-top:1px dashed #d9e2ee;line-height:1.7}
+.aicard-btns{margin-top:10px;display:flex;gap:7px}
+.aib{font-family:inherit;font-size:12.5px;padding:6px 13px;border-radius:7px;cursor:pointer;border:1px solid #d9d2bd;
+ background:#fffdf7;color:#5a4a24}
+.aib.adopt{border-color:#b6d8c4;background:#f2faf5;color:#1c6b4c;font-weight:600}
+.aib.adopt:hover{background:#e2f3e9}
+.aib.ignore{border-color:#ddd8c6;background:#fffefb;color:#8a8577}
+.aib.done{opacity:.55;pointer-events:none;text-decoration:line-through}
+.aicard.done{border-color:#e3e0d5;background:#faf9f4}
+.sumlist{list-style:none;margin:0;padding:0}
+.sumlist li{position:relative;padding-left:16px;margin-bottom:6px}
+.sumlist li::before{content:'·';position:absolute;left:4px;color:#6f9fd0;font-weight:700}
+.sumlist li b{color:#1c1e22}
+.sumlist .warnrow::before{content:'!';color:#9a5b06;font-size:11px}
+.expl dl{display:grid;grid-template-columns:64px 1fr;gap:4px 10px;margin:0;font-size:12px}
+.expl dt{color:#9b9585}
+.expl dd{margin:0;color:#3d4550;word-break:break-word}
+
+/* ================= v3：三栏布局（顶栏取消） ================= */
+body{background:#f6f5f1}
+.shell{max-width:1500px;margin:0 auto;display:flex;align-items:flex-start;gap:0}
+.rail{width:268px;flex:0 0 268px;position:sticky;top:0;align-self:flex-start;max-height:100vh;
+ overflow:auto;padding:18px 12px 24px 18px;border-right:1px solid #ebe7da;background:#faf9f4}
+.doc{flex:1 1 auto;min-width:0;padding:24px 26px 120px}
+.page{max-width:730px;margin:0 auto}
+body.ai-on .doc{padding-right:26px}
+
+/* ---- 左栏：品牌 + 项目管理器 + 目录 + 机器视图 ---- */
+.brand{padding:0 4px 14px;border-bottom:1px solid #ebe7da;margin-bottom:14px}
+.brand .tb-title{font-size:14px;font-weight:650;letter-spacing:.2px;line-height:1.5}
+.brand .tb-sub{font-size:11.5px;color:#8a8577;margin-top:3px}
+.pm{margin-bottom:16px}
+.pm-proj{border:1px solid #e9e5d7;background:#fffefb;border-radius:10px;padding:9px 10px;margin-bottom:9px}
+.pm-pname{font-size:13.5px;font-weight:650;color:#1c1e22;display:flex;align-items:center;gap:6px}
+.pm-pname .pm-pno{font-size:10px;color:#a49e8d;border:1px solid #e3e0d5;border-radius:4px;padding:0 4px;font-weight:500}
+.pm-disk{font-size:11px;color:#a49e8d;margin-top:2px;font-family:ui-monospace,Menlo,monospace}
+.pm-btns{display:flex;gap:5px;margin-top:7px}
+.pmbtn{flex:1 1 0;font-family:inherit;font-size:11.5px;padding:5px 4px;border-radius:6px;
+ border:1px solid #dcd7c6;background:#fffdf7;color:#6f6a5d;cursor:pointer;line-height:1.4}
+.pmbtn:hover{border-color:#b6b0a0;color:#1c1e22}
+.pmbtn.on{background:#1c1e22;color:#f6f5f1;border-color:#1c1e22;font-weight:600}
+.pmbtn .pm-l{display:block;font-size:9.5px;opacity:.75;font-weight:400}
+.pm-cur{font-size:10.5px;color:#1c6b4c;margin-top:6px}
+.toc-h{margin-top:14px}
+
+/* ---- 中栏正文：行宽可读，不留大空隙 ---- */
+.progwrap{height:3px;background:#e9e5d7;border-radius:2px;overflow:hidden;margin-bottom:20px}
+#prog{height:100%;width:0;background:#b6b0a0;transition:width .15s}
+.cover{padding:28px 30px 24px;margin-bottom:26px}
+.cover h1{font-size:24px}
+p{font-size:16.5px}
+
+/* ================= v3：右栏（体检＋报告＋问 AI 常驻） ================= */
+.colright{flex:0 0 392px;width:392px;position:sticky;top:0;align-self:flex-start;
+ height:100vh;overflow:auto;background:#faf9f4;border-left:1px solid #ebe7da;padding:14px 14px 40px;
+ transition:flex-basis .22s ease,width .22s ease}
+.colright-in{display:flex;flex-direction:column;gap:12px}
+.rcard{background:#fffefb;border:1px solid #e9e5d7;border-radius:12px;padding:13px 14px}
+.rc-h{font-size:12px;letter-spacing:.8px;color:#a49e8d;text-transform:uppercase;margin-bottom:10px;
+ display:flex;align-items:center;gap:8px}
+.rc-h .rc-t{font-size:13px;font-weight:650;color:#1c1e22;letter-spacing:0;text-transform:none}
+.rc-h .rc-x{margin-left:auto;font-size:11px;color:#a49e8d;font-weight:400;text-transform:none}
+.st-row{display:flex;flex-direction:column;gap:6px}
+.st{text-align:left;font-size:12.5px;padding:6px 10px;border-radius:8px;border:1px solid transparent;
+ cursor:pointer;font-family:inherit;line-height:1.5}
+.st.ok{background:#eaf5ef;color:#1c6b4c;border-color:#cbe6d7}
+.st.warn{background:#fdf3e3;color:#8a5a10;border-color:#f0dcb8}
+.st.warn:hover{background:#fbeacd}
+.st-sub{font-size:11px;color:#a49e8d;margin-top:7px;line-height:1.6}
+.recon{margin-top:9px;font-size:11px;color:#1c6b4c;background:#eaf5ef;border:1px solid #cbe6d7;
+ border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:6px;line-height:1.5}
+.recon.hide{display:none}
+.recon .rc-dot{width:6px;height:6px;border-radius:50%;background:#1c6b4c;flex:0 0 6px}
+.recon.warn{background:#fdf3e3;color:#8a5a10;border-color:#f0dcb8}
+.recon.warn .rc-dot{background:#c98a12}
+.rc-demo{font-family:inherit;font-size:10.5px;color:#9b9585;background:none;border:1px dashed #d8d3c3;
+ border-radius:999px;padding:1px 7px;cursor:pointer;margin-left:auto;white-space:nowrap}
+.rc-demo:hover{border-color:#b6b0a0;color:#54514a}
+.act-row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.act{flex:1 1 auto;font-family:inherit;font-size:11.5px;padding:6px 8px;border-radius:7px;
+ border:1px solid #dcd7c6;background:#fffdf7;color:#54514a;cursor:pointer;line-height:1.4}
+.act:hover{border-color:#b6b0a0;color:#1c1e22;background:#f7f5ee}
+.act.busy{opacity:.6;pointer-events:none}
+.act-out{margin-top:8px;font-size:11px;line-height:1.65;color:#6f6a5d;background:#f7f6f0;
+ border:1px solid #ebe7da;border-radius:8px;padding:7px 9px;display:none;white-space:pre-wrap;
+ font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.act-out.on{display:block}
+.act-out .ok{color:#1c6b4c;font-weight:600}
+.act-out .bad{color:#9a3b1e;font-weight:600}
+
+/* ---- 实验报告导入流（四步链） ---- */
+.rpt-meta{font-size:11px;color:#8a8577;line-height:1.6;margin-bottom:9px}
+.rpt-meta code{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#6f6a5d;
+ word-break:break-all}
+.rstep{border:1px solid #ebe7da;border-radius:9px;padding:9px 10px;margin-bottom:8px;background:#fdfdf9}
+.rstep-h{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;color:#3a3730}
+.rstep-no{width:17px;height:17px;flex:0 0 17px;border-radius:50%;background:#e9e6da;color:#6f6a5d;
+ font-size:10.5px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.rstep.done .rstep-no{background:#1c6b4c;color:#fff}
+.rstep.done{border-color:#cbe6d7;background:#f6fbf8}
+.badge{margin-left:auto;font-size:10.5px;padding:1px 8px;border-radius:999px;font-weight:600;
+ border:1px solid #dcd7c6;background:#f4f2ea;color:#8a8577;white-space:nowrap}
+.badge.todo{background:#fdf3e3;color:#8a5a10;border-color:#f0dcb8}
+.badge.done{background:#eaf5ef;color:#1c6b4c;border-color:#cbe6d7}
+.rstep-c{font-size:11.5px;color:#6f6a5d;line-height:1.65;margin-top:6px}
+.rstep-c code{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;background:#f1efe7;
+ padding:0 4px;border-radius:3px;color:#54514a}
+.rstep-btns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.rbtn{font-family:inherit;font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;
+ border:1px solid #d9d2bd;background:#fffdf7;color:#5a4a24;line-height:1.4}
+.rbtn:hover{background:#f4e9d2}
+.rbtn.human{border-color:#b6d8c4;background:#f2faf5;color:#1c6b4c;font-weight:600}
+.rbtn.human:hover{background:#e2f3e9}
+.rbtn:disabled{opacity:.42;cursor:default}
+.rstep-out{font-size:11px;line-height:1.65;margin-top:7px;color:#54514a;background:#fff;
+ border:1px solid #ebe7da;border-radius:7px;padding:6px 8px;display:none;white-space:pre-wrap;
+ font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.rstep-out.on{display:block}
+.rstep-out .ok{color:#1c6b4c;font-weight:600}
+.rstep-out .bad{color:#9a3b1e;font-weight:600}
+.rfile{font-size:10.5px;line-height:1.6;color:#6f6a5d;display:flex;gap:6px;align-items:baseline;
+ padding:2px 0;border-bottom:1px dotted #ebe7da}
+.rfile:last-child{border-bottom:none}
+.rfile .rf-n{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
+.rfile .rf-s{font-family:ui-monospace,Menlo,monospace;color:#a49e8d;flex:0 0 auto}
+.rfile .rf-ok{color:#1c6b4c;font-weight:700}
+.rfile .rf-bad{color:#9a3b1e;font-weight:700}
+.rnote{font-size:11px;color:#8a5a10;background:#fdf3e3;border:1px solid #f0dcb8;border-radius:7px;
+ padding:6px 8px;margin-top:8px;line-height:1.65}
+
+/* ---- 问 AI 常驻面板 ---- */
+.ai-drawer{position:static;transform:none;width:auto;height:auto;max-height:none;border-left:none;
+ border-top:1px solid #ebe7da;border-radius:12px;background:#fffefb;box-shadow:none;overflow:visible}
+.ai-drawer.on{transform:none}
+.ai-head{padding:12px 14px 11px;border-bottom:1px solid #ebe7da}
+.ai-title{font-size:13px}
+.ai-bound{font-size:11px;padding:2px 7px}
+.ai-clear{font-family:inherit;font-size:11.5px;letter-spacing:.5px;padding:4px 10px;border-radius:999px;
+ border:1px solid #c9d8ea;background:#f4f8fc;color:#2f5279;cursor:pointer;margin-left:auto}
+.ai-clear:hover{background:#e6eff8}
+.ai-ctx{font-size:11.5px;padding:8px 14px}
+.ai-msgs{max-height:260px;padding:12px 14px 6px}
+.ai-quick{padding:6px 14px 0}
+.aq{font-size:11px;padding:4px 9px}
+.ai-input{padding:8px 14px 12px;margin-top:8px}
+.ai-input input{font-size:12.5px;padding:7px 9px}
+.ai-input button{font-size:12px;padding:7px 12px}
+.msg .bub{font-size:12.5px;padding:8px 11px}
+
+/* ---- 右栏边缘三竖标（统一修批三·A/D：同族样式一上一下，AI 对话可整栏替换） ---- */
+.side-tab{writing-mode:vertical-rl;font-family:inherit;font-size:12px;letter-spacing:2px;padding:14px 8px;
+ border:1px solid #ddd8c6;border-right:none;border-radius:9px 0 0 9px;background:#fffefb;color:#8a8577;
+ cursor:pointer;box-shadow:-3px 0 12px rgba(40,36,20,.08);display:flex;flex-direction:column;align-items:center;line-height:1.5}
+.side-tab:hover{color:#1c1e22;background:#f4f2ea}
+.side-tab.on{background:#2f2e2b;color:#fff;border-color:#2f2e2b}
+/* 条目 39：旧 .side-alone 小图标方案废弃（展开标签见 .nav-open）。 */
+body.rc-collapsed .colright{flex-basis:0;width:0;padding:0;overflow:hidden;border-left:none}
+/* ---- D：AI 对话独占模式（整栏替换） ---- */
+body.ai-full .rtabs{display:none}
+body.ai-full #pane-report,body.ai-full #pane-machine{display:none}
+body.ai-full #pane-ai{display:flex}
+/* ---- C：检查报告卡片折叠 ---- */
+.rcard.fold{padding:0}
+.rc-fold-h{display:flex;align-items:center;gap:8px;width:100%;padding:12px 14px;border:none;background:none;
+ font-family:inherit;cursor:pointer;text-align:left}
+.rc-fold-h:hover{background:#fbfbfa}
+.rc-fold-h .rc-t{font-size:13px;font-weight:650;color:#37352f}
+.fold-badge{font-size:11px;color:#8f8d86;background:#f1f0ee;border-radius:999px;padding:2px 8px;margin-left:auto;white-space:nowrap}
+.fold-badge.warn{background:#fdf3e3;color:#8a5a10}
+.fold-chev{color:#a3a29c;transition:transform .15s;flex:0 0 auto}
+.rcard.fold.open .fold-chev{transform:rotate(180deg)}
+.rcard.fold .rc-fold-b{display:none;padding:0 14px 13px}
+.rcard.fold.open .rc-fold-b{display:block}
+
+/* ---- 报告卡在窄屏下移到正文下方 ---- */
+@media (max-width:1180px){
+ .shell{flex-wrap:wrap}
+ .rail{width:100%;flex:0 0 100%;position:static;max-height:none;display:flex;gap:16px;flex-wrap:wrap}
+ .rail .brand{flex:0 0 auto;border-bottom:none;margin:0;padding:0}
+ .pm{flex:1 1 320px;margin:0}
+ .rail .toc{flex:1 1 240px}
+ .colright{flex:0 0 100%;width:100%;position:static;height:auto}
+}
+@media (max-width:760px){ .doc{padding:16px 14px 80px} }
+
+/* =====================================================================
+   v4：三视图 + 项目页/新建页 + 右栏标签页 + 模态框 + 章节管理
+   视觉语言：Notion 文档页模型（窄栏居中、留白、去边框、ghost 按钮）
+             × Obsidian 侧栏纪律（窄、紧凑、分区清爽、图标化）
+   ===================================================================== */
+body{background:#ffffff}
+.shell{max-width:none}
+/* ---- 三视图显隐（含条目7的实验报告视图） ---- */
+.mainview{flex:1 1 auto;min-width:0;display:none;background:#fff}
+body[data-view="projects"] #viewProjects{display:block}
+body[data-view="new"] #viewNew{display:block}
+body[data-view="reports"] #viewReports{display:block}
+body[data-view="projects"] .doc,body[data-view="projects"] .colright{display:none}
+body[data-view="new"] .doc,body[data-view="new"] .colright{display:none}
+body[data-view="reports"] .doc,body[data-view="reports"] .colright{display:none}
+.doc,.colright,.mainview{animation:viewfade .18s ease}
+@keyframes viewfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* ---- 顶栏（三视图恒在，条目2） ---- */
+body{padding-top:0}
+.topbar{position:fixed;top:0;left:0;right:0;height:52px;z-index:100;
+ display:flex;align-items:center;gap:10px;padding:0 18px;
+ background:rgba(255,255,255,.92);backdrop-filter:saturate(140%) blur(10px);-webkit-backdrop-filter:saturate(140%) blur(10px);
+ border-bottom:1px solid #ececec}
+.tb-brand{font-size:14px;font-weight:700;letter-spacing:.2px;color:#37352f;margin-right:8px}
+.tb-btn{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:12.5px;padding:6px 11px;
+ border:none;border-radius:7px;background:transparent;color:#5f5e5b;cursor:pointer;white-space:nowrap}
+.tb-btn:hover{background:#ececeb;color:#37352f}
+.lang-seg{display:flex;gap:2px;background:#ececeb;border-radius:8px;padding:3px;margin-left:auto;height:32px}
+.lang-seg button{min-width:44px;font-family:inherit;font-size:13px;padding:0 12px;border:none;border-radius:6px;
+ background:transparent;color:#8a8577;cursor:pointer;line-height:26px;height:26px}
+.lang-seg button:hover{color:#37352f}
+.lang-seg button.on{background:#fff;color:#37352f;font-weight:600;box-shadow:0 1px 2px rgba(15,15,15,.08)}
+.lang-seg button:disabled{opacity:.38;cursor:default;background:transparent;box-shadow:none;color:#a3a29c}
+.lang-seg button:disabled:hover{color:#a3a29c}
+/* ---- 悬浮目录面板（条目3：半透明＋blur，仅 workbench；可收成左缘圆钮） ---- */
+.toc-float{position:fixed;right:392px;top:68px;width:238px;max-height:calc(100vh - 120px);z-index:65;
+ display:flex;flex-direction:column;padding:10px 10px 12px;
+ background:rgba(255,255,255,.72);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);
+ border:1px solid rgba(15,15,15,.06);border-radius:14px;box-shadow:0 8px 30px rgba(15,15,15,.10);overflow:hidden}
+.toc-float .rail-h{margin:0 0 8px 6px;font-size:10.5px;letter-spacing:1.2px;color:#a3a29c}
+.tf-head{display:flex;align-items:center;margin-bottom:6px}
+.tf-collapse{margin-left:auto;width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+ border:none;background:transparent;color:#a3a29c;border-radius:6px;cursor:pointer;padding:0}
+.tf-collapse:hover{background:#ececeb;color:#37352f}
+.toc-float .toc-new{margin:0 2px 8px}
+.toc-float ul{list-style:none;margin:0;padding:0;overflow:auto;flex:1 1 auto;min-height:0}
+.toc-float li a{padding:4px 8px;border-radius:6px;font-size:12.8px;line-height:1.5;color:#5f5e5b}
+.toc-float li a:hover{background:#ececeb;color:#37352f}
+.toc-float li a.on{background:#e8e8e6;color:#37352f;font-weight:600}
+.toc-float li a .en{font-size:10.5px;color:#aaa69c}
+body.toc-hidden .toc-float{display:none}
+body:not([data-view="workbench"]) .toc-float{display:none}
+#tocList li{display:flex;align-items:center;gap:2px;border-radius:6px;padding-right:2px}
+#tocList li a{flex:1 1 auto;min-width:0}
+/* 条目 44：目录条目槽永不空——.cn/.en 两槽都常显，按语言与数据在 JS 里择一。 */
+#tocList .cn,#tocList .en{display:block}
+.toc-grip{visibility:hidden;color:#b3b0a8;cursor:grab;display:flex;align-items:center;padding:4px 0 4px 2px;flex:0 0 auto}
+#tocList li:hover .toc-grip{visibility:visible}
+#tocList li.dragging{opacity:.4}
+#tocList li.drop-before{box-shadow:inset 0 2px 0 #9b988f}
+#tocList li.drop-after{box-shadow:inset 0 -2px 0 #9b988f}
+.toc-ops{display:none;gap:1px;align-items:center;flex:0 0 auto}
+#tocList li:hover .toc-ops,#tocList li:focus-within .toc-ops{display:flex}
+.topb{border:none;background:none;color:#9b9a96;cursor:pointer;padding:3px;border-radius:4px;display:flex}
+.topb:hover{background:#e3e2df;color:#37352f}
+.topb.tdel:hover{color:#9a3b1e;background:#f7ebe6}
+/* ---- 正文列（统一修批二·条目11：左对齐顶满，目录恢复纯浮层覆盖） ---- */
+.doc{background:#fff;padding:44px 16px 160px}
+.page{max-width:none;margin:0}
+.cover{background:none;border:none;box-shadow:none;border-radius:0;padding:6px 0 8px;margin-bottom:44px}
+.cover h1{font-size:30px;line-height:1.32}
+.cover .sub{font-size:15px;color:#787774}
+.cover .meta{margin-top:14px;color:#8f8d86}
+.progwrap{background:#ececeb;margin-bottom:30px;border-radius:2px}
+#prog{background:#b8b5ac}
+/* 段落常驻把手（⋯）与菜单 */
+.pnav{position:absolute;left:-46px;top:3px;width:28px;height:26px;display:flex;align-items:center;justify-content:center;
+ border:none;background:transparent;color:#c3c1ba;border-radius:6px;cursor:pointer;padding:0}
+.pnav:hover{background:#f1f0ee;color:#5f5e5b}
+@media (max-width:980px){.pnav{display:none}}
+#pmenu{position:fixed;z-index:130;display:none;flex-direction:column;background:#fff;border:1px solid #e6e6e4;border-radius:10px;
+ box-shadow:0 10px 32px rgba(15,15,15,.14);padding:4px;min-width:128px}
+#pmenu.on{display:flex}
+#pmenu button{font-family:inherit;font-size:12.5px;text-align:left;padding:6px 10px;border:none;background:none;
+ border-radius:6px;color:#37352f;cursor:pointer;white-space:nowrap}
+#pmenu button:hover{background:#f1f0ee}
+/* 节标题常驻按钮组 + 拖拽 */
+.sec-h{position:relative;padding-right:118px}
+.sec-tools{position:absolute;right:-10px;top:0;display:flex;gap:2px}
+.stk{width:27px;height:27px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;
+ color:#c3c1ba;border-radius:6px;cursor:pointer;padding:0}
+.stk:hover{background:#f1f0ee;color:#5f5e5b}
+.stk-danger:hover{color:#9a3b1e;background:#f7ebe6}
+.sec-cn.sec-editing{outline:2px solid #d9d6cc;border-radius:6px;padding:1px 6px;background:#fbfaf6}
+h2.drop-target{box-shadow:inset 0 2px 0 #9b988f}
+.note.flash{animation:flashnote 1.6s ease}
+@keyframes flashnote{0%{box-shadow:0 0 0 3px rgba(217,164,65,.45)}100%{box-shadow:0 0 0 3px rgba(217,164,65,0)}}
+section.flash-sec{animation:flashsec 1.8s ease}
+@keyframes flashsec{0%{background:#fdf7ea}100%{background:transparent}}
+/* ---- 项目管理页 / 新建项目页 ---- */
+.pv-wrap{max-width:1020px;margin:0 auto;padding:60px 48px 140px}
+.pv-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:24px}
+.pv-head h1{margin:0;font-size:27px;font-weight:700;letter-spacing:-.2px;color:#1f1f1d}
+.pv-sub{margin:7px 0 0;color:#8f8d86;font-size:13.5px}
+.btn-primary{display:inline-flex;align-items:center;gap:7px;font-family:inherit;font-size:13px;font-weight:600;
+ padding:8px 15px;border:none;border-radius:8px;background:#2f2e2b;color:#fff;cursor:pointer;white-space:nowrap}
+.btn-primary:hover{background:#454340}
+.btn-primary:disabled{opacity:.4;cursor:default}
+.btn-ghost{font-family:inherit;font-size:13px;padding:8px 14px;border:none;border-radius:8px;background:transparent;color:#5f5e5b;cursor:pointer}
+.btn-ghost:hover{background:#f1f0ee;color:#37352f}
+.pv-head .btn-primary{margin-left:auto;flex:0 0 auto}
+.pv-head-btns{margin-left:auto;display:flex;gap:10px;align-items:center}
+.pv-head-btns .btn-primary{margin-left:0}
+.pv-search{display:flex;align-items:center;gap:8px;max-width:360px;padding:7px 12px;border:1px solid #e6e6e4;border-radius:8px;
+ color:#9b9a96;margin-bottom:28px;background:#fbfbfa}
+.pv-search input{flex:1;border:none;outline:none;background:none;font-family:inherit;font-size:13px;color:#37352f}
+.pj-list{background:#fff;border:1px solid #e9e9e7;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(15,15,15,.03)}
+/* 项目行＝双列式（条目 28）：第一行标题独占整行；第二行定宽栏位一排。
+   各栏位固定宽度、互不挤压；窄屏时整排折行而不是横向溢出。 */
+.pj-row-item{display:block;padding:13px 16px;border-bottom:1px solid #efefee;background:#fff}
+.pj-row-item:last-child{border-bottom:none}
+.pj-row-item:hover{background:#fafaf8}
+.pj-r-title{display:block;min-width:0;margin-bottom:9px}
+.pj-r-name{display:block;font-size:14px;font-weight:650;color:#37352f;line-height:1.5;
+  white-space:normal;word-break:break-word;overflow-wrap:anywhere}
+.pj-r-line{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+.pj-r-disks{flex:0 0 200px;width:200px;min-width:0;font-family:ui-monospace,Menlo,monospace;
+  font-size:11px;color:#9b9a96;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-r-status{flex:0 0 88px;width:88px;min-width:0;overflow:hidden}
+.pj-r-last{flex:0 0 128px;width:128px;min-width:0;font-size:11.5px;color:#8f8d86;
+  font-family:ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-r-time{font-size:11.5px;color:#8f8d86;font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+.pj-r-prog{display:flex;align-items:center;gap:7px;flex:0 0 170px;width:170px;min-width:0;overflow:hidden}
+.pj-r-prog .pj-bar{flex:0 0 64px}
+.pj-r-prog .pj-r-time{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pj-r-actions{display:flex;gap:8px;flex:0 0 auto;margin-left:auto}
+.pj-row-item .pj-open{padding:6px 16px}
+.pj-card{background:#fff;border:1px solid #e6e6e4;border-radius:10px;padding:16px 16px 14px;box-shadow:0 1px 2px rgba(15,15,15,.04);
+ display:flex;flex-direction:column;gap:8px;transition:box-shadow .15s,transform .15s}
+.pj-card:hover{box-shadow:0 6px 20px rgba(15,15,15,.08);transform:translateY(-1px)}
+.pj-top{display:flex;align-items:center;gap:8px}
+.pj-name{font-size:15px;font-weight:650;color:#37352f}
+.pj-badge{font-size:10.5px;color:#5f5e5b;background:#f1f0ee;border-radius:5px;padding:2px 7px;white-space:nowrap}
+.pj-disks{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#9b9a96}
+.pj-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#8f8d86}
+.pj-row .pj-v{color:#5f5e5b;font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+.pj-chip{font-size:11px;border-radius:999px;padding:2px 9px;font-weight:600}
+.pj-draft{background:#f1f0ee;color:#5f5e5b}
+.pj-checking{background:#fdf3e3;color:#8a5a10}
+.pj-released{background:#eaf5ef;color:#1c6b4c}
+.pj-prog{display:flex;align-items:center;gap:8px}
+.pj-prog-bar{flex:1;height:4px;background:#ececeb;border-radius:2px;overflow:hidden}
+.pj-prog-bar i{display:block;height:100%;background:#2f2e2b;border-radius:2px}
+.pj-prog-n{font-size:11px;color:#9b9a96;font-family:ui-monospace,Menlo,monospace}
+.pj-foot{display:flex;align-items:center;gap:8px;margin-top:4px}
+.pj-foot .pm-cur{flex:1 1 auto;font-size:10.5px;color:#1c6b4c;min-width:0}
+.pj-foot .pj-edit{margin-left:auto}
+.pmbtn{border:1px solid #e3e2df;background:#fff;color:#5f5e5b}
+.pmbtn:hover{border-color:#b8b5ac;color:#37352f}
+.pmbtn.on{background:#2f2e2b;color:#fff;border-color:#2f2e2b;font-weight:600}
+/* 新建页 */
+.np-layout{display:block;max-width:820px}
+.np-dir-row{display:flex;gap:8px;align-items:center}
+.np-dir-row input{flex:1 1 auto}
+.np-readonly{color:#9b9a96;background:#fbfbfa}
+.np-link{border:none;background:none;color:#2f5279;text-decoration:underline;padding:0 4px;font-size:12px}
+.np-link:hover{background:none;color:#1c3d5c}
+.req-star{color:#d0342c;margin-right:3px}
+.ed-ro{display:flex;align-items:center;gap:10px}
+.np-rpt-note{font-size:12.5px;color:#5f5e5b;display:flex;align-items:center;gap:8px}
+.np-block{margin-bottom:32px}
+.np-block-h{font-size:11px;letter-spacing:1.2px;color:#9b9a96;text-transform:uppercase;margin-bottom:16px}
+.np-field{margin-bottom:20px}
+.np-label{font-size:13px;font-weight:600;color:#37352f;margin-bottom:7px;display:block}
+.np-form input[type=text],.np-form input[list],.np-form select{width:100%;max-width:460px;font-family:inherit;font-size:13.5px;
+ padding:8px 11px;border:1px solid #e3e2df;border-radius:8px;background:#fff;color:#37352f;outline:none}
+.np-form input:focus,.np-form select:focus{border-color:#b8b5ac;box-shadow:0 0 0 3px rgba(15,15,15,.05)}
+.np-hint{font-size:11.5px;color:#9b9a96;margin-top:6px;line-height:1.6}
+.np-seg{display:flex;gap:8px;flex-wrap:wrap}
+.np-seg label{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#5f5e5b;border:1px solid #e3e2df;
+ border-radius:8px;padding:7px 13px;cursor:pointer;background:#fff}
+.np-seg label.sel{border-color:#2f2e2b;color:#37352f;font-weight:600;background:#fbfbfa}
+.np-seg input{accent-color:#2f2e2b;margin:0}
+.np-file{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.np-file .rbtn{margin:0}
+.np-file-name{font-size:11.5px;color:#5f5e5b;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.np-seg select{font-family:inherit;font-size:12.5px;padding:5px 8px;border:1px solid #e3e2df;border-radius:8px;color:#37352f;background:#fff;max-width:220px}
+.np-seg select:disabled{opacity:.45}
+.np-actions{display:flex;gap:10px;margin-top:28px}
+.np-preview{background:#fbfbfa;border:1px solid #ececeb;border-radius:12px;padding:16px}
+.np-prev-h{font-size:12px;font-weight:600;color:#5f5e5b;margin-bottom:12px}
+.np-prev-card{box-shadow:none;transform:none;pointer-events:none}
+.np-prev-note{font-size:11px;color:#9b9a96;margin:12px 0 0;line-height:1.6}
+/* ---- 右栏（互斥标签页） ---- */
+.colright{flex:0 0 384px;width:384px;background:#fafaf9;border-left:1px solid #ececec;display:flex;flex-direction:column;
+ overflow:hidden;padding:12px 12px 0;position:sticky;top:52px;height:calc(100vh - 52px)}
+.rtabs{flex:0 0 auto;display:flex;gap:2px;border-bottom:1px solid #e6e6e4;margin-bottom:12px}
+.rtab{font-family:inherit;font-size:12.5px;color:#8f8d86;padding:7px 13px;border:none;background:none;cursor:pointer;
+ border-bottom:2px solid transparent;margin-bottom:-1px}
+.rtab.on{color:#37352f;font-weight:600;border-bottom-color:#2f2e2b}
+.rtab:hover{color:#37352f}
+.rtab-btn{width:28px;height:26px;display:flex;align-items:center;justify-content:center;margin-right:8px;
+ border:1px solid #e6e6e4;border-radius:6px;background:#fff;color:#8f8d86;cursor:pointer;padding:0}
+.rtab-btn:hover{color:#37352f;background:#f1f0ee}
+body.toc-hidden .rtab-btn{background:#f1f0ee;color:#37352f}
+.rpane{display:none;flex:1 1 auto;min-height:0;flex-direction:column}
+.rpane.on{display:flex}
+.rpane-report,.rpane-machine{overflow:auto;padding:2px 2px 16px}
+.rpane-ai{overflow:hidden}
+.rcard{background:#fff;border:1px solid #e9e9e7;border-radius:10px;padding:13px 14px;margin-bottom:12px;
+ box-shadow:0 1px 2px rgba(15,15,15,.03)}
+.rc-h .rc-x{font-size:11px}
+.rpane-ai .ai-ctx{flex:0 0 auto;border-bottom:1px solid #efefee;background:#f7f7f5}
+.rpane-ai .ai-msgs{flex:1 1 auto;min-height:0;max-height:none;overflow:auto}
+.rpane-ai .ai-quick{flex:0 0 auto}
+.rpane-ai .ai-input{flex:0 0 auto;background:#fff}
+.aq{border:1px solid #e3e2df;background:#fff;color:#5f5e5b}
+.aq:hover{border-color:#b8b5ac;color:#37352f}
+.act{border:1px solid #e3e2df;background:#fff;color:#5f5e5b}
+.act:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+.rbtn{border:1px solid #e3e2df;background:#fff;color:#5f5e5b}
+.rbtn:hover{background:#f1f0ee}
+.rbtn.human{border-color:#cfe3d7;background:#f4faf6;color:#1c6b4c}
+.nbtn{border:1px solid #e3e2df;background:#fff;color:#5f5e5b}
+.nbtn:hover{background:#f1f0ee}
+.rc-demo{border:1px dashed #d8d3c3}
+.mv-head{padding:0 2px 10px}
+.mv-head .t{font-size:13.5px;font-weight:650;color:#37352f}
+.mv-head .sub{font-size:11px;color:#9b9a96;margin-top:3px;line-height:1.6}
+.rpane-machine .tabs{padding:0;border-bottom:1px solid #ececeb}
+.rpane-machine .d-body{flex:1 1 auto;padding:12px 2px 20px}
+table.mt th{background:#fff}
+.d-note{color:#8f8d86}
+/* ---- 模态框 ---- */
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,15,15,.4);opacity:0;pointer-events:none;transition:opacity .16s;z-index:110}
+.modal-backdrop.on{opacity:1;pointer-events:auto}
+.modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.985);width:min(680px,94vw);max-height:86vh;
+ background:#fff;border-radius:12px;box-shadow:0 24px 60px rgba(15,15,15,.18);z-index:120;display:none;flex-direction:column;
+ opacity:0;transition:opacity .16s,transform .16s;overflow:hidden}
+.modal.on{display:flex;opacity:1;transform:translate(-50%,-50%) scale(1)}
+.modal-sm{width:min(470px,94vw)}
+.modal-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #efefee;flex:0 0 auto}
+.modal-h .t{font-size:14px;font-weight:650;color:#37352f}
+.m-close{margin-left:auto;font-family:inherit;font-size:12px;padding:5px 12px;border:none;border-radius:7px;
+ background:transparent;color:#8f8d86;cursor:pointer}
+.m-close:hover{background:#f1f0ee;color:#37352f}
+.modal-b{padding:16px 18px;overflow:auto}
+.modal-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #efefee;flex:0 0 auto}
+.modal-f .rbtn{margin:0}
+.del-text{font-size:13px;color:#37352f;line-height:1.9;margin:4px 0}
+.rbtn.danger{border-color:#e7c4b8;background:#fdf3f0;color:#9a3b1e;font-weight:600}
+.rbtn.danger:hover{background:#f9e4dd}
+/* 三步向导 */
+.wsteps{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.wstep{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#9b9a96;border:1px solid #e6e6e4;border-radius:999px;padding:4px 12px 4px 5px}
+.wstep i{font-style:normal;width:18px;height:18px;border-radius:50%;background:#f1f0ee;color:#8f8d86;
+ display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:0 0 18px}
+.wstep.on{color:#37352f;border-color:#cfcec9;background:#fbfbfa}
+.wstep.on i{background:#2f2e2b;color:#fff}
+.wstep.done i{background:#1c6b4c;color:#fff}
+.wpane{display:none}
+.wpane.on{display:block}
+.wz-file{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #e9e9e7;border-radius:8px;margin-bottom:8px;cursor:pointer;font-size:12px;color:#5f5e5b}
+.wz-file:hover{background:#fbfbfa}
+.wz-file input{accent-color:#2f2e2b;margin:0}
+.wz-file .rf-n{flex:1 1 auto;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wz-file .rf-s{color:#9b9a96;font-size:11px;flex:0 0 auto}
+.wzsel{font-family:inherit;font-size:12px;border:1px solid #e3e2df;border-radius:6px;padding:3px 6px;color:#37352f;background:#fff}
+.wz-summary{font-size:12.5px;color:#37352f;line-height:2;background:#fbfbfa;border:1px solid #ececeb;border-radius:8px;padding:10px 13px}
+.wz-summary code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#54514a;word-break:break-all}
+/* ---- 追加事实表单（两步：挑产物 → 说清这条数字 ＋ 落哪本账） ---- */
+.toml-key{color:#7a5ea8}
+.toml-eq{color:#8f8d86}
+.toml-string{color:#1c6b4c}
+.toml-number{color:#a8541c}
+.toml-bool{color:#8a5a10}
+.toml-array{color:#3f6ea8}
+.toml-table{color:#6a6f7a;font-weight:600}
+.toml-comment{color:#9b9a96;font-style:italic}
+.af-notes{margin:0 0 10px}
+.af-note{font-size:11.5px;line-height:1.65;color:#6f6e69;background:#fbfbfa;border:1px solid #ececeb;
+ border-radius:7px;padding:7px 10px;margin:0 0 6px}
+.af-search{width:100%;font-family:inherit;font-size:12px;border:1px solid #e3e2df;border-radius:7px;
+ padding:5px 9px;color:#37352f;background:#fff;margin:0 0 10px}
+.af-groups{display:flex;flex-direction:column;gap:12px;align-items:stretch}
+.af-group{flex:1 1 0;min-width:0}
+.af-fold{border:1px solid #ececeb;border-radius:8px;background:#fbfbfa;padding:0}
+.af-fold-h{display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;margin:0;
+ list-style:none;font-weight:600}
+.af-fold-h::-webkit-details-marker{display:none}
+.af-fold-h::before{content:"▸";color:#a49e8d;font-size:10px}
+.af-fold[open] .af-fold-h::before{content:"▾"}
+.af-fold[open] .af-fold-h{border-bottom:1px solid #ececeb}
+.af-fold .af-list{border:none;border-radius:0 0 8px 8px;max-height:220px}
+.af-tag{font-size:10px;line-height:1.6;padding:0 6px;border-radius:8px;font-weight:400;
+ border:1px solid #eddcb4;color:#8a5a10;background:#fdf6e8}
+.af-group-h{font-size:11.5px;color:#54514a;margin:0 0 5px;font-weight:600}
+.af-list{max-height:280px;overflow:auto;border:1px solid #ececeb;border-radius:8px;padding:3px 6px;background:#fff}
+.af-row{display:flex;align-items:center;gap:7px;padding:4px 4px;border-bottom:1px dashed #f0efec;
+ font-size:11.5px;color:#5f5e5b;cursor:pointer;border-radius:5px}
+.af-row:last-child{border-bottom:none}
+.af-row:hover{background:#fbfbfa}
+.af-row.on{background:#f4f6fa}
+.af-row input{accent-color:#2f2e2b;margin:0;flex:0 0 auto}
+.af-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+ font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.af-sha{flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#a49e8d}
+.af-badge{flex:0 0 auto;font-size:10px;line-height:1.6;padding:0 6px;border-radius:8px;
+ border:1px solid #e3e2df;color:#8f8d86;background:#fbfbfa}
+.af-badge.ok{border-color:#bcd9c3;color:#1c6b4c;background:#f3f9f5}
+.af-badge.warn{border-color:#eddcb4;color:#8a5a10;background:#fdf6e8}
+.af-badge.err{border-color:#e6c4bd;color:#9a3b1e;background:#fdf1ef}
+.af-more{font-size:11px;color:#9b9a96;padding:6px 4px 2px}
+.af-src{font-size:12px;color:#37352f;background:#fbfbfa;border:1px solid #ececeb;border-radius:8px;
+ padding:7px 11px;margin:0 0 10px}
+.af-src code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#54514a;word-break:break-all}
+.af-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:0 0 4px}
+.af-field{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:#54514a}
+.af-field input,.af-field select{font-family:inherit;font-size:12px;border:1px solid #e3e2df;
+ border-radius:6px;padding:5px 8px;color:#37352f;background:#fff;width:100%}
+.af-valuehint{margin:6px 0 0}
+.af-ledger{border-top:1px solid #ececeb;margin-top:12px;padding-top:10px}
+.af-newledger{width:100%;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+ border:1px solid #e3e2df;border-radius:6px;padding:5px 8px;color:#37352f;background:#fff;margin-top:6px}
+/* 发现列表 */
+.ff-row{display:flex;align-items:center;gap:7px;padding:5px 2px;border-bottom:1px dashed #ececeb;font-size:12px;color:#5f5e5b}
+.ff-row:last-child{border-bottom:none}
+.ff-dot{width:6px;height:6px;border-radius:50%;background:#d9a441;flex:0 0 6px}
+.ff-row .ff-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ff-empty{font-size:11.5px;color:#9b9a96}
+.fm-row{border:1px solid #ececeb;border-radius:8px;padding:9px 11px;margin-bottom:8px;background:#fbfbfa}
+.fm-row .fm-t{font-size:12.5px;font-weight:600;color:#37352f}
+.fm-row .fm-b{font-size:12px;color:#5f5e5b;line-height:1.7;margin:3px 0 8px}
+/* toast 保持深色（Notion 风暗提示条） */
+#toast{background:#2f2e2b;border-radius:8px;box-shadow:0 8px 24px rgba(15,15,15,.25)}
+
+/* ================= v4 统一修批（条目5–9） ================= */
+/* ---- 条目6：成本口径角标（浮层型 aside 收敛为角标＋模态） ---- */
+.cost-chip{display:inline-flex;align-items:center;gap:5px;margin:10px 0 2px;padding:4px 11px;font-size:11.5px;
+ color:#8a5a10;background:#fdf8ec;border:1px solid #ecd9b2;border-radius:999px;cursor:pointer;line-height:1.5;
+ font-family:inherit;white-space:nowrap}
+.cost-chip:hover{background:#fbf1da;border-color:#d9a441}
+.cost-note-off{display:none}
+/* ---- 条目8：检查报告「让 AI 解读」主按钮 + 机器细节抽屉 ---- */
+.rp-read{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;font-family:inherit;font-size:12.5px;
+ font-weight:600;padding:9px 12px;margin-bottom:12px;border:none;border-radius:9px;background:#2f2e2b;color:#fff;cursor:pointer}
+.rp-read:hover{background:#454340}
+.mdrawer{border:1px solid #e6e6e4;border-radius:10px;background:#fff;margin:2px 0 10px;flex:0 0 auto}
+.mdrawer summary{display:flex;align-items:center;gap:7px;padding:9px 12px;font-size:11.5px;color:#8f8d86;cursor:pointer;
+ list-style:none;user-select:none}
+.mdrawer summary::-webkit-details-marker{display:none}
+.mdrawer summary svg{margin-left:auto;transition:transform .15s}
+.mdrawer[open] summary svg{transform:rotate(180deg)}
+.mdrawer-b{padding:4px 12px 11px;font-size:11px;line-height:1.9;color:#6f6d66;font-family:ui-monospace,Menlo,monospace;
+ word-break:break-all;border-top:1px dashed #ececeb}
+.mdrawer-b .ok{color:#1c6b4c;font-weight:600}
+/* ---- 条目9：机器视图手风琴 ---- */
+.acc{display:flex;flex-direction:column;gap:14px;padding:2px 2px 16px;flex:0 0 auto}
+.acc-card{background:#fff;border:1px solid #e9e9e7;border-radius:11px;box-shadow:0 1px 2px rgba(15,15,15,.03);overflow:hidden}
+.acc-h{display:flex;align-items:center;gap:8px;width:100%;padding:11px 13px;border:none;background:none;
+ font-family:inherit;text-align:left;cursor:pointer}
+.acc-h:hover{background:#fbfbfa}
+.acc-t{font-size:13px;font-weight:650;color:#37352f}
+.acc-badge{font-size:11px;color:#8f8d86;background:#f1f0ee;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.acc-badge.ok{background:#eaf5ef;color:#1c6b4c}
+.acc-badge.warn{background:#fdf3e3;color:#8a5a10}
+.acc-chev{margin-left:auto;color:#a3a29c;transition:transform .15s;flex:0 0 auto}
+.acc-card.on .acc-chev{transform:rotate(180deg)}
+.acc-b{display:none;padding:2px 13px 12px;border-top:1px solid #f0f0ee;overflow:auto;max-height:calc(100vh - 260px)}
+.acc-card.on .acc-b{display:block}
+.acc-note{font-size:11px;color:#8f8d86;line-height:1.7;margin:6px 0 10px}
+.acc-b table.mt code{white-space:nowrap}
+/* ---- 条目7：实验报告管理视图 ---- */
+.rp-switch{display:inline-flex;gap:2px;background:#ececeb;border-radius:8px;padding:3px;margin-bottom:22px}
+.rp-switch button{font-family:inherit;font-size:12.5px;padding:6px 16px;border:none;border-radius:6px;
+ background:transparent;color:#8a8577;cursor:pointer}
+.rp-switch button.on{background:#fff;color:#37352f;font-weight:600;box-shadow:0 1px 2px rgba(15,15,15,.08)}
+.rp-card{background:#fff;border:1px solid #e6e6e4;border-radius:10px;padding:15px 16px;box-shadow:0 1px 2px rgba(15,15,15,.04);
+ display:flex;flex-direction:column;gap:7px;cursor:pointer;transition:box-shadow .15s,transform .15s}
+.rp-card:hover{box-shadow:0 6px 20px rgba(15,15,15,.08);transform:translateY(-1px)}
+.rp-top{display:flex;align-items:center;gap:8px}
+.rp-name{font-size:14px;font-weight:650;color:#37352f}
+.rp-ver{font-size:10.5px;color:#5f5e5b;background:#f1f0ee;border-radius:5px;padding:2px 7px}
+.rp-file{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#9b9a96;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#8f8d86}
+.rp-chip{font-size:11px;border-radius:999px;padding:2px 9px;font-weight:600;margin-left:auto;white-space:nowrap}
+.rp-draft{background:#f1f0ee;color:#5f5e5b}
+.rp-signed{background:#e9f1fa;color:#2f5279}
+.rp-confirmed{background:#eaf5ef;color:#1c6b4c}
+.rp-detail{margin-top:6px}
+.rp-d-name{margin:14px 0 4px;font-size:22px;color:#1f1f1d}
+.rp-d-meta{font-size:12.5px;color:#8f8d86;margin-bottom:22px;line-height:1.8}
+.rp-d-h{margin:26px 0 10px;font-size:13px;font-weight:650;color:#37352f}
+.rp-bound-row{display:flex;align-items:baseline;gap:9px;padding:7px 2px;border-bottom:1px dashed #ececeb;font-size:12.5px}
+.rp-bound-row:last-child{border-bottom:none}
+.rp-bound-id{font-family:ui-monospace,Menlo,monospace;color:#54514a;flex:0 0 58px}
+.rp-bound-claim{flex:1 1 auto;min-width:0;color:#37352f}
+.rp-bound-val{font-weight:600;color:#1c3d5c}
+.rp-bound-conf{font-size:11px;color:#8f8d86;flex:0 0 auto}
+.rp-file-ph{font-size:12px;color:#9b9a96;background:#fbfbfa;border:1px dashed #e0dfda;border-radius:8px;padding:16px;line-height:1.7}
+.pj-reports{margin-left:auto;padding:6px 12px}
+.pj-open{padding:6px 16px}
+
+/* ===================================================================== *
+ * 段二：就地编辑（写回）＋章节管理＋项目表单
+ * ===================================================================== */
+body[data-view="form"] #viewForm{display:block}
+body[data-view="form"] .doc,body[data-view="form"] .colright{display:none}
+body[data-view="form"] .toc-float{display:none}
+
+/* ---- 项目表单（新建/编辑共用一套模板） ---- */
+.formview{padding:34px 40px 60px}
+.fv-wrap{max-width:720px}
+.fv-head{margin-bottom:26px}
+.fv-head h1{font-size:22px;font-weight:680;color:#37352f;margin:0 0 6px}
+.fv-form{display:flex;flex-direction:column;gap:20px;background:#fff;
+ border:1px solid #e9e9e7;border-radius:10px;padding:26px 28px;
+ box-shadow:0 1px 2px rgba(15,15,15,.03)}
+.fv-field{display:flex;flex-direction:column;gap:7px}
+.fv-field label{font-size:12.5px;font-weight:620;color:#5f5e5b}
+.req-star{color:#d0342c;margin-right:2px}
+.fv-field input,.fv-field select{font-family:inherit;font-size:13px;color:#37352f;
+ padding:8px 11px;border:1px solid #e2e2df;border-radius:7px;background:#fff;outline:none}
+.fv-field input:focus,.fv-field select:focus{border-color:#b4b3ad}
+.fv-field input[readonly]{background:#f7f7f5;color:#8f8d86}
+.fv-field input:disabled,.fv-field select:disabled{background:#f7f7f5;color:#8f8d86}
+.fv-row{display:flex;align-items:center;gap:8px}
+.fv-row input{flex:1 1 auto}
+.fv-hint{font-size:11.5px;color:#9b9a96;line-height:1.6}
+.fv-actions{display:flex;align-items:center;gap:10px;margin-top:4px;
+ padding-top:18px;border-top:1px solid #f0f0ee}
+.fv-msg{font-size:12px;color:#d0342c}
+.btn-ghost{padding:7px 14px;border:1px solid #e2e2df;border-radius:7px;background:#fff;
+ color:#5f5e5b;font-family:inherit;font-size:12.5px;cursor:pointer}
+.btn-ghost:hover{background:#f7f7f5}
+
+/* ---- 正文就地编辑（条目 43：页面即编辑器——没有「编辑态」妆容，
+        聚焦圈只是标准的光标落点提示，不是模式切换） ---- */
+.editable-para{cursor:text;border-radius:5px;transition:background .12s}
+.editable-para:hover{background:#fbfbf9;box-shadow:0 0 0 4px #fbfbf9}
+.editable-para:focus{outline:2px solid #dcdcd6;outline-offset:3px}
+.prot-chip{display:inline-block;padding:0 5px;margin:0 1px;border-radius:5px;
+ background:#eef1f6;color:#3f5a86;border:1px solid #d8e0ec;
+ font-size:.82em;line-height:1.6;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;
+ cursor:not-allowed;user-select:none;vertical-align:baseline}
+.prot-chip::before{content:"🔒";font-size:.85em;margin-right:3px;opacity:.75}
+/* 事实芯片自带 ✓，不再叠一把锁。 */
+.prot-chip.fc::before{content:none}
+
+/* ---- 章节管理（目录下方） ---- */
+.tf-manage{margin-top:14px;padding-top:12px;border-top:1px solid #eeeeec}
+.tf-m-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.tf-m-t{font-size:11px;font-weight:650;color:#8f8d86;letter-spacing:.03em}
+.tf-m-new{font-family:inherit;font-size:11px;color:#5f5e5b;background:none;
+ border:1px solid #e6e6e4;border-radius:6px;padding:3px 8px;cursor:pointer}
+.tf-m-new:hover{background:#f5f5f3}
+#tocManageList{list-style:none;margin:0;padding:0}
+.tm-item{display:flex;align-items:center;gap:7px;padding:6px 4px;border-bottom:1px solid #f4f4f2}
+.tm-item:last-child{border-bottom:none}
+.tm-t{font-size:12px;color:#37352f;flex:1 1 auto;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+.tm-f{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#b4b3ad;
+ flex:0 0 auto;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-ops{display:flex;gap:3px;flex:0 0 auto}
+.tm-btn{width:22px;height:22px;border:1px solid #e6e6e4;border-radius:5px;
+ background:#fff;color:#5f5e5b;font-size:11px;line-height:1;cursor:pointer;padding:0}
+.tm-btn:hover{background:#f5f5f3}
+.tm-btn[disabled]{opacity:.35;cursor:default}
+.tm-del:hover{background:#fdeeee;color:#d0342c;border-color:#f0d3d3}
+
+/* ---- 弹窗 ---- */
+.modal{position:fixed;inset:0;background:rgba(20,20,18,.32);display:flex;
+ align-items:center;justify-content:center;z-index:200}
+.modal[hidden]{display:none}
+.modal-card{width:380px;max-width:92vw;background:#fff;border-radius:10px;
+ padding:20px 22px;display:flex;flex-direction:column;gap:9px;
+ box-shadow:0 20px 50px rgba(15,15,15,.22)}
+.modal-t{font-size:15px;font-weight:660;color:#37352f;margin-bottom:2px}
+.modal-l{font-size:12px;color:#5f5e5b}
+.modal-card input{font-family:inherit;font-size:13px;padding:8px 10px;
+ border:1px solid #e2e2df;border-radius:7px;outline:none}
+.modal-acts{display:flex;gap:9px;justify-content:flex-end;margin-top:8px}
+
+/* ---- 项目列表进度条 ---- */
+.pj-bar{display:inline-block;width:64px;height:5px;border-radius:3px;
+ background:#eeeeec;overflow:hidden;flex:0 0 64px}
+.pj-bar-in{display:block;height:100%;background:#8aa4c4;border-radius:3px}
+
+/* ===================================================================== *
+ * 段三：检查报告（折叠卡）＋机器视图（手风琴）
+ * ===================================================================== */
+
+/* 模态框：v4 残留的 transform/opacity 落在遮罩上没被后来的 .modal 归零，
+   遮罩会整块透明——这里归零（顺带把「新建章节」弹窗也修回来）。 */
+.modal{top:0;left:0;right:0;bottom:0;width:auto;height:auto;max-height:none;transform:none;opacity:1;
+ flex-direction:row;overflow:visible;border-radius:0;box-shadow:none;background:rgba(20,20,18,.32)}
+.modal-card.modal-wide{width:min(760px,94vw);max-height:88vh}
+.modal-body{overflow:auto;min-height:0;max-height:58vh}
+
+/* ---- 重跑检查工具条 ---- */
+.rp-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 2px 10px}
+.rp-run{font-family:inherit;font-size:12px;font-weight:600;padding:6px 13px;border-radius:8px;
+ border:1px solid #2f2e2b;background:#2f2e2b;color:#fff;cursor:pointer;line-height:1.4}
+.rp-run:hover{background:#454340}
+.rp-run:disabled{opacity:.55;cursor:default}
+.rp-tools-note{font-size:11px;color:#8f8d86;line-height:1.5}
+.rp-tools-note.ok{color:#1c6b4c}
+.rp-tools-note.bad{color:#9a3b1e}
+
+/* ---- 体检折叠卡 ---- */
+.fold-badge.ok{background:#eaf5ef;color:#1c6b4c}
+.fold-badge.red{background:#fdeeee;color:#9a3b1e}
+.kv{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.kv-row{display:flex;align-items:baseline;gap:8px;font-size:11.5px;color:#6f6d66}
+.kv-k{flex:0 0 66px;color:#9b9a96}
+.kv-v{flex:1 1 auto;min-width:0;color:#37352f;word-break:break-word}
+.kv-v.mono{font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.rp-card-err{margin-top:7px;font-size:11px;line-height:1.6;color:#9a3b1e;background:#fdf3f0;
+ border:1px solid #f0d3d3;border-radius:7px;padding:6px 8px;word-break:break-all}
+
+/* ---- 发现条目 ---- */
+.fp-list{display:flex;flex-direction:column;gap:6px}
+.fp-item{border:1px solid #ececeb;border-radius:8px;padding:7px 9px;background:#fbfbfa}
+.fp-h{display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap}
+.fp-sev{font-size:10px;padding:1px 7px;border-radius:999px;font-weight:600;white-space:nowrap}
+.fp-sev.red{background:#fdeeee;color:#9a3b1e}
+.fp-sev.yellow{background:#fdf3e3;color:#8a5a10}
+.fp-sev.info{background:#eef1f6;color:#3f5a86}
+.fp-code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#5f5e5b}
+.fp-msg{font-size:12px;color:#37352f;line-height:1.6}
+.fp-loc{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#9b9a96;margin-top:3px;word-break:break-all}
+.rp-detail-btn{margin-top:8px;font-family:inherit;font-size:11.5px;padding:5px 11px;border-radius:7px;
+ border:1px solid #e3e2df;background:#fff;color:#5f5e5b;cursor:pointer}
+.rp-detail-btn:hover{background:#f7f7f5}
+
+/* ---- 四步链：复用 .rstep，段三补两种状态 ---- */
+.rstep.partial{border-color:#f0dcb8;background:#fdf9f0}
+.rstep.partial .rstep-no{background:#d9a441;color:#fff}
+.rstep.missing .rstep-no{background:#e3e2df;color:#8f8d86}
+
+/* ---- 机器视图 ---- */
+.mv-sub-t{font-size:11px;color:#9b9a96;margin:10px 0 4px}
+.mv-table{margin-top:2px}
+.mv-table th,.mv-table td{font-size:11.5px}
+.mv-num{text-align:right;white-space:nowrap;color:#8f8d86}
+.cmd-row{display:flex;flex-direction:column;gap:3px;padding:6px 0;border-bottom:1px dotted #ececeb}
+.cmd-row:last-child{border-bottom:none}
+.cmd-l{font-size:11.5px;color:#5f5e5b}
+.cmd-c{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#8f8d86;word-break:break-all}
+
+/* ---- 发现明细（模态框） ---- */
+.fd-item{border:1px solid #ececeb;border-radius:9px;padding:9px 11px;margin-bottom:8px;background:#fbfbfa}
+.fd-h{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
+.fd-msg{font-size:12.5px;color:#37352f;line-height:1.7;margin-bottom:6px}
+.fd-kv{display:flex;gap:8px;font-size:11px;line-height:1.7;color:#6f6d66}
+.fd-k{flex:0 0 62px;color:#9b9a96}
+.fd-v{flex:1 1 auto;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;word-break:break-all}
+.fd-pre{white-space:pre-wrap}
+
+/* =====================================================================
+   段四：AI 对话（真后端）＋ 实验报告导入（真文件）
+   ===================================================================== */
+/* 段落悬浮工具条的定位锚（#ptools/.pt 样式段二已从原型带过来） */
+.page{position:relative}
+/* 检查报告里的「让 AI 解读这份报告」 */
+.rp-ai-btn{font-size:11.5px;padding:5px 11px;border-radius:7px}
+/* AI 气泡：模拟回答必须一眼看得出不是模型答的 */
+.msg .fb-chip{margin-left:6px;font-size:10.5px;font-weight:600;color:#8a5a10;background:#fdf3e3;
+ border:1px solid #f0dcb8;border-radius:999px;padding:1px 7px}
+.msg.fb .bub{border-style:dashed;border-left:3px solid #d9a441;background:#fdf9f0}
+.msg.waiting .bub{color:#9b9a96;font-style:italic}
+.msg-note{margin-top:4px;font-size:10.5px;color:#9b9a96;line-height:1.5;word-break:break-all}
+/* 实验报告卡片网格 */
+.pv-grid,.rp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(288px,1fr));gap:14px}
+.rp-pending_check{background:#fdf3e3;color:#8a5a10}
+.rp-from{background:#f1f0ee;color:#5f5e5b}
+.rp-d-note{margin-top:6px;font-size:11.5px;color:#9b9a96;line-height:1.6}
+/* 导入向导 */
+.wz-upload{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed #ececeb}
+.wz-upload .btn-ghost{font-size:12px;padding:5px 11px}
+.wz-up-name{font-size:11.5px;color:#8f8d86;word-break:break-all}
+.wz-status{margin-bottom:10px}
+.modal-card .wz-in{width:100%;font-family:inherit;font-size:11.5px;padding:4px 6px;border:1px solid #e3e2df;
+ border-radius:6px;color:#37352f;background:#fff;outline:none}
+.modal-card .wz-in:focus,.wzsel:focus{outline:none;border-color:#b8b5ac}
+.wz-table input,.wz-table select{max-width:230px}
+.wz-failed{margin-bottom:12px;padding:9px 11px;border:1px solid #f0d3d3;border-radius:8px;background:#fdf3f0}
+.wz-failed-h{font-size:11.5px;font-weight:600;color:#9a3b1e;margin-bottom:5px}
+.wz-failed-row{display:flex;gap:9px;font-size:11px;color:#9a3b1e;line-height:1.7}
+.wz-f-line{flex:0 0 52px;font-family:ui-monospace,Menlo,monospace}
+.wz-f-raw{flex:1 1 auto;min-width:0;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.wz-f-err{flex:0 0 auto;color:#c07a63}
+
+/* ================= 段五：框架重排（左正文 ＋ 右导航面板） ================= */
+/* 旧右栏三标签（.colright/.rtabs/.rpane）与右缘三竖标（.side-rail/.side-alone）
+   随旧结构一起退役；目录不再悬浮（.toc-float 退役），住进导航面板。 */
+
+/* ---- 导航面板（fixed · 宽度可拖 · 可整体收起） ----
+   宽度走 --nav-w（默认 320px）：分隔条拖动时实时改它，松手记进本机
+   （localStorage），刷新还在。正文让出的宽度跟着走（--side-w 由 JS 实测）。 */
+:root{--nav-w:320px}
+.navpanel{position:fixed;right:0;top:0;width:var(--nav-w,320px);height:100vh;background:#fafaf9;
+ border-left:1px solid #ececec;display:flex;flex-direction:column;overflow:hidden;z-index:60;
+ transition:transform .22s ease}
+body.nav-collapsed .navpanel{transform:translateX(100%)}
+.shell{padding-right:calc(var(--nav-w,320px) + 16px);transition:padding-right .22s ease}
+body.nav-collapsed .shell{padding-right:0}
+/* 收起后：窗缘只剩一枚展开钮（条目 33 起改为纯图标，样式见文件末尾条目 33 段） */
+
+/* 条目 33：面板头部行（#npHead）与侧栏常用功能行（.np-tools）都已搬家——
+   中/EN 搬去左栏头部（.lh-lang，常显）、四枚功能钮搬去 .lh-tools（只 workbench 视图渲染），
+   右栏只留工具条＋面板。
+   .np-tools / .np-tool 的旧样式随元素一起删除。 */
+
+/* v3：AI 面板顶上标出这轮是谁答的（宿主 Agent＝MCode 模型／本地后端） */
+.ai-src{font-size:11.5px;color:#8a8577;border:1px solid #e3e2df;border-radius:7px;padding:3px 8px;white-space:nowrap}
+.ai-src.agent{color:#2f5279;border-color:#c8d6e6;background:#f2f7fd}
+.ai-src.engine{color:#8a8577}
+
+/* ---- 切换按钮组（四枚纵排） ---- */
+.np-switches{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-bottom:1px solid #ececeb;flex:0 0 auto}
+.np-switch{width:100%;text-align:left;font-family:inherit;font-size:12.5px;color:#5f5e5b;padding:7px 10px;
+ border:none;border-radius:7px;background:none;cursor:pointer}
+.np-switch:hover{background:#f1f0ee;color:#37352f}
+.np-switch.on{background:#2f2e2b;color:#fff}
+
+/* ---- 面板内容区 ---- */
+.np-body{flex:1 1 auto;min-height:0;overflow:auto;padding:10px 12px 24px}
+.np-pane{display:none}
+.np-pane.on{display:block}
+/* 段五返修十三（小修）：面板节标题/段头 #5f5e5b（对比 >=4.5:1），次级小字 #6f6e69 */
+.np-pane-h{display:flex;align-items:center;gap:8px;font-size:11.5px;letter-spacing:1.2px;color:#5f5e5b;margin-bottom:8px}
+/* v5：「这一轮是谁答的」徽标住面板顶上（不再挤在模型选择行前面像个字段）。 */
+.np-pane-h .ai-src{margin-left:auto;letter-spacing:0;font-size:11px;padding:2px 7px}
+.np-mini{margin-left:auto;font-family:inherit;font-size:11px;color:#2f5279;background:none;border:none;
+ cursor:pointer;padding:0;text-decoration:underline}
+.np-mini:hover{color:#1c3d5c}
+
+/* ---- 目录（章节管理并入：条目行内 ↑↓/删除，末尾新建） ---- */
+.toc-list{list-style:none;margin:0;padding:0}
+.toc-item{display:flex;align-items:center;gap:4px;border-radius:7px}
+.toc-item:hover{background:#f1f0ee}
+.toc-item a{flex:1 1 auto;min-width:0;padding:5px 6px;border-radius:6px;font-size:12.8px;line-height:1.5;
+ color:#5f5e5b;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toc-item a:hover{color:#37352f}
+.toc-item.sub a{padding-left:18px;font-size:12px;color:#6f6e69}
+.toc-item .tm-ops{flex:0 0 auto;display:flex;gap:2px;opacity:.3}
+.toc-item:hover .tm-ops{opacity:1}
+.toc-add{margin-top:8px}
+.toc-add button{width:100%;font-family:inherit;font-size:12px;color:#5f5e5b;background:none;
+ border:1px dashed #e3e2df;border-radius:7px;padding:6px;cursor:pointer}
+.toc-add button:hover{border-color:#b8b5ac;color:#37352f}
+.toc-empty{font-size:11.5px;color:#6f6e69;padding:6px 2px}
+.tm-btn{width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-family:inherit;
+ font-size:11px;color:#8f8d86;background:#fff;border:1px solid #e6e6e4;border-radius:5px;padding:0;cursor:pointer}
+.tm-btn:hover{color:#37352f;background:#f1f0ee}
+.tm-btn:disabled{opacity:.32;cursor:default}
+.tm-btn.tm-del:hover{color:#9a3b1e;border-color:#e7c4b8;background:#fdf3f0}
+
+/* 条目 34：半透明悬浮层整条删除——助手改嵌进侧栏面板。 */
+
+/* ---- 封面摘要（可编辑） ---- */
+.cover-abstract{margin-top:16px;padding-top:12px;border-top:1px solid #ebe7da}
+.cover-abstract .ab-label{font-size:10.5px;letter-spacing:1.2px;color:#a3a29c;margin-bottom:6px}
+.cover-abstract .ab-body{font-size:13.8px;line-height:1.95;color:#4a463c;cursor:text;border-radius:6px;padding:2px 4px}
+.cover-abstract .ab-body:hover{background:#fbfaf6}
+.fc-fact{cursor:pointer}
+.fc-fact:hover{background:#bfe3cf}
+
+/* ---- 证据卡（正文数字芯片下钻） ---- */
+.fact-card[hidden]{display:none}
+.fact-card{position:fixed;z-index:95;width:320px;max-width:92vw;background:#fff;border:1px solid #e9e9e7;
+ border-radius:12px;box-shadow:0 14px 40px rgba(15,15,15,.16);padding:12px 14px;font-size:12.5px}
+.fact-card .fc-h{display:flex;align-items:center;gap:8px;font-weight:650;color:#1c6b4c;margin-bottom:7px;font-size:12.5px}
+.fact-card .fc-row{display:flex;gap:8px;color:#4a463c;margin-top:4px}
+.fact-card .fc-row .k{color:#9b9585;flex:0 0 42px}
+.fact-card .fc-v{font-weight:600;color:#23262b;word-break:break-all}
+.fact-card .fc-v.mono{font-family:ui-monospace,Menlo,monospace;font-weight:400;font-size:11.5px}
+.fact-card .fc-foot{margin-top:9px;padding-top:8px;border-top:1px solid #efecdf;font-size:11px;color:#9b9585;word-break:break-all}
+.fact-card .fc-close{margin-left:auto;cursor:pointer;color:#9b9585;font-size:14px;line-height:1}
+.fact-card .fc-close:hover{color:#37352f}
+.fc-empty{font-size:12px;color:#9b9585}
+
+/* ---- 全检模态：检查报告 ＋ 机器底账 ---- */
+.modal-t{display:flex;align-items:center;gap:10px}
+.mt-tabs{margin-left:auto;display:inline-flex;gap:2px;border:1px solid #e6e6e4;border-radius:7px;padding:2px}
+.mt-tab{font-family:inherit;font-size:12px;color:#8f8d86;background:none;border:none;border-radius:5px;
+ padding:4px 10px;cursor:pointer}
+.mt-tab.on{background:#f1f0ee;color:#37352f;font-weight:600}
+.mt-pane{display:none}
+.mt-pane.on{display:block}
+
+/* ---- 常用功能的结果 ---- */
+.act-ok{font-size:13px;color:#1c6b4c;font-weight:600;margin-bottom:8px}
+.act-fail{font-size:13px;color:#9a3b1e;font-weight:600;margin-bottom:8px}
+.act-kv{display:flex;gap:10px;font-size:12.5px;color:#5f5e5b;margin:4px 0;align-items:baseline}
+.act-kv code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#54514a;word-break:break-all}
+.act-links{display:flex;gap:14px;margin:10px 0 4px}
+.act-links a{font-size:12px;color:#2f5279;text-decoration:underline}
+.act-gate{font-size:11px;color:#8f8d86}
+
+/* ---- 导航面板里的实验报告行 ---- */
+.np-rp-row{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px dashed #ececeb}
+.np-rp-main{flex:1 1 auto;min-width:0}
+.np-rp-name{font-size:12.5px;font-weight:600;color:#37352f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np-rp-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#6f6e69;margin-top:3px}
+.np-rp-del{flex:0 0 auto;font-family:inherit;font-size:11px;color:#9a3b1e;border:1px solid #e7c4b8;
+ background:#fdf3f0;border-radius:6px;padding:3px 8px;cursor:pointer}
+.np-rp-del:hover{background:#f9e4dd}
+
+/* ---- 窄屏：导航面板退成顶部一条，正文拉满 ---- */
+@media (max-width:900px){
+ .navpanel{position:static;width:auto;height:auto;max-height:none;border-left:none;border-bottom:1px solid #ececec}
+ .shell{padding-right:0}
+ body.nav-collapsed .navpanel{display:none}
+}
+
+/* ================= 段五返修三（条目 29）：切换钮回右缘竖排一列 ================= */
+/* 用户原话：「三个东西是切换侧边栏的按钮，在一列上」——恢复段四 side-tab 族：
+   贴窗口右缘、一列纵排、同宽同字号同底色边框、hover 同族、激活态深色底。
+   导航面板（320px）挪到钮列左侧；收起＝面板＋钮列全隐，只剩一枚竖排
+   「展开导航」钮（段五口径：左缘），正文拉满。 */
+
+/* 钮列：段四 .side-rail / .side-tab 样式原样复用（字体/底色/边框/hover/激活态） */
+
+/* 面板挪到钮列左侧 */
+.shell{padding-right:calc(var(--nav-w,320px) + 16px)}
+body.nav-collapsed .shell{padding-right:0}
+/* 非工作台视图（项目列表/新建）没有钮列，面板贴右缘 */
+body:not([data-view="workbench"]) .navpanel{right:0}
+body:not([data-view="workbench"]) .shell{padding-right:calc(var(--nav-w,320px) + 16px)}
+/* 收起：面板整体移出视口（面板宽 ＋ 钮列 50），正文拉满 */
+body.nav-collapsed .navpanel{transform:translateX(var(--nav-w,320px))}
+body.nav-collapsed .shell{padding-right:0}
+
+/* 面板里的智能助手面 */
+.np-ai-face{padding:2px 0}
+.np-btn{font-family:inherit;font-size:12px;color:#5f5e5b;background:#fff;border:1px solid #e3e2df;
+ border-radius:7px;padding:6px 10px;cursor:pointer;margin-top:8px}
+.np-btn:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+
+/* ================================================================
+   段六：段落 ⋯ 菜单 · AI 模式 tab · 纪律角标 · 回复动作钮
+   ================================================================ */
+
+/* 段落 ⋯ 菜单（编辑 ＋ 续写／改写／提问） */
+.para-menu{position:absolute;z-index:78;display:flex;flex-direction:column;min-width:104px;
+ background:#fff;border:1px solid #e3e2df;border-radius:9px;box-shadow:0 10px 26px rgba(30,28,22,.14);
+ padding:4px;gap:1px}
+.para-menu[hidden]{display:none}
+.para-menu .mi{font-family:inherit;font-size:12.5px;text-align:left;color:#37352f;background:none;
+ border:none;border-radius:6px;padding:7px 10px;cursor:pointer}
+.para-menu .mi:hover{background:#f4f2ea}
+.para-menu .mi + .mi{border-top:1px solid #f1f0ec}
+
+/* AI 模式 tab（聊想法／写论文） */
+.ai-modes{display:inline-flex;gap:2px;background:#f4f2ea;border:1px solid #e3e2df;border-radius:7px;padding:2px}
+.ai-mode{font-family:inherit;font-size:11px;color:#5f5e5b;background:none;border:none;border-radius:5px;
+ padding:4px 9px;cursor:pointer;white-space:nowrap}
+.ai-mode:hover{color:#1c1e22}
+.ai-mode.on{background:#2f2e2b;color:#fff}
+
+/* 纪律角标（常驻） */
+.ai-disc{display:flex;align-items:flex-start;gap:6px;margin:8px 12px 0;padding:6px 9px;
+ background:#fdf9f0;border:1px solid #f0e2c4;border-radius:8px;
+ font-size:11px;line-height:1.55;color:#8a5a10}
+.ai-disc .dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:#d9a441;margin-top:5px}
+
+/* 回复卡上的动作钮（复制／写进稿） */
+.msg-acts{display:flex;gap:6px;margin-top:7px}
+.mact{font-family:inherit;font-size:11px;color:#5f5e5b;background:#fff;border:1px solid #e3e2df;
+ border-radius:6px;padding:4px 9px;cursor:pointer}
+.mact:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+.mact.primary{border-color:#c9d8ea;color:#2f5279;background:#f4f8fc}
+.mact.primary:hover{background:#e6eff8}
+
+/* AI 草稿块（正文里的独立块：浅色底 ＋ 左侧条 ＋ 角标） */
+.ai-draft{position:relative;margin:14px 0;padding:11px 13px 11px 15px;
+ background:#fbfaf6;border:1px solid #eae5d6;border-left:3px solid #d9a441;border-radius:8px;
+ font-family:"Songti SC","Noto Serif CJK SC",Georgia,serif}
+.ai-draft-badge{position:absolute;top:-8px;left:12px;font-size:10px;letter-spacing:.4px;color:#8a5a10;
+ background:#fdf3e3;border:1px solid #f0e2c4;border-radius:5px;padding:1px 6px}
+.ai-draft-body{font-size:14px;line-height:1.85;color:#4a4842}
+.ai-draft-body p{margin:0}
+.ai-draft-hint{margin-top:6px;font-size:10.5px;color:#a49e8d}
+.ai-draft-del{position:absolute;top:6px;right:8px;font-size:14px;line-height:1;color:#b6b0a0;
+ background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:5px}
+.ai-draft-del:hover{color:#8a5a10;background:#fdf3e3}
+
+/* 截稿提醒徽标（导航钮） */
+.np-tab{position:relative}
+.np-tab.has-due{color:#8a5a10}
+.np-tab.has-due.on{background:#8a5a10;border-color:#8a5a10;color:#fff}
+.dl-badge{position:absolute;top:4px;right:4px;min-width:15px;height:15px;line-height:15px;
+ font-size:9.5px;text-align:center;color:#fff;background:#d9a441;border-radius:8px;padding:0 3px}
+
+/* ================================================================
+   段六：知识库面（左文件列表 ＋ 右详情）
+   ================================================================ */
+.kb-wrap{display:flex;gap:8px;align-items:flex-start}
+.kb-files{flex:0 0 46%;min-width:0;margin:0;padding:0;list-style:none;max-height:52vh;overflow:auto}
+.kb-file{display:flex;flex-direction:column;gap:1px;padding:6px 8px;border-radius:7px;cursor:pointer;
+ border:1px solid transparent}
+.kb-file:hover{background:#f4f2ea}
+.kb-file.on{background:#eef4fb;border-color:#cfdff2}
+.kbf-name{font-size:12px;color:#37352f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kbf-meta{font-size:10px;color:#6f6e69}
+.kb-empty{font-size:11.5px;color:#6f6e69;padding:8px 4px;line-height:1.6}
+.kb-detail{display:none}
+ max-height:52vh;overflow:auto}
+.kb-pick{font-size:11.5px;color:#6f6e69;margin:4px 0}
+.kbd-h{font-size:12.5px;font-weight:650;color:#1c1e22;word-break:break-all;margin-bottom:6px}
+.kbd-kv{display:flex;gap:6px;font-size:11px;color:#5f5e5b;margin-bottom:3px;align-items:baseline}
+.kbd-kv span:first-child{flex:0 0 auto;color:#6f6e69}
+.kbd-kv code{font-size:10.5px;word-break:break-all}
+.kbd-title{font-size:11px;letter-spacing:1px;color:#5f5e5b;margin:8px 0 4px}
+.kbd-note{font-size:10.5px;color:#8a5a10;margin-top:5px;line-height:1.5}
+.kbd-text{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.65;
+ color:#3f3e3a;background:#fafaf9;border:1px solid #efefee;border-radius:6px;padding:7px 8px;
+ margin:0;white-space:pre-wrap;word-break:break-word;max-height:32vh;overflow:auto}
+
+/* ================================================================
+   段六：版式面
+   ================================================================ */
+.vn-face{display:flex;flex-direction:column;gap:2px}
+.vn-l{font-size:11px;letter-spacing:.6px;color:#5f5e5b;margin-top:8px}
+.vn-face input{font-family:inherit;font-size:12px;padding:6px 8px;border:1px solid #e3e2df;
+ border-radius:6px;background:#fff;color:#37352f;width:100%}
+.vn-face input:focus{outline:none;border-color:#b6b0a0}
+.vn-acts{display:flex;align-items:center;gap:8px;margin-top:9px}
+.vn-acts .np-btn{margin-top:0}
+.vn-msg{font-size:11px;color:#8f8d86}
+.vn-lock{display:flex;gap:6px;align-items:flex-start;margin-top:9px;padding:6px 8px;font-size:11px;
+ line-height:1.6;color:#5f5e5b;background:#f7f7f5;border:1px solid #efefee;border-radius:7px}
+.vn-lock.locked{background:#fdf9f0;border-color:#f0e2c4;color:#8a5a10}
+.vn-lock-tag{flex:0 0 auto;font-size:10px;border:1px solid currentColor;border-radius:4px;padding:0 4px;opacity:.75}
+.vn-dl{font-size:11px;color:#8f8d86;margin-top:6px;min-height:14px}
+.vn-dl.soon{color:#8a5a10;font-weight:600}
+.vn-dl.late{color:#a13c2c;font-weight:600}
+.vn-sec-h{font-size:11px;letter-spacing:1.2px;color:#5f5e5b;margin:14px 0 4px}
+.vn-tpl-row{display:flex;gap:8px;align-items:baseline;font-size:12px;color:#37352f;
+ border:1px solid #ececeb;background:#fff;border-radius:7px;padding:6px 9px;margin-bottom:5px}
+.vn-tpl-note{font-size:10.5px;color:#6f6e69}
+
+/* ================================================================
+   段六：选刊指南模态
+   ================================================================ */
+.guide-h{font-size:13.5px;font-weight:650;color:#37352f;margin:14px 0 5px}
+.guide-h:first-child{margin-top:0}
+.guide-p{font-size:13px;line-height:1.85;color:#5f5e5b;margin:0 0 4px}
+.guide-foot{font-size:12px;line-height:1.8;color:#8f8d86;margin:16px 0 0;padding-top:10px;
+ border-top:1px solid #efefee}
+
+/* ================================================================
+   条目 31（段五返修四）：严格左右分栏
+   —— 废顶栏、Projects 进左栏头、切换钮锚右栏顶
+   ================================================================ */
+
+/* ① 顶栏整条拆除：全局不再有横贯左右的常驻条。
+   body 的 52px 顶部留白一并撤掉——正文真正顶满。 */
+body{padding-top:0}
+.topbar{display:none !important}
+
+/* ② 左栏：顶部窄条（FactScribe 字标 ＋ [Projects] 钮）＋ 其下正文全宽顶满 */
+.left-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:stretch}
+.left-head{display:flex;align-items:center;gap:10px;flex:0 0 auto;
+ padding:9px 16px;background:#fff;border-bottom:1px solid #ececeb}
+.left-head .tb-brand{margin-right:2px}
+.left-head .tb-btn{border:1px solid #e3e2df;background:#fff}
+.left-head .tb-btn:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+/* 新建只在项目列表页：工作台不再有常驻新建入口（条目 31） */
+.pv-head .pv-new{margin-left:auto;border:1px solid #e3e2df;background:#fff}
+.pv-head .pv-new:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+
+/* ③ 右栏：切换钮列锚在右栏顶部（不再垂直居中悬浮），与面板顶同高 */
+.navpanel{top:0;height:100vh}
+
+/* ================================================================
+   条目 32：切换钮收进侧栏内部、锚侧栏顶
+   —— 窗口右缘不再有悬浮元素，钮列变侧栏左缘的一列竖排钮
+   ================================================================ */
+.np-col{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.side-tab{width:50px;min-width:50px;text-align:center}
+
+/* ================================================================
+   条目 32（返修六·方向纠正）：切换钮**横排一行**置于侧边栏面板顶部
+   —— 工具条形态，面板内容在工具条下方；侧栏左缘不再有竖排列
+   ================================================================ */
+.np-toolbar{display:flex;align-items:stretch;gap:3px;flex:0 0 auto;
+ padding:7px 8px;background:#fafaf9;border-bottom:1px solid #ececeb;overflow-x:auto}
+.np-tab{position:relative;font-family:inherit;font-size:11.5px;line-height:1.25;color:#5f5e5b;
+ background:#fff;border:1px solid #e3e2df;border-radius:7px;padding:5px 4px;cursor:pointer;
+ white-space:nowrap;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.np-tab:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+.np-tab.on{background:#2f2e2b;border-color:#2f2e2b;color:#fff}
+.np-tab.on:hover{background:#2f2e2b;color:#fff}
+
+/* ================================================================
+   条目 33（段五返修七）：右栏信息架构收敛
+   —— 左栏头部＝字标＋Projects＋常用功能组（中/EN ＋ PDF/全检/导出/开目录）
+      右栏工具条＝纯图标收起钮＋三枚切换钮（目录／智能助手／更多）
+      「更多」面板＝三段合并（实验报告 / 知识库 / 版式）
+   ================================================================ */
+
+/* ① 左栏头部：左侧字标组 ＋ 右侧功能组（仅 workbench 视图渲染） */
+.lh-left{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.lh-brand{font-family:inherit;border:none;background:none;padding:0;margin-right:2px;
+ cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.2px;color:#37352f}
+.lh-brand:hover{color:#2f5279}
+/* 中/EN 常显：它是界面语言开关，不属于任何单一视图，因此独立于 #lhTools
+   （#lhTools 只装工作台专属的按钮，列表视图会整组藏掉）。 */
+.lh-lang{margin-left:auto;display:flex;align-items:center;flex:0 0 auto}
+.lh-tools{display:flex;align-items:center;gap:6px;margin-left:0;flex:0 0 auto}
+.lh-tools[hidden]{display:none}
+.lh-lang .lang-seg{margin-left:0;flex:0 0 auto;height:26px}
+.lh-lang .lang-seg button{min-width:34px;padding:0 8px;line-height:22px;height:22px;font-size:12px}
+/* 条目 41：中/EN 切换常显——它同时是界面语言开关，单语言项目不再整组隐藏 */
+.lh-tool{display:inline-flex;align-items:center;gap:5px;font-family:inherit;font-size:12px;line-height:1.2;
+ color:#5f5e5b;background:#fff;border:1px solid #e3e2df;border-radius:7px;padding:5px 9px;cursor:pointer;
+ white-space:nowrap}
+.lh-tool:hover{border-color:#b8b5ac;color:#37352f;background:#fafaf8}
+.lh-tool svg{flex:0 0 auto}
+
+/* ② 右栏工具条：最左一枚纯图标收起钮（无文字）＋ 三枚横排文字钮 */
+.np-tab.np-icon{flex:0 0 30px;width:30px;min-width:30px;padding:0;display:inline-flex;
+ align-items:center;justify-content:center}
+.np-tab.np-icon svg{flex:0 0 auto}
+
+/* ③ 「更多」面板＝三段合并面板（上：实验报告 / 中：知识库 / 下：版式） */
+.np-sec{padding:0 0 14px;margin:0 0 14px;border-bottom:1px solid #ececeb}
+.np-sec:last-child{padding-bottom:0;margin-bottom:0;border-bottom:none}
+.np-sec .np-pane-h{margin-bottom:8px}
+
+/* ④ 收起态：窗缘只留一枚图标展开钮（不再是竖排文字钮） */
+/* 条目 39：收起态的展开标签——贴窗口右缘中部，竖排文字，30×90，醒目同族样式 */
+.nav-open{display:none;position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:85;
+ width:30px;height:90px;writing-mode:vertical-rl;text-orientation:upright;
+ align-items:center;justify-content:center;font-family:inherit;font-size:12.5px;letter-spacing:2px;
+ padding:8px 4px;border:1px solid #ddd8c6;border-right:none;border-radius:10px 0 0 10px;
+ background:#fffefb;color:#2f5279;cursor:pointer;box-shadow:-3px 0 12px rgba(40,36,20,.08)}
+.nav-open:hover{color:#1c3d5c;background:#f2f7fc}
+body.nav-collapsed .nav-open{display:flex}
+
+/* toast 里挂下载钮（深色底 → 浅色字；要点得着就得放开 pointer-events） */
+#toast.has-link{pointer-events:auto}
+.toast-link{display:inline-block;margin-top:3px;font-size:12px;color:#bcd9ff;text-decoration:underline}
+.toast-link:hover{color:#e8f2ff}
+
+/* ================================================================
+   条目 34（段五验收返修八）：智能助手＝侧栏里的嵌入式对话面板
+   —— 半透明浮层整条拆除；
+      消息历史＋快捷问题芯片＋纪律角标＋加高输入框＋发送 原样搬进侧栏
+   ================================================================ */
+
+/* 面板本身：与目录/更多同构同宽，整面撑满侧栏高度 */
+#paneAi.on{display:flex;flex-direction:column;height:100%;min-height:0}
+.np-ai-face{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.np-ai-face .ai-head{padding:0 0 8px;border-bottom:1px solid #ececeb;align-items:center;gap:8px}
+.np-ai-face .ai-title{font-size:12px;font-weight:650;color:#37352f}
+.np-ai-face .ai-modes{flex:0 0 auto}
+.np-ai-face .ai-disc{margin:8px 0 0;padding:6px 8px}
+.np-ai-face .ai-ctx{padding:8px 9px;border-bottom:1px solid #ececeb;font-size:11.5px}
+.np-ai-face .ai-msgs{flex:1 1 auto;min-height:0;overflow:auto;padding:10px 0 6px;max-height:none}
+.np-ai-face .msg{margin-bottom:10px}
+.np-ai-face .msg .bub{font-size:12.5px;line-height:1.7;padding:8px 10px}
+.np-ai-face .ai-quick{padding:8px 0 0}
+.np-ai-face .aq{font-size:11px;padding:4px 9px}
+.np-ai-face .ai-input{padding:10px 0 0;margin-top:10px;border-top:1px solid #ececeb}
+/* 条目 42：发送钮内嵌输入框——.ai-box 相对定位，发送钮绝对定位嵌进右下角；
+   textarea 底部留出按钮高度的空间不压字 */
+.np-ai-face .ai-box{position:relative;flex:1 1 auto;min-width:0}
+.np-ai-face .ai-input textarea{display:block;width:100%;min-height:66px;resize:vertical;font-family:inherit;
+ font-size:12.5px;line-height:1.6;padding:7px 9px 36px;border:1px solid #ddd8c6;border-radius:8px;
+ background:#fff;color:#1c1e22}
+.np-ai-face .ai-input textarea:focus{outline:none;border-color:#b6b0a0}
+.np-ai-face .ai-input button{position:absolute;right:6px;bottom:6px;font-family:inherit;font-size:12px;
+ padding:5px 12px;border-radius:8px;
+ border:1px solid #b6d8c4;background:#f2faf5;color:#1c6b4c;cursor:pointer;font-weight:600}
+.np-ai-face .ai-input button:hover{background:#e2f3e9}
+/* 条目 42：模型选择行（输入框上方一行：label＋select） */
+.np-ai-face .ai-modelrow{display:flex;align-items:center;gap:6px;margin-top:10px}
+.np-ai-face .ai-modelrow label{flex:0 0 auto;font-size:11px;color:#5f5e5b}
+/* v5：沿用右栏既有控件语汇（白底／1px 灰边／8px 圆角／12.5px 字／自绘箭头），
+   不再是浏览器默认外观；长标签不撑破行。 */
+.np-ai-face .ai-modelrow select{flex:1 1 auto;min-width:0;max-width:100%;font-family:inherit;font-size:12.5px;color:#37352f;
+ background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%239b9585' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 8px center;
+ border:1px solid #e3e2df;border-radius:8px;padding:5px 24px 5px 8px;
+ appearance:none;-webkit-appearance:none;cursor:pointer;
+ transition:border-color .12s,box-shadow .12s}
+.np-ai-face .ai-modelrow select:hover{border-color:#b8b5ac}
+.np-ai-face .ai-modelrow select:focus{outline:none;border-color:#b8b5ac;box-shadow:0 0 0 3px rgba(15,15,15,.05)}
+.np-ai-face .ai-modelrow select optgroup{color:#8f8d86;font-size:11px}
+/* v4：思考等级下拉（窄一点，别把模型下拉挤没） */
+.np-ai-face .ai-modelrow select#aiEffort{flex:0 1 auto;max-width:104px}
+/* v4：自定义模型的入口与删除钮 */
+.np-ai-face .ai-modelrow .ai-addmodel,.np-ai-face .ai-modelrow .ai-delmodel{flex:0 0 auto;font-family:inherit;font-size:11px;line-height:1.4;padding:3px 8px;border:1px solid #e3e2df;border-radius:7px;background:#fff;color:#5f5e5b;cursor:pointer}
+.np-ai-face .ai-modelrow .ai-addmodel:hover,.np-ai-face .ai-modelrow .ai-delmodel:hover{border-color:#b6b0a0;color:#37352f}
+.np-ai-face .ai-modelrow .ai-delmodel{padding:3px 6px}
+/* v4：自定义模型徽标（区别于宿主／本地后端） */
+.ai-src.custom{color:#6b5a2f;border-color:#e2d8bd;background:#fdfaf1}
+/* v4：自定义模型表单 */
+.cm-field{display:block;margin-bottom:10px}
+.cm-field span{display:block;font-size:11.5px;color:#5f5e5b;margin-bottom:4px}
+.cm-field input{width:100%;font-family:inherit;font-size:13px;padding:8px 10px;border:1px solid #e3e2df;border-radius:6px;background:#fff;color:#1c1e22}
+.cm-field input:focus{outline:none;border-color:#b8b5ac}
+.cm-hint{font-size:11.5px;color:#8a8577;margin:2px 0 0}
+.cm-err{font-size:12px;color:#a03c28;margin-top:6px}
+
+@media (max-width:900px){
+ #paneAi.on{height:auto}
+ .np-ai-face .ai-msgs{max-height:320px}
+}
+
+
+/* ================================================================
+   条目 35：知识库/实验报告管理收口 ＋ 预览/详情改模态
+   —— 预览与详情从侧栏内嵌框搬到模态框；删除一律先过确认模态
+   ================================================================ */
+
+/* 更多面板两段顶部的纪律提示（浅色小字） */
+.np-note{font-size:11px;line-height:1.55;color:#6f6e69;margin:0 0 6px}
+
+/* 知识库行：名字/元信息一行 ＋ 行动作一行 ＋ 源文件提示 */
+.kb-files{flex:1 1 auto;max-height:none}
+.kbf-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.kbf-acts{display:flex;gap:6px;margin-top:4px}
+.kbf-act{font-family:inherit;font-size:10.5px;color:#5f5e5b;background:#fff;border:1px solid #e3e2df;
+ border-radius:6px;padding:2px 8px;cursor:pointer}
+.kbf-act:hover{border-color:#b8b5ac;color:#37352f}
+.kbf-act-del{color:#9a3b1e;border-color:#e7c4b8}
+.kbf-act-del:hover{background:#f9e4dd}
+.kbf-note{font-size:10px;color:#6f6e69;margin-top:3px;line-height:1.45}
+
+/* 报告行：详情＋删除两枚钮 */
+.np-rp-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.np-rp-act{font-family:inherit;font-size:11px;color:#2f5279;background:none;border:none;cursor:pointer;
+ padding:0;text-decoration:underline}
+.np-rp-act:hover{color:#1c3d5c}
+
+/* 报告详情模态：绑定清单表 */
+.rp-d-status{margin-bottom:6px}
+.rp-b-table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}
+.rp-b-table th{text-align:left;font-weight:500;color:#5f5e5b;border-bottom:1px solid #ececeb;padding:4px 6px}
+.rp-b-table td{padding:4px 6px;border-bottom:1px solid #f4f2ea;vertical-align:top;color:#3d4550}
+.rp-b-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#5f5e5b;white-space:nowrap}
+.rp-b-value{color:#2f5279;white-space:nowrap}
+.kbd-note.err{color:#9a3b1e}
+
+/* 删除按钮（危险动作） */
+.btn-danger{font-family:inherit;font-size:13px;padding:8px 14px;border-radius:8px;cursor:pointer;
+ border:1px solid #e7c4b8;background:#fdf3f0;color:#9a3b1e;font-weight:600}
+.btn-danger:hover{background:#f9e4dd}
+
+
+/* ================================================================
+   条目 36：顶导航固定 ＋ 进度条嵌入头部下缘
+   —— 左栏头部（48px 窄条）固定在顶；进度条从正文流挪出，贴头部下缘
+      正文让出「头部高＋进度条高」
+   ================================================================ */
+/* 条目 40：固定头部宽度＝左区宽。
+   右缘不写死——用 --side-w（由 DOM 实测的「视口右缘→左区右缘」距离驱动），
+   头部与进度条恒止于侧栏左缘之前，功能钮排绝不进侧栏区。 */
+.left-head{position:fixed;top:0;left:0;right:var(--side-w,336px);z-index:80;height:48px;padding:0 16px;
+ background:#fff;border-bottom:1px solid #ececeb;display:flex;align-items:center;gap:10px}
+.progwrap{position:fixed;top:48px;left:0;right:var(--side-w,336px);z-index:79;height:3px;margin:0;padding:0;
+ background:#e9e5d7;border-radius:0;overflow:hidden}
+#prog{height:100%;width:0;background:#b6b0a0;transition:width .15s}
+body:not([data-view="workbench"]) .progwrap{display:none}
+/* 正文让出：头部 48px ＋ 进度条 3px */
+.left-col{padding-top:51px}
+body:not([data-view="workbench"]) .left-col{padding-top:48px}
+@media (max-width:900px){
+ .left-head,.progwrap{right:0}
+}
+
+/* 条目 40：展开标签的 z 序（85）高于固定头部（80）——收起态它恒可点。 */
+
+
+/* 条目 44：「已保存」角标改成挂在正文外的浮层——不插进编辑宿主，不顶动光标 */
+.save-badge{position:absolute;z-index:6;pointer-events:none;font-family:inherit;font-size:10.5px;color:#1c6b4c;background:#f2faf5;
+ border:1px solid #b6d8c4;border-radius:6px;padding:1px 6px;vertical-align:middle;white-space:nowrap}
+
+
+/* ================================================================
+   v2：提议单差异卡（AI 提议 → 人确认才写回）
+   —— 左栏徽标 ＋ 模态里的卡 ＋ 左右两栏对照（删行／增行／警告）
+   ================================================================ */
+
+/* 徽标按钮：没有待确认提议时整枚藏掉。
+   .lh-tool 自带 display:inline-flex，会压过 UA 的 [hidden]{display:none}，
+   所以这里显式补一条，两边一致（藏起来，不置灰）。 */
+.lh-tool[hidden]{display:none}
+.prop-badge-btn{color:#8a5a10;background:#fdf7ea;border-color:#eddcb4}
+.prop-badge-btn:hover{background:#f8eed6;color:#6d470c;border-color:#e2c98f}
+.prop-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+ padding:0 5px;border-radius:999px;background:#b4622a;color:#fff;font-size:11px;font-weight:700;line-height:1}
+.prop-count[hidden]{display:none}
+
+/* 模态与卡 */
+#modalProposal .modal-body{padding:14px 16px}
+.proposal-card{border:1px solid #e3e2df;border-radius:10px;background:#fff;margin:0 0 14px;overflow:hidden}
+.proposal-card:last-child{margin-bottom:0}
+.proposal-card.prop-stale{opacity:.85}
+
+/* 卡头：来源 ＋ 类型 ＋ 时间 */
+.prop-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #efefee;background:#fafaf8}
+.prop-src{font-size:11.5px;font-weight:650;color:#5f5e5b}
+.prop-kind{font-size:10.5px;color:#8a8577;border:1px solid #e3e2df;border-radius:5px;padding:0 5px}
+.prop-time{margin-left:auto;font-size:11px;color:#9b9585}
+
+/* 左右两栏：左＝现状，右＝采纳后 */
+.prop-cols{display:grid;grid-template-columns:1fr 1fr}
+.prop-col{min-width:0;border-right:1px solid #efefee}
+.prop-col:last-child{border-right:none}
+.prop-col-h{padding:6px 10px;font-size:11px;letter-spacing:.4px;color:#8a8577;background:#fdfdfb;
+ border-bottom:1px solid #efefee}
+.prop-body{padding:8px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+ line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
+.prop-before{background:#fdfdfb}
+.prop-after{background:#fff}
+.prop-line{padding:0 4px;border-radius:3px;min-height:1.7em}
+/* 删行（现状里将被去掉）／增行（采纳后新加进来的） */
+.prop-del{background:#fdf3f0;color:#9a3b1e;box-shadow:inset 2px 0 0 #e7c4b8}
+.prop-add{background:#f2faf5;color:#1c6b4c;box-shadow:inset 2px 0 0 #b6d8c4}
+/* 两侧对不齐时的空缺格 */
+.prop-gap{background:#f7f7f5}
+
+/* 警告行：护面芯片被剥掉这类事必须让人看见 */
+.prop-warn{padding:8px 12px;font-size:12px;line-height:1.65;color:#8a5a10;background:#fdf7ea;border-top:1px solid #eddcb4}
+.prop-stale-note{padding:8px 12px;font-size:12px;line-height:1.65;color:#9a3b1e;background:#fdf3f0;border-top:1px solid #e7c4b8}
+
+/* 卡底两枚钮：采纳写回／拒绝 */
+.prop-acts{display:flex;gap:8px;justify-content:flex-end;padding:10px 12px;border-top:1px solid #efefee;background:#fafaf8}
+.prop-acts .btn-primary,.prop-acts .btn-ghost{font-size:12.5px;padding:6px 12px}
+.prop-adopt[disabled]{opacity:.45;cursor:default}
+
+/* 空态 */
+.prop-empty{padding:26px 10px;text-align:center;font-size:13px;color:#8a8577}
+
+@media (max-width:700px){
+ .prop-cols{grid-template-columns:1fr}
+ .prop-col{border-right:none;border-bottom:1px solid #efefee}
+}
+
+/* ========================================================================
+   右栏可拖分隔条（--nav-w）：拖动改左右比例，宽度记本机、刷新还在
+   ======================================================================== */
+.nav-splitter{position:fixed;top:0;bottom:0;right:var(--nav-w,320px);width:9px;margin-right:-4px;
+ z-index:61;cursor:col-resize;background:transparent;border:none;padding:0;
+ transition:background .15s ease}
+.nav-splitter:hover{background:rgba(47,46,43,.12)}
+body.nav-dragging{cursor:col-resize;user-select:none;-webkit-user-select:none}
+body.nav-dragging .nav-splitter{background:rgba(47,46,43,.16)}
+/* 侧栏收起时没有可拖的边——分隔条一起藏起来。 */
+body.nav-collapsed .nav-splitter{display:none}
+
+/* 封面标题行：标题 ＋ 一枚改标题的笔（改的是这个盘自己的标题命令） */
+.cover-title-row{display:flex;align-items:flex-start;gap:8px}
+.cover-title-row h1{flex:1 1 auto;min-width:0}
+.cover-edit{flex:0 0 auto;margin-top:6px;width:24px;height:24px;border:1px solid #e6e6e4;
+ border-radius:6px;background:#fff;color:#8f8d86;font-size:12px;line-height:1;cursor:pointer;padding:0}
+.cover-edit:hover{background:#f5f5f3;color:#37352f;border-color:#d8d8d4}
+
+/* 弹窗里的一行小字（口径说明） */
+.modal-hint{font-size:11.5px;color:#9b9a96;line-height:1.6;margin:2px 0 0}
+
+/* 插入事实面板：账上事实的可选清单 */
+.fi-list{margin-top:8px;max-height:46vh;overflow:auto;border:1px solid #ececeb;border-radius:8px}
+.fi-row{display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;
+ padding:9px 11px;border:none;border-bottom:1px solid #f2f2f0;background:#fff;cursor:pointer;
+ font-family:inherit;font-size:12.5px;color:#37352f}
+.fi-row:last-child{border-bottom:none}
+.fi-row:hover{background:#f7f7f5}
+.fi-id{flex:0 0 auto}
+.fi-id code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#1c6b4c}
+.fi-claim{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#5f5e5b}
+.fi-value{flex:0 0 auto}
+.fi-value code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#37352f}
+.fi-src{flex:0 0 auto;max-width:22%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+ font-size:11px;color:#9b9a96}
+

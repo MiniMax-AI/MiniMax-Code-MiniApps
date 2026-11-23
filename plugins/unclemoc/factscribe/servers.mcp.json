@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "factscribe": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/factscribe",
+      "headers": {},
+      "description": "FactScribe 论文工作台：查稿况（项目与稿盘清单）、看目录、读一段正文、看检查报告、看文风闸、看双语对账、看证据锁、看写作简报、看版式、对事实账本、搜知识库；另有改稿／追加事实／冻结解冻证据／导出投稿包的提议单（提议不写盘，人在页面确认才落盘）。",
+      "timeout": 120000
+    }
+  }
+}
