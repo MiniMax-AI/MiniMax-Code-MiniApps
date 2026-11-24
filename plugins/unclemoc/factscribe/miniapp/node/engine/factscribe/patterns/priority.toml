@@ -1,0 +1,47 @@
+# 处方冲突优先序（SPEC-PRESCRIPTION §3）
+#
+# 序号小的胜。冲突对必须显式登记；同一冲突对的两端必须落在不同序号，
+# 否则加载期报配置错（退出码 2）。
+
+[levels]
+facts = 1
+structure = 2
+heading = 3
+term = 4
+style = 5
+
+[names]
+facts = "事实与数字"
+structure = "结构完整"
+heading = "标题指向内容"
+term = "术语首现解释"
+style = "文句风格"
+
+# 每条处方登记一个级别；值必须是 [levels] 里的键。
+[ranks]
+heading-shorten = "heading"
+term-first-sentence = "term"
+dash-rewrite = "style"
+drop-the-proof = "style"
+heading-malformed = "heading"
+heading-subject-keep = "structure"
+section-completeness = "structure"
+unbury-the-verb = "style"
+cut-the-de = "style"
+trim-to-budget = "style"
+thin-the-numbers = "style"
+merge-overlap = "structure"
+shift-to-implication = "style"
+
+# 压标题不得丢掉对比对象与主语（2 结构完整 ＜ 3 标题指向内容）。
+[[conflicts]]
+a = "heading-shorten"
+b = "heading-subject-keep"
+reason = "压标题不得丢掉对比对象与主语"
+
+# 去标题标点不得连对比对象一起删，也不得替换关系词
+# （2 结构完整 ＜ 3 标题指向内容）。
+[[conflicts]]
+a = "heading-malformed"
+b = "heading-subject-keep"
+reason = "去标题标点不得删掉对比对象或替换关系词"

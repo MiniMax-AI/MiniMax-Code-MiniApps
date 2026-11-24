@@ -1,0 +1,100 @@
+{
+  "id": "fixture-session-001",
+  "title": "Launch brief",
+  "pinned": false,
+  "current_message_id": 5,
+  "inserted_at": "2026-10-01T09:00:00.000Z",
+  "updated_at": "2026-10-01T09:08:00.000Z",
+  "messages": [
+    {
+      "id": 1,
+      "parent_id": null,
+      "role": "USER",
+      "status": "FINISHED",
+      "thinking_enabled": true,
+      "search_enabled": false,
+      "accumulated_token_usage": 10,
+      "inserted_at": "2026-10-01T09:00:00.000Z",
+      "fragments": [
+        { "type": "REQUEST", "content": "Plan a launch page for a quiet note-taking tool." },
+        {
+          "type": "FILE",
+          "files": [
+            {
+              "id": "fixture-file",
+              "file_name": "brief.pdf",
+              "file_size": 2048,
+              "token_usage": 30,
+              "inserted_at": "2026-10-01T09:00:00.000Z",
+              "export_path": null,
+              "is_image": false,
+              "width": null,
+              "height": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "parent_id": 1,
+      "role": "ASSISTANT",
+      "status": "FINISHED",
+      "thinking_enabled": true,
+      "search_enabled": true,
+      "accumulated_token_usage": 90,
+      "inserted_at": "2026-10-01T09:02:00.000Z",
+      "fragments": [
+        { "type": "THINK", "content": "Separate the audience promise from implementation detail.", "elapsed_secs": 4.2 },
+        {
+          "type": "TOOL_SEARCH",
+          "queries": ["accessible landing page patterns"],
+          "results": [
+            {
+              "url": "https://example.test/accessibility",
+              "title": "Accessible pages",
+              "snippet": "Use clear landmarks and sufficient contrast.",
+              "published_at": null,
+              "site_name": "Example"
+            }
+          ],
+          "status": "FINISHED"
+        },
+        { "type": "RESPONSE", "content": "Lead with calm focus and show three concrete workflows." }
+      ]
+    },
+    {
+      "id": 3,
+      "parent_id": 2,
+      "role": "USER",
+      "status": "FINISHED",
+      "thinking_enabled": false,
+      "search_enabled": false,
+      "accumulated_token_usage": 100,
+      "inserted_at": "2026-10-01T09:04:00.000Z",
+      "fragments": [{ "type": "REQUEST", "content": "Avoid gradients and testimonials." }]
+    },
+    {
+      "id": 4,
+      "parent_id": 3,
+      "role": "ASSISTANT",
+      "status": "FINISHED",
+      "thinking_enabled": false,
+      "search_enabled": false,
+      "accumulated_token_usage": 140,
+      "inserted_at": "2026-10-01T09:06:00.000Z",
+      "fragments": [{ "type": "RESPONSE", "content": "First version: a dense comparison table." }]
+    },
+    {
+      "id": 5,
+      "parent_id": 3,
+      "role": "ASSISTANT",
+      "status": "FINISHED",
+      "thinking_enabled": false,
+      "search_enabled": false,
+      "accumulated_token_usage": 145,
+      "inserted_at": "2026-10-01T09:08:00.000Z",
+      "fragments": [{ "type": "RESPONSE", "content": "Regenerated version: a sparse three-step story." }]
+    }
+  ]
+}

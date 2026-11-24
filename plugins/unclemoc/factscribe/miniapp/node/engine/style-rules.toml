@@ -1,0 +1,500 @@
+# factscribe style — 文风闸的阈值与词表（全部可机械复算）
+#
+# 本文件是默认配置。项目根放一份同名文件即覆盖本文件的同名键；
+# `factscribe style <project> --rules <path>` 可显式指定。
+# 指标定义与阈值依据见 docs/implementation/STYLE-GATE.md。
+#
+# 定位：本工具不评估、也不试图规避任何 AI 检测器；它检测的是可机械判定的
+# 公式化写作特征，只出黄牌（exit 3），不阻断、不改正文。
+
+# 术语白名单（TERM_FIRST_IN_HEADING）：两层，先项目内 GLOSSARY.md，
+# 再用户自维护的纯文本（一行一个词）；忽略空行与 # 注释，大小写不敏感。
+term_allow_files = ["GLOSSARY.md", "term-allow.txt"]
+
+# 项目术语表覆盖（相对项目根）；空/缺省时用仓内分层词表：
+#   terms/paper.tsv    论文领域术语（参与 TERM_VARIANT）
+#   terms/workspace.tsv 工作区流程词（只查词，不参与 TERM_VARIANT）
+# 词表列：canonical / aliases(en) / aliases(cn) / category / blocked(cn)（可选）。
+# term_glossary = "glossary.tsv"
+
+# TERM_UNREGISTERED 默认关闭；只由 `style --report-unregistered` 显式打开。
+# 打开时只查标题，结果单独走 info 通道：不进 findings 计数、不影响退出码。
+term_unregistered = false
+
+# 批 109：RHYTHM_PLATEAU 默认降级为参考读数（info）——10 词分桶会把「长度
+# 接近」误判成「节奏平台」，且它与 SENTENCE_UNIFORMITY（句长 CV）测的是同一
+# 件事。节奏的正式判据是 SENTENCE_UNIFORMITY。设 "yellow" 恢复旧黄牌行为。
+rhythm_plateau_level = "info"
+
+# ABBREV_FIRST_USE 默认关闭（批 105 B5）：四份语料里专名与通用缩写混在
+# 一起，「该不该展开」仍需人判断。只由 `style --report-abbrev` 打开；
+# 打开后进 findings。改 true 即常开（不建议，见 docs/implementation/SYNTAX-B.md）。
+abbrev_first_use = false
+
+# 批 129/130：数字密度（NUMERAL_DENSITY）只在起草阶段当判据。改稿/改写验收时
+# 数字属于 PROTECT_NUMBER_CHANGED 的保护面，删数字会被保护面判红；此时用
+# 命令行 `style --stage revision`，读数照给但降为 info（降级条目不进
+# findings、不改退出码）。
+# 注意：阶段开关**只能从命令行来**，本文件（以及项目内同名文件）写
+# numeral_density_stage 一律不生效，只报 RULES_OVERRIDE_IGNORED。
+
+# 标题关系词：只收承载「对立/否定」的关系词。改写前后旧标题里的这组词
+# 被删除或被替换即报 HEADING_RELATION_CHANGED。并列连接（and / 与 / 及 / 、）
+# 不承载对立关系，不进本表。英文按词边界，中文按结构匹配。
+heading_relation_words = ["versus", "vs", "not", "without",
+                          "对", "而非", "不是"]
+
+# 批 119：标题换标点/换介词规避（HEADING_SUBSTITUTED）。旧标题带冒号、
+# 新标题不带冒号，且把冒号换成下列 token 后与新高标题逐字相同 → 报。
+# 只换 token 不重写，与手册第 8 条「禁止换标点过关、也禁止换介词过关」同源。
+[heading_substitute]
+punctuation = ["、", "，", ",", "（", "）"]
+prepositions = ["as", "with", "for", "of"]
+
+[thresholds]
+# 每千词（中文按字）套话连接词数；> 触发
+connective_density = 8.0
+# 句长标准差 / 均值。健康区间 [0.45, 0.80]：
+#   < 0.45 触发（太整齐／太平）；> 0.80 不报（散不是 AI 特征）
+sentence_uniformity = 0.45
+sentence_uniformity_high = 0.80
+# 每千词空泛形容词数；> 触发
+empty_adjective = 6.0
+# 段末以 Therefore/Overall/Thus/综上/因此 收尾的段落占比；> 触发
+paragraph_template = 0.5
+# 批 99：句首解释性套语密度（每千词/字）；> 触发
+explainer_density = 6.0
+# 批 99：反射式解释链——同段 >= N 句以解释套语开头
+justify_chain_min_sentences = 2
+# 批 99：连续 >= N 段都以解释句收尾
+justify_chain_min_paragraphs = 2
+# 双重以上模糊限定出现次数；>= 触发
+hedge_stack = 1
+# 相邻段落首词相同的次数；>= 触发
+repeated_opener = 2
+# 单句长度上限（词 / 字）；超过且句内没有任何从句/分号/破折号/括号断点才报。
+# 又长又有结构的长句是专家写法，不报。
+sentence_length_extreme_en = 60
+sentence_length_extreme_zh = 110
+# 节奏平台：连续 N 句长度都落在同一 W 词（字）区间即触发
+rhythm_plateau_run = 3
+rhythm_plateau_window = 10
+
+# ---- 批 102 句法级判据（全部按条计，>= 1 触发；无密度闸）----
+# 英文轻动词＋名义化：make a distinction / perform an analysis。
+# 单位＝条，不做每千词密度（低频高信）。
+light_verb_nominalization = 1
+# P-152：轻动词收紧到「重度」——同一篇里轻动词＋名义化命中达到这么多次，
+# 才算系统性写法并报出；达不到只当个别措辞。依据：盲评 R1 轴双席一致成立
+# 2/20（正例锚：2103.00020「perform prediction」、2407.21783「perform
+# experiments」），其余 18 条双洁＋3 条分歧全判「不别扭、无缺陷」；且同样
+# 的「perform experiments」在一篇里只出现 1 次时（1910.10683）判无缺陷，
+# 在一篇里出现 15 次时判有缺陷——只有按篇累计才能分开这两条。
+light_verb_doc_min = 5
+# 英文膨胀短语：due to the fact that 等固定说法，逐处给直接替代。
+wordiness_bloat = 1
+# 中文后置条件从句：……，如果/若 B。（语序级，出现即异常）。
+zh_postposed_condition = 1
+# 中文「由于/因为 X，使得 Y」：介词短语作主语，全句缺主（语法错）。
+zh_due_to_make = 1
+# 中文单句式「的」堆叠：改为「短修饰链」判据——同一句内至少两对相邻
+# 「的」的修饰 <= zh_de_stack_max_gap 个汉字才算成链；不看「的」总数与
+# 整句长度。谓词/连接断点（是、用、而…）会切断链，正常复句不误伤。
+zh_de_stack = 1
+zh_de_stack_max_gap = 6
+# 批 104：中文轻动词＋名词（进行/作出/加以/给予/予以 +（的）+ 名词）。
+# 按条报，>= 1 触发；不设密度闸。词性来自 factscribe/segment.py。
+zh_light_verb_noun = 1
+
+# ---- 批 105 B 档 ----
+# 英文名词化密度：单位＝每百词（Sword 口径），即每 100 个英文词里名词化
+# 词形的个数；剥离本文频次最高的 5 个类型（当作领域术语）后再算。
+# 4.5 表示 4.5/百词；> 触发。
+nominalization_rate = 4.5
+# 中文「动词＋着」进行体：单位＝每千个汉字（不是每千词）；> 触发。
+zh_aspect_zhe = 0.8
+# 中文「当……的时候 / 当……之后 / 当……时」：同段 >= 2 处才报，单位＝处。
+zh_dang_when = 1
+# 中文搭配冗余（大约…左右/唯一一个/相互之间…）：单位＝处，>= 1 触发。
+zh_collocation_redundancy = 1
+# 缩写首现未展开：单位＝处，>= 1 触发；开关在文件顶部。
+abbrev_first_use = 1
+
+# ---- 批 129：读者感觉三项的代理判据（全黄，退出码不变）----
+# 批 131 起 NUMERAL_DENSITY 默认阈值改为 null＝不判：它会诱导删证据——模型
+# 为了把密度降回阈值内，会把核心数字换成 nearly/most/some，审计仍绿而论证
+# 被抽空。实现与阶段开关（--stage revision 降 info）全部保留。
+# TOML 没有 null：默认值就是「不写这个键」。要恢复旧行为，显式写一个非负
+# 数字即可，例如：numeral_density = 40
+# numeral_density = 40
+# 节与节之间 8 词（英）/12 字（中）片段的重合率（百分比）；> 触发。
+# 重合率 = 共有片段数 ÷ 两节中较短一节的片段数。
+section_overlap = 12
+# 主语为 we/我们且谓语是动作动词的句子 ÷ 总句数；> 触发（0.15＝15%）。
+we_action_density = 0.15
+
+# ---- v4 新增（SPEC-V3.0 §13）----
+# 插入语破折号（—— / —）预算：出现数 > 预算才报；按处报，默认 0
+dash_budget = 0
+# 标题长度上限：中文 > 12 字、英文 > 8 词才报；\title{} 豁免
+heading_max_chars_zh = 12
+heading_max_words_en = 8
+# 同构三点并列在相邻段落重复 >= N 次才报（不是按条数判）
+colloquial_triad_repeats = 2
+
+# ---- 批 90/91 术语层 ----
+# 同一 canonical 在同一篇里出现多少种不同表面形式才报 TERM_VARIANT
+# （大小写、全半角、连字符差异归一后不算不同形式；只在 paper.tsv 的条目上判，
+#  声明的禁用变体出现即报，优先于本阈值）
+term_variant_min_forms = 2
+
+# ---- v5 新增（SPEC-V3.0 §15 改写后复检）----
+# P-152：HEADING_ECHO 收紧为「字面高度重复」——首句相对标题新引入的实义词
+# 不得超过这个数（首句基本就是标题的回声，没有实质增量，才算回声）。
+# 依据：盲评 R2 轴正例锚 F037（标题「Experimental Setup」，首句「In this
+# section, we describe the experimental setup …」新引入 3 个实义词）。
+heading_echo_max_new_terms = 3
+
+# HEADING_ECHO 的辅助词表：泛化词不算「新实义」；标题后紧跟这些垫话
+# 开头视为复述式。只影响 v5 判据，顺序无关。
+[heading_echo]
+# P-152：字面回声口径——标题至少要有这么多个实义词（单词标题如「Discussion」
+# 不构成回声）。标题的实义词要在节首句里成团连续出现（字面重复，不是同义
+# 改写），且首句相对标题新引入的实义词 ≤ thresholds.heading_echo_max_new_terms。
+literal_min_terms = 2
+generic_terms_en = ["limitation", "problem", "issue", "result", "question",
+                    "thing", "aspect", "case", "point", "claim", "matter",
+                    "area", "topic", "subject", "part", "example", "work",
+                    "study", "approach", "method", "way"]
+generic_terms_zh = ["限制", "问题", "结果", "内容", "方面", "部分", "事情",
+                    "情况", "因素", "要点", "工作", "研究", "方法", "做法",
+                    "角度", "例子"]
+meta_openers_en = ["is about", "is concerned with", "is discussed",
+                   "we discuss", "this section", "this subsection",
+                   "in this section", "in this subsection", "here we"]
+meta_openers_zh = ["里", "中", "方面", "来说", "而言", "要先", "先要",
+                   "先问", "首先要", "需要先", "本节讨论", "本节讲",
+                   "这里讨论", "这一节讨论", "我们讨论", "本文讨论",
+                   "讨论的是", "讲的是", "谈的是"]
+
+[limits]
+# 每个指标最多列多少条具体改法（防止报告淹没）
+max_findings_per_metric = 20
+# 段级统计的最小段长（词/字），过滤标题、残片与图表残留
+min_paragraph_units = 8
+# 少于这么多句不判「句长均匀」（短文本的 CV 无意义）
+uniformity_min_sentences = 10
+
+[connectives]
+# 套话连接词：句首或句中都算，按词边界匹配
+english = ["Moreover", "Furthermore", "Additionally", "In addition",
+           "Overall", "In conclusion"]
+chinese = ["首先", "其次", "此外", "综上所述", "总而言之"]
+
+[empty_adjectives]
+# 空泛形容词：不承载可核验信息
+english = ["crucial", "robust", "comprehensive", "significant",
+           "essential", "vital"]
+# 批 102 A6：移除「显著」——统计写作里「显著」是术语，不是空泛标签；
+# 只数「的」「大小」这类无法核验的形容词。原先收在表里是 bug。
+chinese = ["至关重要", "全面", "深入"]
+# 这些搭配里形容词是术语的一部分，不算空泛（避免误伤）。
+# 批 102：补中文统计短语；即使将来词表重新收入「显著」，这些搭配也豁免。
+exempt_phrases = ["statistically significant", "robust standard error",
+                  "robust to", "more robust", "less robust",
+                  "significant at the",
+                  "统计显著", "显著差异", "显著性", "显著水平",
+                  "显著优于", "显著低于", "显著提高", "不显著"]
+
+[paragraph_closers]
+# 段末套话收尾词（看最后一句的句首）
+english = ["Therefore", "Overall", "Thus", "In conclusion"]
+chinese = ["综上", "因此", "总之", "总而言之", "总体而言"]
+
+[explainers]
+# 批 99：句首解释性套语（EXPLAINER_DENSITY / JUSTIFY_CHAIN）。
+# 只收「替上一句补解释／补举证」的固定说法；普通因果连词（因为／由于）
+# 属正常论证，不进本表。词表可在项目根的 style-rules.toml 覆盖。
+english = ["This means", "That is", "In other words", "This is because",
+           "The reason is", "Which is why", "This shows that",
+           "It follows that"]
+chinese = ["这说明", "这意味着", "也就是说", "换句话说", "换言之",
+           "说白了", "简单说", "原因在于", "这是因为", "之所以",
+           "由此可见", "正因如此", "这就是为什么", "这正是",
+           "它证明", "它不证明", "可见"]
+
+[hedge_stacks]
+# 双重以上模糊限定（两层限定叠在同一处）
+english = ["may potentially", "might potentially", "could potentially",
+           "may possibly", "might possibly", "could possibly",
+           "may conceivably", "could conceivably",
+           "seems to suggest", "appears to indicate",
+           "appears to suggest", "seems to indicate"]
+chinese = ["可能会", "或许会", "或许能够", "也许可能", "似乎可能",
+           "大概可能", "可能会是"]
+
+[repeated_opener]
+# 以虚词开头的相邻段不算「模板化同头」（否则正常学术写作会被大量误伤）
+# 只报实词/短语开头的重复，例如连续三段都以 "Assembly" / "Second" 开头。
+stopwords = ["the", "a", "an", "this", "that", "these", "those",
+             "it", "its", "they", "their", "we", "our", "i", "in",
+             "on", "for", "to", "as", "at", "by", "with", "from",
+             "there", "and", "but", "or", "if", "when", "while",
+             "because", "since", "of",
+             "如果", "那么", "因为", "所以", "但是", "因此", "并且",
+             "而且", "这", "那", "我们", "它", "其", "在", "对",
+             "从", "当", "为了", "通过", "由", "被", "把", "让",
+             "使", "一个", "一种", "本文", "本节", "每一", "每"]
+
+# ---- 批 102 句法级判据词表 ----
+
+[light_verbs]
+# LIGHT_VERB_NOMINALIZATION 甲组：高精度，可直接跟名义化名词（可无冠词）。
+# 这些动词出现在名义化名词前时，动作几乎总在名词里。
+english = ["perform", "performs", "performed", "performing",
+           "conduct", "conducts", "conducted", "conducting",
+           "carry out", "carries out", "carried out", "carrying out",
+           "undertake", "undertakes", "undertook", "undertaking",
+           "provide", "provides", "provided", "providing",
+           "offer", "offers", "offered", "offering"]
+# 乙组：P-152 整体退场（空表＝不建乙组模式）。依据：盲评 R1 轴里乙组命中的
+# 样本（make predictions / make decisions / have a projection / has $n$
+# dimensions / achieve a translation / establishes a connection）双席全判
+# 「无缺陷」——乙组精度不足以单条成立。只留甲组（english）。
+article_verbs = []
+# 名义化后缀；不含裸 -al（several / partial / beneficial 会误命中）。
+suffixes = ["tion", "sion", "ment", "ance", "ence", "ity", "ness", "sis"]
+# 正常搭配，不报。
+exempt_phrases = ["have a chance", "provide a basis", "have a role",
+                  "take a look", "give a view", "make a difference"]
+# 「动作其实是什么」：常见名义化 → 动词（查表优先；查不到给通用提示）。
+[light_verbs.actions]
+distinction = "distinguish"
+analysis = "analyze"
+decision = "decide"
+explanation = "explain"
+evaluation = "evaluate"
+assessment = "assess"
+implementation = "implement"
+measurement = "measure"
+observation = "observe"
+description = "describe"
+discussion = "discuss"
+conclusion = "conclude"
+assumption = "assume"
+comparison = "compare"
+definition = "define"
+application = "apply"
+performance = "perform"
+improvement = "improve"
+requirement = "require"
+statement = "state"
+treatment = "treat"
+judgment = "judge"
+agreement = "agree"
+consideration = "consider"
+investigation = "investigate"
+identification = "identify"
+verification = "verify"
+validation = "validate"
+demonstration = "demonstrate"
+estimation = "estimate"
+reduction = "reduce"
+production = "produce"
+introduction = "introduce"
+contribution = "contribute"
+classification = "classify"
+specification = "specify"
+justification = "justify"
+motivation = "motivate"
+transformation = "transform"
+configuration = "configure"
+optimization = "optimize"
+selection = "select"
+detection = "detect"
+collection = "collect"
+inspection = "inspect"
+protection = "protect"
+construction = "construct"
+adoption = "adopt"
+addition = "add"
+allocation = "allocate"
+reliance = "rely"
+appearance = "appear"
+existence = "exist"
+occurrence = "occur"
+preference = "prefer"
+resistance = "resist"
+
+[wordiness]
+# WORDINESS_BLOAT：固定膨胀短语 → 直接替代。只收「删掉/替换不丢信息」
+# 的说法；in order to / in terms of / a number of 属正常学术行文，不进表。
+[wordiness.replacements]
+"due to the fact that" = "because"
+"at this point in time" = "now"
+"in spite of the fact that" = "although"
+"in the event that" = "if"
+"on account of the fact that" = "because"
+
+[zh_postposed_condition]
+# ZH_POSTPOSED_CONDITION：条件标记出现在逗号之后即报。
+# 只锁条件，不锁「因为」——后置追补属正常中文。
+chinese = ["如果", "假如", "倘若", "一旦", "要是", "若"]
+
+[zh_due_to_make]
+# ZH_DUE_TO_MAKE：由于/因为 X，使得/致使/导致 Y。
+chinese = ["由于", "因为"]
+effects = ["使得", "致使", "导致"]
+
+[zh_light_verb_noun]
+# ZH_LIGHT_VERB_NOUN：轻动词＋（了/着/过）＋（的）＋名词。
+# 只认名词侧（词性 n 开头或 vn）；纯动词 v 不报，数量词/形容词夹在
+# 中间也不报（精度优先）。
+verbs = ["进行", "作出", "加以", "给予", "予以"]
+# 正常搭配，不报。
+exempt_phrases = ["进行中", "进行时", "作出决定"]
+# 「动作其实是什么」：名词 -> 动词。查不到时给通用改法，不猜同义词。
+[zh_light_verb_noun.actions]
+"分析" = "分析"
+"研究" = "研究"
+"评估" = "评估"
+"调整" = "调整"
+"优化" = "优化"
+"改进" = "改进"
+"调查" = "调查"
+"检验" = "检验"
+"测量" = "测量"
+"管理" = "管理"
+"建设" = "建设"
+"发展" = "发展"
+"改革" = "改革"
+"实验" = "实验"
+"测试" = "测试"
+"验证" = "验证"
+"分类" = "分类"
+"定义" = "定义"
+"总结" = "总结"
+"报告" = "报告"
+"计划" = "计划"
+"贡献" = "贡献"
+"建议" = "建议"
+"决定" = "决定"
+"讨论" = "讨论"
+"说明" = "说明"
+"比较" = "比较"
+"介绍" = "介绍"
+"解释" = "解释"
+"描述" = "描述"
+"观察" = "观察"
+"计算" = "计算"
+"处理" = "处理"
+"支持" = "支持"
+"帮助" = "帮助"
+"保护" = "保护"
+"控制" = "控制"
+"限制" = "限制"
+"关注" = "关注"
+"考虑" = "考虑"
+"理解" = "理解"
+"要求" = "要求"
+
+# ---- 批 105 B 档词表 ----
+
+[nominalization]
+# 英文名词化后缀；不含裸 -al/-ic/-ive（命中的几乎全是技术词）。
+suffixes = ["tion", "sion", "ment", "ance", "ence", "ity", "ness", "ism"]
+# 词长下限：短于 5 个字母的词形不算（tion 本身不是词）。
+min_length = 5
+# 剥离本文频次最高的 N 个类型，当作领域术语；报时列出被剥离的词。
+strip_top = 5
+
+[zh_aspect_zhe]
+# 动词后「着」的词内用法：不是进行体，不计入分子。
+exclude = ["意味着", "标志着", "象征着", "预示着", "代表着",
+           "照着", "沿着", "朝着", "向着", "随着", "接着", "跟着",
+           "当着", "为着", "冲着", "凭着", "按着", "依着", "据着",
+           "本着", "对着", "关于", "够得着", "够不着", "来着", "合着"]
+
+[zh_dang_when]
+# 只认这三种尾巴；「时」后面不能跟「候」（否则是「什么时候」）。
+tails = ["的时候", "之后", "时"]
+# 单次出现是正常中文；同一段落内至少这么多处才报（跨段不累计）。
+min_per_paragraph = 2
+# 「当」后紧跟这些字是词内用法（当成/当作/当天/当时/当面…），不算条件。
+forbid_heads = ["成", "作", "然", "即", "初", "场", "时", "天", "年",
+                "月", "日", "前", "中", "下", "上", "面", "真", "众",
+                "地", "晚", "夜", "早", "代", "今"]
+
+[zh_collocation_redundancy]
+# 搭配冗余：每条给匹配式与删法；单位＝处。
+[[zh_collocation_redundancy.items]]
+label = "大约…左右"
+pattern = "大约[^。！？；]{0,20}左右"
+fix = "删「大约」或「左右」，只留一个"
+
+[[zh_collocation_redundancy.items]]
+label = "唯一一个"
+pattern = "唯一一个"
+fix = "删「一个」，写「唯一」"
+
+[[zh_collocation_redundancy.items]]
+label = "相互之间"
+pattern = "相互之间"
+fix = "删「相互」，写「之间」"
+
+[[zh_collocation_redundancy.items]]
+label = "彼此互相"
+pattern = "彼此互相"
+fix = "删「彼此」或「互相」，只留一个"
+
+[[zh_collocation_redundancy.items]]
+label = "提前预…"
+pattern = "提前预[先进订定约热租告测]"
+fix = "删「提前」，写「预订/预支/预约」"
+
+[[zh_collocation_redundancy.items]]
+label = "免费赠送"
+pattern = "免费赠送"
+fix = "删「免费」，赠送本身就不收钱"
+
+[[zh_collocation_redundancy.items]]
+label = "亲眼目睹"
+pattern = "亲眼目睹"
+fix = "删「亲眼」，目睹本身就是亲眼看见"
+
+[[zh_collocation_redundancy.items]]
+label = "再次重申"
+pattern = "再次重申"
+fix = "删「再次」，重申就是再说一次"
+
+[[zh_collocation_redundancy.items]]
+label = "一致公认"
+pattern = "一致公认"
+fix = "删「一致」，公认就是一致认为"
+
+[[zh_collocation_redundancy.items]]
+label = "首先第一"
+pattern = "首先第一"
+fix = "删「首先」或「第一」，只留一个"
+
+[abbrev_rules]
+# ≥2 个大写字母才算缩写。
+min_letters = 2
+# 罗马数字、文献标记不是缩写。
+exclude = ["II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII",
+           "XIII", "XIV", "XV", "TODO", "TBD", "FIXME"]
+
+[we_action]
+# WE_ACTION_DENSITY 的动作动词表。只收「做了一件事」的动词；
+# 提出/主张/认为/说明这类修辞或认知动词不收（「我们提出」不算动作句）。
+english = ["ran", "run", "runs", "running",
+           "did", "do", "does", "doing",
+           "tried", "try", "tries", "trying",
+           "changed", "change", "changes", "changing",
+           "added", "add", "adds", "adding",
+           "removed", "remove", "removes", "removing",
+           "tested", "test", "tests", "testing",
+           "looked", "look", "looks", "looking"]
+chinese = ["跑", "做", "试", "改", "加", "删", "测", "查", "记",
+           "尝试", "修改", "增加", "添加", "删除", "运行",
+           "测试", "测量", "检查", "记录", "核对", "查验"]

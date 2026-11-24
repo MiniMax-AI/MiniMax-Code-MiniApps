@@ -29,6 +29,10 @@ export class UserInbox {
   }
 
   enqueue(chatId, message, bot, group) {
+    // One message joins the queue once. The resume route computes its list before an awaited write,
+    // so a retry carrying the same clientMessageId can enqueue the message first; without this the
+    // same request runs twice and answers twice.
+    if (this.has(message.id)) return;
     const queued = [...this.batches].filter((batch) => batch.chatId === chatId && !batch.started && !batch.cancelled);
     // Append only to the tail so a smaller message cannot overtake an overflow batch.
     // Supplements arriving during cancellation join this same continuation.
@@ -149,7 +153,15 @@ export class UserInbox {
   async resumeHeld(chatId) {
     // Only resend supplements that never started; an uncertain original request is never replayed.
     const history = await this.engine.store.getMessages(chatId);
-    const held = history.filter((message) => message.role === 'user' && message.dispatchState === 'held' && !this.has(message.id));
+    const held = history.filter((message) => {
+      if (message.role !== 'user' || this.has(message.id)) return false;
+      if (message.dispatchState === 'held') return true;
+      // A restart leaves an accepted request `pending` with the queue that owned it gone. It is
+      // recoverable on the same proof the retry path uses: no reply and no durable assistant
+      // placeholder means the request never reached the Host.
+      return message.dispatchState === 'pending'
+        && !history.some((item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
+    });
     if (!held.length || this.busy(chatId) || [...this.engine.tickets].some((ticket) => ticket.chatId === chatId)) {
       throw new this.ErrorType('busy', t('err.messageAlreadyProcessing'));
     }
@@ -158,12 +170,17 @@ export class UserInbox {
     if (!bot && !group) throw new this.ErrorType('not_found', t('err.chatMissing'));
     const uncertainIds = history.filter((message) => message.role === 'user' && message.dispatchState === 'uncertain').map((message) => message.id);
     await this.engine.store.updateMessages(chatId, uncertainIds, { continuationAcknowledged: true });
-    const messages = await this.engine.store.updateMessages(chatId, held.map((message) => message.id), { dispatchState: 'pending' });
+    const heldIds = new Set(held.map((message) => message.id));
+    // Re-check inside the write: a retry carrying the same clientMessageId can enqueue the message
+    // while this call waits for the disk, and a message that moved on must not be sent a second
+    // time. Only the state this call actually reached is still recoverable.
+    const messages = await this.engine.store.updateMessages(chatId, [...heldIds], { dispatchState: 'pending' },
+      { when: (message) => heldIds.has(message.id) && (message.dispatchState === 'held' || message.dispatchState === 'pending') });
     for (const message of messages) {
+      if (this.has(message.id)) continue;
       this.engine.broadcast({ type: 'message.upsert', chatId, message });
       this.enqueue(chatId, message, bot, group);
-    }
-    return { ok: true };
+    }    return { ok: true };
   }
 
   cancel(chatId, { persist = true } = {}) {

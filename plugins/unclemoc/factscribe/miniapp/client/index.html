@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FactScribe 工作台</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-view="projects">
+
+<!-- 条目 31：全局顶栏整条拆除。字标与 Projects 归左栏窄条；新建只在项目列表页。 -->
+
+<div class="shell">
+
+  <!-- ============ 左栏：顶部窄条 ＋ 内容 ============ -->
+  <div class="left-col" id="leftCol">
+    <div class="left-head">
+      <div class="lh-left">
+        <!-- 条目 33：字标可点，与 [Projects] 同去项目管理视图 -->
+        <button type="button" class="tb-brand lh-brand" id="goBrand" title="FactScribe">FactScribe</button>
+        <button type="button" class="tb-btn" id="goProjects" data-i18n="nav.projects">项目管理</button>
+      </div>
+      <!-- 中/EN 常显：界面语言开关（workbench 里顺带切盘），任何视图都在，不随工具组一起藏。 -->
+      <div class="lh-lang" id="lhLang">
+        <div class="lang-seg" id="langSeg" role="group" aria-label="panel language">
+          <button type="button" data-lang="zh" class="on">中</button>
+          <button type="button" data-lang="en">EN</button>
+        </div>
+      </div>
+      <!-- 条目 33：常用功能组从侧栏搬到左栏头部；仅 workbench 视图渲染（列表视图不渲染） -->
+      <div class="lh-tools" id="lhTools" hidden>
+        <button type="button" class="lh-tool" id="actPdf">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/></svg>
+          <span data-i18n="np.pdf">渲染PDF</span>
+        </button>
+        <button type="button" class="lh-tool" id="actCheck">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3 7-7"/></svg>
+          <span data-i18n="np.check">全检一次</span>
+        </button>
+        <button type="button" class="lh-tool" id="actBundle">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 5.5h11v8h-11z"/><path d="M5.5 5.5v-2h5v2"/></svg>
+          <span data-i18n="np.bundle">导出投稿包</span>
+        </button>
+        <button type="button" class="lh-tool" id="actOpenDir">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h4l1.5 2h5.5v7h-11z"/></svg>
+          <span data-i18n="np.openDir">打开目录</span>
+        </button>
+        <!-- v2：待确认提议单徽标（有待确认提议时才亮；数字在 #proposalCount） -->
+        <button type="button" class="lh-tool prop-badge-btn" id="btnProposals" hidden>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M3 2.5h10v11H3z"/><path d="M5.5 6h5M5.5 8.5h3.5"/></svg>
+          <span data-i18n="proposal.badge">待确认</span>
+          <span class="prop-count" id="proposalCount" hidden>0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 条目 36：进度条从正文流挪出，嵌进头部窄条下缘（全宽 3px 细条） -->
+    <div class="progwrap" id="progWrap"><div id="prog"></div></div>
+
+  <!-- ============ 项目列表页 ============ -->
+  <main class="mainview" id="viewProjects">
+    <div class="pv-wrap">
+      <div class="pv-head">
+        <div class="pv-head-txt">
+          <h1 data-i18n="pg.title">论文项目</h1>
+          <p class="pv-sub" data-i18n="pg.sub">打开一篇论文继续写，或新建一个项目。</p>
+        </div>
+        <button type="button" class="tb-btn pv-new" id="goNew" data-i18n="tb.new">＋ 新建</button>
+      </div>
+      <div class="pv-search">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input id="pjSearch" type="text" data-i18n-ph="pg.searchPh" placeholder="搜索项目名…" autocomplete="off">
+      </div>
+      <div class="pj-list" id="pjList"></div>
+      <p class="pv-sub" id="pjEmpty" hidden data-i18n="pg.empty">这个根目录下没有找到论文项目（含 factscribe.toml 的目录）。</p>
+    </div>
+  </main>
+
+  <!-- ============ 新建 / 编辑项目（复用同一套模板） ============ -->
+  <main class="mainview formview" id="viewForm">
+    <div class="fv-wrap">
+      <div class="fv-head">
+        <h1 id="fvTitle">新建论文项目</h1>
+        <p class="pv-sub" id="fvSub"></p>
+      </div>
+      <form class="fv-form" id="projectForm" autocomplete="off">
+        <div class="fv-field">
+          <label for="pfTitle"><span class="req-star">*</span> <span data-i18n="pf.title">论文标题</span></label>
+          <input type="text" id="pfTitle" data-i18n-ph="pf.titlePh" placeholder="例如：多臂实验台的调度策略">
+        </div>
+        <div class="fv-field">
+          <label for="pfLang"><span class="req-star">*</span> <span data-i18n="pf.lang">写作语言</span></label>
+          <select id="pfLang">
+            <option value="en" data-i18n="pf.langEn">英文盘</option>
+            <option value="zh" data-i18n="pf.langZh">中文盘</option>
+            <option value="both" data-i18n="pf.langBoth">英文盘 + 中文盘</option>
+          </select>
+          <div class="fv-hint" id="pfLangHint" data-i18n="pf.langHint">建几个盘是创建时定下的重操作，建好后不可改。</div>
+        </div>
+        <div class="fv-field">
+          <label for="pfSlug"><span data-i18n="pf.slug">文件夹名</span></label>
+          <input type="text" id="pfSlug" data-i18n-ph="pf.slugPh" placeholder="my-new-paper">
+        </div>
+        <div class="fv-field">
+          <label for="pfDir"><span data-i18n="pf.dir">项目目录</span></label>
+          <input type="text" id="pfDir" data-i18n-ph="pf.dirPh" placeholder="papers/my-new-paper">
+          <div class="fv-hint" id="pfDirHint" data-i18n="pf.dirHint">项目目录是身份锚：事实账与引用都按路径绑定，改它等于断链，所以只读。</div>
+        </div>
+        <div class="fv-field">
+          <label for="pfReports"><span data-i18n="pf.reports">实验报告目录</span></label>
+          <div class="fv-row">
+            <input type="text" id="pfReports" readonly>
+            <button type="button" class="btn-ghost" id="pfReportsUnlock" data-i18n="pf.reportsCustom">自定义实验报告目录</button>
+            <button type="button" class="btn-ghost" id="pfReportsReset" data-i18n="pf.reportsDefault" hidden>恢复默认</button>
+          </div>
+          <div class="fv-hint" data-i18n="pf.reportsHint">默认是「〈项目目录〉/reports」，点「自定义」才解锁。</div>
+        </div>
+        <div class="fv-field">
+          <label for="pfJournal"><span data-i18n="pf.journal">目标期刊 / 会议</span></label>
+          <input type="text" id="pfJournal" placeholder="—">
+        </div>
+        <div class="fv-field">
+          <label for="pfTemplate"><span data-i18n="pf.template">参考模板</span></label>
+          <input type="text" id="pfTemplate" placeholder="—">
+        </div>
+        <div class="fv-field">
+          <label for="pfQuestion"><span data-i18n="pf.question">一句话研究问题</span></label>
+          <input type="text" id="pfQuestion" placeholder="—">
+        </div>
+        <div class="fv-actions">
+          <button type="submit" class="btn-primary" id="pfSave" data-i18n="pf.save">保存</button>
+          <button type="button" class="btn-ghost" id="pfCancel" data-i18n="pf.cancel">取消</button>
+          <span class="fv-msg" id="pfMsg"></span>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <!-- ============ 论文工作台 ============ -->
+  <main class="doc" id="viewWorkbench">
+    <div class="page" id="diskBody">
+      <section class="cover">
+        <div class="cover-title-row">
+        <h1 id="coverTitle">—</h1>
+        <button type="button" class="cover-edit" id="btnEditTitle" data-i18n-title="title.edit" title="改标题" aria-label="改标题">✎</button>
+        </div>
+        <div class="sub" id="coverSub"></div>
+        <div class="st-line" id="coverSt">—</div>
+        <div class="meta" id="coverMeta"></div>
+        <div class="cover-abstract" id="coverAbstract" hidden>
+          <div class="ab-label" id="coverAbstractLabel">摘要</div>
+          <div class="ab-body" id="coverAbstractBody"></div>
+        </div>
+      </section>
+      <div id="ptools">
+        <button type="button" class="pt ask" id="ptAsk" data-i18n="ai.ask">问 AI</button>
+        <button type="button" class="pt more" id="ptMore" data-i18n="para.more" title="段落动作">⋯</button>
+      </div>
+      <!-- 段六：段落 ⋯ 菜单（编辑 ＋ 续写／改写／提问） -->
+      <div class="para-menu" id="paraMenu" hidden>
+        <button type="button" class="mi" id="miEdit" data-i18n="para.edit">编辑</button>
+        <button type="button" class="mi" id="miContinue" data-i18n="para.continue">续写</button>
+        <button type="button" class="mi" id="miRewrite" data-i18n="para.rewrite">改写</button>
+        <button type="button" class="mi" id="miAsk" data-i18n="para.ask">提问</button>
+        <button type="button" class="mi" id="miFact" data-i18n="fact.ins">插入事实</button>
+      </div>
+      <div id="bodyBlocks"></div>
+    </div>
+  </main>
+  </div><!-- /left-col -->
+
+  <!-- 右栏宽度可拖：分隔条贴在侧栏左缘，拖动改左右比例（宽度记在本机，刷新还在） -->
+  <div class="nav-splitter" id="navSplitter" role="separator" aria-orientation="vertical"
+       data-i18n-title="nav.resize" title="拖动可改左右比例"></div>
+
+  <!-- ============ 右栏：图标收起钮 ＋ 三枚切换钮（横排工具条）＋ 面板 ============ -->
+  <aside class="navpanel" id="navPanel">
+    <div class="np-toolbar" id="npToolbar">
+      <!-- 条目 33：最左一枚纯图标收起钮（无文字，内联 SVG） -->
+      <button type="button" class="np-tab np-icon" id="npCollapse" title="收起导航" aria-label="收起导航" data-i18n-title="np.collapse" data-i18n-aria="np.collapse">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 3.5L4 8l3.5 4.5"/><path d="M12.5 2.5v11"/><path d="M4 8h5.5"/></svg>
+      </button>
+      <button type="button" class="np-tab" id="npToc" data-i18n="np.toc">目录</button>
+      <button type="button" class="np-tab" id="npAi" data-i18n="np.ai">智能助手</button>
+      <button type="button" class="np-tab" id="npMore" data-i18n="np.more">更多</button>
+    </div>
+    <div class="np-col">
+    <!-- 面板内容区：目录（章节管理并入） ｜ 智能助手 ｜ 更多（报告＋知识库＋版式 三段） -->
+    <div class="np-body">
+      <section class="np-pane on" id="paneToc">
+        <div class="np-pane-h" data-i18n="toc.h">目录</div>
+        <ul class="toc-list" id="tocList"></ul>
+      </section>
+      <!-- 条目 34：智能助手＝嵌进侧栏的对话面板（不再是半透明浮层） -->
+      <section class="np-pane" id="paneAi">
+        <!-- v5：「这一轮是谁答的」徽标住面板顶上（v3 起它挤在模型选择行前面，像个看不懂的字段） -->
+        <div class="np-pane-h"><span data-i18n="np.ai">智能助手</span><span class="ai-src" id="aiSrc" hidden></span></div>
+        <div class="np-ai-face" id="aiPane">
+          <div class="ai-head">
+            <div class="ai-title" data-i18n="tab.ai">AI 对话</div>
+            <div class="ai-modes" id="aiModes" role="group" aria-label="mode">
+              <button type="button" class="ai-mode" data-mode="idea" data-i18n="ai.modeIdea">聊想法</button>
+              <button type="button" class="ai-mode on" data-mode="paper" data-i18n="ai.modePaper">写论文</button>
+            </div>
+            <button type="button" class="ai-clear" id="aiFab" data-i18n="ai.clear">清空</button>
+          </div>
+          <!-- 段六：纪律角标（常驻） -->
+          <div class="ai-disc"><span class="dot"></span><span data-i18n="ai.discipline">示例数不是你的结果：没有真实跑出来的数，不要写进稿。</span></div>
+          <div class="ai-ctx" id="aiCtx"></div>
+          <!-- v5：面板不再自带一段「后端说明」气泡——那是说明书，不是这一轮的反馈。 -->
+          <div class="ai-msgs" id="aiMsgs"></div>
+          <div class="ai-quick">
+            <button type="button" class="aq" data-q="1" data-i18n="ai.q1">① 总结这篇论文的状态</button>
+            <button type="button" class="aq" data-q="2" data-i18n="ai.q2">② 这一段有什么可改的？</button>
+            <button type="button" class="aq" data-q="3" data-i18n="ai.q3">③ 这段为什么被标了缺作者</button>
+          </div>
+          <!-- 条目 42／v4：模型选择行（模型＋思考等级；清单由 JS 按当前盘拉取） -->
+          <div class="ai-modelrow">
+            <label for="aiModel" data-i18n="ai.model">模型</label>
+            <select id="aiModel" autocomplete="off" aria-label="model"></select>
+            <!-- v4：思考等级——只有选中的模型真支持这些档时才显出来 -->
+            <label for="aiEffort" id="aiEffortLabel" data-i18n="ai.effort" hidden>思考</label>
+            <select id="aiEffort" autocomplete="off" aria-label="effort" hidden></select>
+            <!-- v4：自定义模型（凭据只落插件私有目录） -->
+            <button type="button" class="ai-addmodel" id="aiAddModel" data-i18n="ai.addModel" hidden>＋ 模型</button>
+            <button type="button" class="ai-delmodel" id="aiDelModel" data-i18n="ai.delModel" data-i18n-title="ai.delModelT" title="删除这个自定义模型" hidden>✕</button>
+          </div>
+          <!-- 条目 42：发送钮内嵌输入框（.ai-box 相对定位，发送钮绝对定位在右下角） -->
+          <div class="ai-input">
+            <div class="ai-box">
+              <textarea id="aiText" rows="3" data-i18n-ph="ai.ph" placeholder="问一句…" autocomplete="off"></textarea>
+              <button type="button" id="aiSend" data-i18n="ai.send">发送</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- 条目 33：更多＝三段合并面板（上：实验报告 / 中：知识库 / 下：版式） -->
+      <section class="np-pane" id="paneMore">
+        <div class="np-sec" id="secReports">
+          <div class="np-pane-h">
+            <span data-i18n="np.reports">实验报告</span>
+            <button type="button" class="np-mini" id="npImportBtn" data-i18n="np.import">从外部导入</button>
+          </div>
+          <!-- 条目 35：纪律提示（浅色小字） -->
+          <p class="np-note" data-i18n="more.rpNote">导入进来的都在待核对区；转正走闸，不在面板里</p>
+          <div class="np-reports" id="npReportsList"></div>
+        </div>
+        <div class="np-sec" id="secKb">
+          <div class="np-pane-h">
+            <span data-i18n="np.kb">知识库</span>
+            <button type="button" class="np-mini" id="npKbUploadBtn" data-i18n="np.kbUpload">上传文件</button>
+          </div>
+          <!-- 条目 35：纪律提示（浅色小字） -->
+          <p class="np-note" data-i18n="more.kbNote">源文件只读；上传的资料才可删除</p>
+          <input type="file" id="npKbUpload" hidden>
+          <div class="kb-wrap">
+            <ul class="kb-files" id="kbFiles"></ul>
+          </div>
+        </div>
+        <div class="np-sec" id="secLedger">
+          <div class="np-pane-h">
+            <span data-i18n="np.ledger">事实账</span>
+            <button type="button" class="np-mini" id="npAddFactBtn" data-i18n="np.addFact">追加事实</button>
+          </div>
+          <p class="np-note" data-i18n="more.factNote">记账走提议单：建单不写盘，采纳才落账</p>
+        </div>        <div class="np-sec" id="secVenue">
+          <div class="np-pane-h">
+            <span data-i18n="np.venue">版式</span>
+            <button type="button" class="np-mini" id="npVenueGuideBtn" data-i18n="np.venueGuide">选刊指南</button>
+          </div>
+          <div class="vn-face">
+            <label class="vn-l" for="vnVenue" data-i18n="vn.venue">目标刊物 / 会议</label>
+            <input type="text" id="vnVenue" data-i18n-ph="vn.venuePh" placeholder="例如：ACL 2026">
+            <label class="vn-l" for="vnDeadline" data-i18n="vn.deadline">截稿日期</label>
+            <input type="date" id="vnDeadline">
+            <div class="vn-acts">
+              <button type="button" class="np-btn" id="vnSave" data-i18n="vn.save">保存版式配置</button>
+              <span class="vn-msg" id="vnMsg"></span>
+            </div>
+            <div class="vn-lock" id="vnLock"></div>
+            <div class="vn-dl" id="vnDeadlineInfo"></div>
+            <div class="vn-sec-h" data-i18n="vn.templates">模板库</div>
+            <div class="vn-tpl" id="vnTemplates"></div>
+          </div>
+        </div>
+      </section>
+    </div><!-- /np-body -->
+    </div><!-- /np-col -->
+  </aside>
+
+  <!-- 收起后：窗缘只剩一枚图标展开钮 -->
+  <!-- 条目 39：收起态贴右缘中部的竖排「展开导航」标签（醒目，不是小图标） -->
+  <button type="button" class="nav-open" id="navOpen" data-i18n="nav.open">展开导航</button>
+
+  <!-- 条目 34：半透明悬浮对话层整条拆除；助手已嵌进右栏侧边栏的「智能助手」面板。 -->
+
+</div>
+
+<div id="toast"></div>
+
+<!-- 数字芯片下钻：证据卡 -->
+<div class="fact-card" id="factCard" hidden>
+  <div class="fc-h"><span class="k" id="fcId">—</span><span class="fc-close" id="fcClose">×</span></div>
+  <div class="fc-body" id="fcBody"></div>
+  <div class="fc-foot" id="fcFoot"></div>
+</div>
+
+<!-- 常用功能的结果模态（PDF / 投稿包 / 打开目录） -->
+<div class="modal" id="modalAction" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" id="actTitle">—</div>
+    <div class="modal-body" id="actBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="actClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全检：检查报告 ＋ 机器底账 -->
+<div class="modal" id="modalCheck" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t">
+      <span data-i18n="np.check">全检一次</span>
+      <span class="mt-tabs">
+        <button type="button" class="mt-tab on" data-mt="report" data-i18n="tab.report">检查报告</button>
+        <button type="button" class="mt-tab" data-mt="machine" data-i18n="tab.machine">机器底账</button>
+      </span>
+    </div>
+    <div class="modal-body">
+      <div class="mt-pane on" id="mtReport">
+        <div class="rp-tools">
+          <button type="button" class="rp-run" id="rpRerun" data-i18n="rp.rerun">重跑检查</button>
+          <button type="button" class="btn-ghost rp-ai-btn" id="askReportRead" data-i18n="rp.read" data-i18n-title="rp.readT" title="AI 用大白话总评当前检查结果">让 AI 解读这份报告</button>
+          <span class="rp-tools-note" id="rpRerunNote" hidden></span>
+        </div>
+
+        <!-- 段三：体检（折叠卡，默认收起） -->
+        <section class="rcard fold" id="cardHealth">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="hc.h">体检</span>
+            <span class="fold-badge" id="badgeHealth">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyHealth">
+            <div class="st-row">
+              <div class="st ok" id="stFacts">—</div>
+              <div class="st ok" id="stSections">—</div>
+            </div>
+            <div class="kv" id="stHealthKv"></div>
+            <div class="st-sub" id="stNote"></div>
+            <div class="rp-card-err" id="stRerunErr" hidden></div>
+          </div>
+        </section>
+
+        <!-- 段三：发现（折叠卡，默认收起） -->
+        <section class="rcard fold" id="cardFindings">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="rp.findings">发现</span>
+            <span class="fold-badge" id="badgeFindings">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyFindings"></div>
+        </section>
+
+        <!-- 段三：四步链（折叠卡，默认收起） -->
+        <section class="rcard fold" id="cardChain">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="rp.chain">四步链</span>
+            <span class="fold-badge" id="badgeChain">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyChainSteps"></div>
+        </section>
+
+        <!-- 证据锁：独立只读卡（参考读数；四步链「出证」的判定不动） -->
+        <section class="rcard fold" id="cardEvidence">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="rp.evidenceLock">证据锁</span>
+            <span class="fold-badge" id="badgeEvidence">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyEvidence"></div>
+        </section>
+
+        <!-- 附加只读闸：文风闸（P0-1） -->
+        <section class="rcard fold" id="cardStyle">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="rp.style">文风闸</span>
+            <span class="fold-badge" id="badgeStyle">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyStyle"></div>
+        </section>
+
+        <!-- 附加只读闸：双语对账（P0-1） -->
+        <section class="rcard fold" id="cardMirror">
+          <button type="button" class="rc-fold-h">
+            <span class="rc-t" data-i18n="rp.mirror">双语对账</span>
+            <span class="fold-badge" id="badgeMirror">—</span>
+            <svg class="fold-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <div class="rc-fold-b" id="bodyMirror"></div>
+        </section>
+      </div>
+
+      <div class="mt-pane" id="mtMachine">
+        <div class="mv-head">
+          <div class="t" data-i18n="mv.h">机器视图</div>
+          <div class="sub" data-i18n="mv.sub">这一层是给工具看的，不是给稿子看的——按主题折叠，点开看细节。</div>
+        </div>
+        <div class="acc" id="mvAcc">
+          <!-- 段三：账本表 -->
+          <section class="acc-card" id="accLedger">
+            <button type="button" class="acc-h">
+              <span class="acc-t" data-i18n="mv.ledger">账本表</span>
+              <span class="acc-badge" id="badgeLedger">—</span>
+              <svg class="acc-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+            <div class="acc-b" id="bodyLedger"></div>
+          </section>
+
+          <!-- 段三：正文扫描 -->
+          <section class="acc-card" id="accScan">
+            <button type="button" class="acc-h">
+              <span class="acc-t" data-i18n="mv.scan">正文扫描</span>
+              <span class="acc-badge" id="badgeScan">—</span>
+              <svg class="acc-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+            <div class="acc-b" id="bodyScan"></div>
+          </section>
+
+          <!-- 段三：文献与证据链 -->
+          <section class="acc-card" id="accEvidence">
+            <button type="button" class="acc-h">
+              <span class="acc-t" data-i18n="mv.evidence">文献与证据链</span>
+              <span class="acc-badge" id="badgeEvidence">—</span>
+              <svg class="acc-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+            <div class="acc-b" id="bodyEvidence"></div>
+          </section>
+
+          <!-- 段三：导出与命令 -->
+          <section class="acc-card" id="accExport">
+            <button type="button" class="acc-h">
+              <span class="acc-t" data-i18n="mv.export">导出与命令</span>
+              <span class="acc-badge" id="badgeExport">—</span>
+              <svg class="acc-chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+            </button>
+            <div class="acc-b" id="bodyExport"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="modalCheckClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modalNew" hidden>
+  <div class="modal-card">
+    <div class="modal-t" data-i18n="toc.newT">新建章节</div>
+    <label class="modal-l" data-i18n="toc.newTitle">章节标题</label>
+    <input type="text" id="newSecTitle" data-i18n-ph="toc.newTitlePh" placeholder="例如：实验设置">
+    <label class="modal-l" data-i18n="toc.newSlug">文件名（可空）</label>
+    <input type="text" id="newSecSlug" data-i18n-ph="toc.newSlugPh" placeholder="setup">
+    <div class="modal-acts">
+      <button type="button" class="btn-primary" id="newSecOk" data-i18n="toc.create">创建</button>
+      <button type="button" class="btn-ghost" id="newSecCancel" data-i18n="pf.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 改章节名：只改这一节的标题命令，别的字一个不动 -->
+<div class="modal" id="modalRename" hidden>
+  <div class="modal-card">
+    <div class="modal-t" data-i18n="toc.renameT">改这一节的标题</div>
+    <label class="modal-l" data-i18n="toc.newTitle">章节标题</label>
+    <input type="text" id="rnTitle" data-i18n-ph="toc.renamePh" placeholder="例如：实验设置" autocomplete="off">
+    <div class="modal-acts">
+      <button type="button" class="btn-primary" id="rnOk" data-i18n="pf.save">保存</button>
+      <button type="button" class="btn-ghost" id="rnCancel" data-i18n="pf.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 改论文标题：改的是这个盘自己入口文件里的标题命令（主标题 ＋ 副标题） -->
+<div class="modal" id="modalTitle" hidden>
+  <div class="modal-card">
+    <div class="modal-t" data-i18n="title.editT">改论文标题</div>
+    <label class="modal-l" data-i18n="title.main">主标题</label>
+    <input type="text" id="dtTitle" autocomplete="off">
+    <label class="modal-l" data-i18n="title.sub">副标题</label>
+    <input type="text" id="dtSub" autocomplete="off">
+    <p class="modal-hint" data-i18n="title.hint">改的是这个盘自己的入口文件里的标题命令；副标题可留空。</p>
+    <div class="modal-acts">
+      <button type="button" class="btn-primary" id="dtOk" data-i18n="pf.save">保存</button>
+      <button type="button" class="btn-ghost" id="dtCancel" data-i18n="pf.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 插入事实：数字只能来自事实账（账上没有的不得编造） -->
+<div class="modal" id="modalFactIns" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" data-i18n="fact.insT">插入一条事实（数字来自事实账）</div>
+    <p class="modal-hint" data-i18n="fact.insHint">数字只能用事实账里的 value。</p>
+    <input type="search" id="fiSearch" data-i18n-ph="fact.insPh" placeholder="按 id 或主张筛选…" autocomplete="off">
+    <div class="fi-list" id="fiList"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="fiCancel" data-i18n="pf.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modalFindings" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" data-i18n="rp.findingsT">发现明细</div>
+    <div class="modal-body" id="modalFindingsBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="modalFindingsClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="wizardModal" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" data-i18n="wz.title">导入实验报告</div>
+    <div class="modal-body">
+      <div class="wsteps">
+        <span class="wstep on" data-ws="1"><i>1</i><span data-i18n="wz.s1">选文件</span></span>
+        <span class="wstep" data-ws="2"><i>2</i><span data-i18n="wz.s2">字段映射</span></span>
+        <span class="wstep" data-ws="3"><i>3</i><span data-i18n="wz.s3">确认绑定</span></span>
+      </div>
+
+      <div class="wpane on" id="wpane1">
+        <p class="d-note" data-i18n="wz.s1.h">下面是本项目 reports 目录里的真实文件；也可以直接上传一份。</p>
+        <div id="wzFiles"></div>
+        <div class="wz-upload">
+          <label class="btn-ghost" for="wzUpload" data-i18n="wz.s1.upload">上传文件</label>
+          <input type="file" id="wzUpload" hidden>
+          <span class="wz-up-name" id="wzUpName"></span>
+        </div>
+      </div>
+
+      <div class="wpane" id="wpane2">
+        <p class="d-note" data-i18n="wz.s2.h">把报告里的指标对到论文事实账的字段；对不上的可以先跳过。</p>
+        <div class="wz-failed" id="wzFailed" hidden></div>
+        <div class="wz-status" id="wzStatus"></div>
+        <table class="mt wz-table" id="wzMapTable">
+          <thead><tr>
+            <th data-i18n="wz.col.id">报告 id</th>
+            <th data-i18n="wz.col.claim">断言</th>
+            <th data-i18n="wz.col.val">报告值</th>
+            <th data-i18n="wz.col.field">事实账字段</th>
+          </tr></thead>
+          <tbody id="wzRows"></tbody>
+        </table>
+      </div>
+
+      <div class="wpane" id="wpane3">
+        <p class="d-note" data-i18n="wz.s3.h">确认后写入草稿，交人核对后才进正式事实账。</p>
+        <div id="wzSummary" class="wz-summary"></div>
+      </div>
+    </div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="wzCancel" data-i18n="pf.cancel">取消</button>
+      <button type="button" class="btn-ghost" id="wzBack" data-i18n="wz.back">上一步</button>
+      <button type="button" class="btn-primary" id="wzNext" data-i18n="wz.next">下一步</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 追加事实：两步表单（挑产物 → 说清这条数字 ＋ 落哪本账） -->
+<div class="modal" id="modalFact" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t"><span data-i18n="ff.title">追加一条事实</span></div>
+    <div class="modal-body">
+      <div class="wsteps">
+        <span class="wstep on" data-fs="1"><i>1</i><span data-i18n="ff.s1">挑产物</span></span>
+        <span class="wstep" data-fs="2"><i>2</i><span data-i18n="ff.s2">说清这条数字</span></span>
+      </div>
+
+      <div class="wpane on" id="fpane1">
+        <p class="d-note" data-i18n="ff.s1.h">下面是本盘的真实产物：已签的一组、没进清单的另一组。选中即填成 source，hash 由工具现算。</p>
+        <div class="af-notes" id="afNotes"></div>
+        <input type="search" id="afSearch" class="af-search" data-i18n-ph="ff.s1.ph" placeholder="按文件名筛选…" autocomplete="off">
+        <div class="af-groups">
+          <div class="af-group">
+            <div class="af-group-h" data-i18n="ff.g.signed">已签产物</div>
+            <div class="af-list" id="afSigned"></div>
+          </div>
+          <details class="af-group af-fold" id="afUnsignedFold">
+            <summary class="af-group-h af-fold-h">
+              <span data-i18n="ff.g.unsignedFold">搜索未签产物</span>
+              <span class="af-tag" data-i18n="ff.tag.unsigned">未签（需人签后才能作数）</span>
+            </summary>
+            <div class="af-list" id="afUnsigned"></div>
+          </details>
+        </div>
+      </div>
+
+      <div class="wpane" id="fpane2">
+        <p class="d-note" data-i18n="ff.s2.h">说清这条数字主张什么、来自产物的哪一处；落到哪本账由你定。</p>
+        <div class="af-src" id="afSrc"></div>
+        <div class="af-fields">
+          <label class="af-field"><span data-i18n="ff.f.id">事实 id</span>
+            <input type="text" id="afId" autocomplete="off"></label>
+          <label class="af-field"><span data-i18n="ff.f.claim">一句话主张</span>
+            <input type="text" id="afClaim" autocomplete="off"></label>
+          <label class="af-field"><span data-i18n="ff.f.value">数字原文</span>
+            <input type="text" id="afValue" autocomplete="off"></label>
+          <label class="af-field"><span data-i18n="ff.f.locator">在产物里的位置</span>
+            <input type="text" id="afLocator" autocomplete="off"></label>
+          <label class="af-field"><span data-i18n="ff.f.conf">置信度</span>
+            <select id="afConfidence">
+              <option value="high" data-i18n="ff.conf.high">high</option>
+              <option value="med" selected data-i18n="ff.conf.med">med</option>
+              <option value="low" data-i18n="ff.conf.low">low</option>
+            </select></label>
+          <label class="af-field"><span data-i18n="ff.f.note">备注（可选）</span>
+            <input type="text" id="afNote" autocomplete="off"></label>
+        </div>
+        <p class="d-note af-valuehint" data-i18n="ff.f.valueHint">value 必须是产物里的原文——正文要绑的就是它。</p>
+        <div class="af-ledger">
+          <div class="af-group-h" data-i18n="ff.ledger.h">落哪本账</div>
+          <p class="d-note" id="afLedgerHint"></p>
+          <div class="af-list" id="afLedgers"></div>
+          <input type="text" id="afNewLedger" class="af-newledger" data-i18n-ph="ff.ledger.newPh" placeholder="例 i_topic.toml" hidden>
+        </div>
+      </div>
+    </div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="afCancel" data-i18n="pf.cancel">取消</button>
+      <button type="button" class="btn-ghost" id="afBack" data-i18n="wz.back">上一步</button>
+      <button type="button" class="btn-primary" id="afNext" data-i18n="wz.next">下一步</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="modalGuide" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" data-i18n="guide.title">选刊指南</div>
+    <div class="modal-body" id="guideBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="guideClose" data-i18n="rp.close">关闭</button>
+      <button type="button" class="btn-primary" id="guideGo" data-i18n="guide.go">按目标版式预览并开写</button>
+    </div>
+  </div>
+</div>
+
+<!-- 条目 35：知识库预览模态（不再是侧栏内嵌框） -->
+<div class="modal" id="modalKb" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" id="kbModalTitle">—</div>
+    <div class="modal-body" id="kbModalBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="kbModalClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 条目 35：实验报告详情模态 -->
+<div class="modal" id="modalRp" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" id="rpModalTitle">—</div>
+    <div class="modal-body" id="rpModalBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-danger" id="rpModalDel" data-i18n="rp.card.del">删除</button>
+      <button type="button" class="btn-ghost" id="rpModalClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- v2：提议单差异卡（AI 提议 → 人确认才写回） -->
+<div class="modal" id="modalProposal" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t">
+      <span data-i18n="proposal.title">待确认的改稿提议</span>
+    </div>
+    <div class="modal-body">
+      <div id="proposalList"></div>
+    </div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="proposalClose" data-i18n="rp.close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- v4：自定义模型（OpenAI 兼容端点）表单：凭据只进插件私有目录 -->
+<div class="modal" id="modalCustomModel" hidden>
+  <div class="modal-card">
+    <div class="modal-t"><span data-i18n="ai.cmTitle">添加自定义模型</span></div>
+    <div class="modal-body">
+      <label class="cm-field"><span data-i18n="ai.cmLabel">名称</span><input type="text" id="cmLabel" autocomplete="off"></label>
+      <label class="cm-field"><span data-i18n="ai.cmBaseUrl">Base URL</span><input type="text" id="cmBaseUrl" autocomplete="off" placeholder="https://api.example.com/v1"></label>
+      <label class="cm-field"><span data-i18n="ai.cmModel">模型名</span><input type="text" id="cmModel" autocomplete="off"></label>
+      <label class="cm-field"><span data-i18n="ai.cmKey">API Key</span><input type="password" id="cmKey" autocomplete="off"></label>
+      <p class="cm-hint" data-i18n="ai.cmHint">密钥只存在插件自己的私有目录里，不进论文目录，也不写进稿件。</p>
+      <div class="cm-err" id="cmErr" hidden></div>
+    </div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="cmCancel" data-i18n="ai.cmCancel">取消</button>
+      <button type="button" class="btn-primary" id="cmSave" data-i18n="ai.cmSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 条目 35：通用确认模态 -->
+<div class="modal" id="modalConfirm" hidden>
+  <div class="modal-card">
+    <div class="modal-t" id="cfTitle">—</div>
+    <div class="modal-body" id="cfBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="cfCancel" data-i18n="confirm.cancel">取消</button>
+      <button type="button" class="btn-danger" id="cfOk" data-i18n="confirm.ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

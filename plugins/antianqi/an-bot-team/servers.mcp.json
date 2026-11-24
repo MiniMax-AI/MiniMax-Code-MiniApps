@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "an-bot-team": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9/mcp/an-bot-team",
+      "headers": {},
+      "description": "An-bot-team team tools: view and manage Bots and groups, message other Bots, and read and write Bot memory.",
+      "timeout": 900000
+    }
+  }
+}

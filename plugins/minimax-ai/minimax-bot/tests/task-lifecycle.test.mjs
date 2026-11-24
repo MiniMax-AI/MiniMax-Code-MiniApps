@@ -31,6 +31,8 @@ async function fixture(t) {
   const memory = new MemoryStore(dir);
   await memory.init();
   setLocale("en");
+  // A restarted store restores the locale from its saved settings.
+  store.state.settings.language = "en";
   const a = { id: "bot_a", name: "Alice", isMain: true };
   const b = { id: "bot_b", name: "Bob" };
   const group = {
@@ -1033,3 +1035,23 @@ for (const continuation of ["questionnaire", "dependency verification"]) {
     await recoveredStore.writeChain;
   });
 }
+
+test("a discussion in which every member passes finishes as done with an empty result", async (t) => {
+  const { engine, store, group } = await fixture(t);
+  // Every member that is called has nothing to add.
+  engine.agent = { async run(input, options) { return agentResult(input, options, "[PASS]"); } };
+
+  await engine.tasks.dispatch(undefined, { request_id: "all-pass", group: group.id, message: "Anything to add?" }, undefined, true);
+  await until(() => idle(engine));
+
+  const task = engine.tasks.tasks[0];
+  // The round ran to the end: nothing was cancelled, and no work is left waiting.
+  assert.equal(task.status, "done", `task ended as ${task.status}`);
+  assert.equal(task.result, "");
+  assert.equal(task.error, undefined);
+  assert.equal(task.remainder?.length ?? 0, 0);
+  // The passes themselves are still recorded, and still marked as such.
+  const passes = (await store.getMessages(`group:${group.id}`)).filter((message) => message.status === "pass");
+  assert.ok(passes.length >= 1, "the member's pass is still in the chat, marked as a pass");
+  assert.ok(passes.every((message) => /^\s*\[?PASS\]?\s*[.。]?\s*$/i.test(message.text)));
+});

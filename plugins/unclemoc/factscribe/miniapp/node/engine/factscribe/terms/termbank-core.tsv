@@ -1,0 +1,154 @@
+# termbank 核心层（status = draft/stable），由 sia-harness 的制品一次性导出，本仓不写导入器。
+# 生成：python3.14 + siakit.termbank.load('nomenclator/termbank.tb')；库版本 18，entries 2206115。
+id	cn	en	aliases	slot	status
+flow-adrreg	裁定登记器	adrreg	ADR 收表器	flow	draft
+flow-assembler	装配器	assembler	反构金标	flow	draft
+flow-atom	原子	atom		flow	draft
+flow-backlog	候办账	backlog	挂账单|候办清单	flow	draft
+flow-bench	试验台	bench		flow	draft
+flow-breakdown	拆命题	breakdown		flow	draft
+flow-briefing	上下文装配器	briefing		flow	draft
+flow-browse	无头浏览	browse	无头浏览器	flow	draft
+flow-changescan	变更史器	changescan		flow	draft
+flow-closure	收口	closure		flow	draft
+flow-cluster	簇	cluster		flow	draft
+flow-cmdreg	命令登记器	cmdreg		flow	draft
+flow-conflict	检	conflict		flow	draft
+flow-decompose	拆	decompose		flow	draft
+flow-dedupe	查	dedupe	翻得着	flow	draft
+flow-docscan	文档扫描器	docscan		flow	draft
+flow-docsify	落	docsify		flow	draft
+flow-drafter	写验收	acceptance-drafter	drafter	flow	draft
+flow-elicitor	找疑问	elicitor		flow	draft
+flow-five-keys	五键	five keys		flow	draft
+flow-fold	折叠器	fold		flow	draft
+flow-inquiry	问询	inquiry		flow	draft
+flow-intent-root	意图根	intent root	intent-root	flow	draft
+flow-judge	裁	judge		flow	draft
+flow-judgement-case	裁决案	judgement case	案卷	flow	draft
+flow-lease	写锁	lease		flow	draft
+flow-llmwiki	工程实践知识包	llmwiki	知识包	flow	draft
+flow-modgraph	模块图扫描器	modgraph		flow	draft
+flow-mutation-differential	变异对照	mutation-diff	两世界|两世界对照	flow	draft
+flow-nomenclator	词册	nomenclator	术语册	flow	draft
+flow-oqc	出货检验	oqc	出厂检验	flow	draft
+flow-pending-form	待填文件	pending form		flow	draft
+flow-pilot	试车线	pilot		flow	draft
+flow-recon	语义侦察微件	recon	语义侦察	flow	draft
+flow-safety-filter	安全员	safety-filter	安全词面检出器	flow	draft
+flow-siakit	标准件库	siakit		flow	draft
+flow-slicer	切片器	slicer		flow	draft
+flow-source-sentence	源句	source sentence		flow	draft
+flow-storyteller	转故事	storyteller		flow	draft
+flow-switchboard	网关	gateway	总机|switchboard	flow	draft
+flow-testscan	测试发现器	testscan		flow	draft
+flow-tracer	溯源	tracer		flow	draft
+flow-traveler	随工账	traveler		flow	draft
+flow-tree	树	tree		flow	draft
+flow-triage	分诊器	triage	入口分诊	flow	draft
+flow-trilink	追溯矩阵器	trilink		flow	draft
+flow-verify	闸	verify		flow	draft
+flow-wash	洗	wash		flow	draft
+flow-wcs	车间调用标准	WCS	信封	flow	draft
+flow-workshop	车间	workshop		flow	draft
+obj-add	增加	add	新增|添加	obj	draft
+obj-archive	压缩包	archive	加密包	obj	draft
+obj-atomic-id	原子号	atomic id	原子短号	obj	draft
+obj-auth	鉴权	authentication	身份验证	obj	draft
+obj-autostart	开机自启	autostart	自动运行	obj	draft
+obj-balance	余额	balance	剩多少钱	obj	draft
+obj-batch-generate	批量生成	batch generation	一口气出	obj	draft
+obj-binary	二进制	single binary	单二进制	obj	draft
+obj-cache	缓存	cache	Redis	obj	draft
+obj-capability	能力	capability	业务能力	obj	draft
+obj-checkin-days	打卡天数	check-in days	天数|连续天数	obj	draft
+obj-collab	协作	collaboration	多人协作	obj	draft
+obj-community	社区	community	社区功能	obj	draft
+obj-company-intro	公司介绍	company introduction	介绍页	obj	draft
+obj-cost	成本	cost	预算|硬件成本	obj	draft
+obj-dashboard	大屏	dashboard	实时大屏	obj	draft
+obj-data	数据	data	日志|抄表数据	obj	draft
+obj-directory	目录	directory	sih目录	obj	draft
+obj-document	文档	document	编辑	obj	draft
+obj-ecommerce	电商	e-commerce	电商模块	obj	draft
+obj-effects	特效	visual effects	粒子特效	obj	draft
+obj-encrypted-tunnel	加密隧道	encrypted tunnel	加密通道	obj	draft
+obj-filter	过滤	filter	筛选	obj	draft
+obj-firmware	固件	firmware	水表固件	obj	draft
+obj-fitness-app	健身应用	fitness app	健身App|打卡App|打卡	obj	draft
+obj-form	表单	contact form	联系表单	obj	draft
+obj-grouping	分组	grouping	分类|归类	obj	draft
+obj-health-check	健康检查	health check	存活探测	obj	draft
+obj-history	历史	history data	历史数据	obj	draft
+obj-lazy-load	懒加载	lazy loading	延迟加载	obj	draft
+obj-note	便签	desktop note	软件	obj	draft
+obj-pin-top	置顶	pin to top	顶置	obj	draft
+obj-pipeline	数据管线	data pipeline	日志管线|管线	obj	draft
+obj-protection	防护	protection	安全防护	obj	draft
+obj-readonly	只读	read-only	无法修改	obj	draft
+obj-rename	重命名	rename	修改文件名	obj	draft
+obj-report	报表	report	报表系统	obj	draft
+obj-restore	恢复	restore	改回来	obj	draft
+obj-robot	机器人	robot	巡检机器人	obj	draft
+obj-scan	扫码	scan code	扫一下	obj	draft
+obj-shop	店铺	shop	店家|门店	obj	draft
+obj-skeleton	框架	framework	骨架|架子	obj	draft
+obj-startup	启动	startup	打开速度|性能	obj	draft
+obj-todo	待办	todo	未完项	obj	draft
+obj-transport	搬运	transport	搬运功能	obj	draft
+obj-version	版本	version	历史版本	obj	draft
+obj-webpage	网页	web page	网页界面	obj	draft
+obj-wiring	接线	wiring design	接线设计	obj	draft
+obj-write-permission	写入权限	write permission	写入|权限	obj	draft
+obj-zodiac	生肖	Chinese zodiac	属相	obj	draft
+qual-about-twenty	约二十	about twenty	二十个|二十左右	qual	draft
+qual-bilingual	双语	bilingual	中英	qual	draft
+qual-by-month	按月份	by month	月份下钻	qual	draft
+qual-compatible	兼容	compatible	旧版	qual	draft
+qual-consistent	一致	consistent	分毫不差|无差|行为一致|准确|精准	qual	draft
+qual-daily	每日	daily	每天	qual	draft
+qual-display	显示	display	展示	qual	draft
+qual-faithful	如实	faithful	照实	qual	draft
+qual-fallback	兜底	fallback	红外兜底	qual	draft
+qual-fast	快速	fast	加载快|快	qual	draft
+qual-full-coverage	全覆盖	full coverage	一个都不能少	qual	draft
+qual-instant-open	秒开	instant open	秒级	qual	draft
+qual-low-cost	低成本	low cost	极低|廉价单核|最便宜	qual	draft
+qual-modern	现代	modern	最新	qual	draft
+qual-nightly-batch	夜间批量	nightly batch	夜批|夜间批	qual	draft
+qual-no-barrier	无门槛	no barrier	免门槛	qual	draft
+qual-no-egress	不外传	no egress	不出门|不出内网|传出店	qual	draft
+qual-no-loss	不丢	no loss	零丢失	qual	draft
+qual-no-replace	免更换	maintenance-free	不换电池	qual	draft
+qual-no-touch	零改动	untouched	零触碰	qual	draft
+qual-offline	不联网	offline	不连接网络	qual	draft
+qual-parameterized	参数化	parameterized	参数|参数区分	qual	draft
+qual-power-saving	省电	power saving	低耗|最低	qual	draft
+qual-quick-open	打开快	quick to open	快一点	qual	draft
+qual-realtime	实时	realtime	随时	qual	draft
+qual-round-ten-thousand	取整到万	round to ten-thousand	取整万	qual	draft
+qual-safety-first	安全第一	safety first	安全|安全优先	qual	draft
+qual-side-scroll	横版	side-scroll	横版闯关	qual	draft
+qual-silent	静默	silent	仅出错|仅报错|只报错	qual	draft
+qual-simple	简单	simple	简操作	qual	draft
+qual-single-command	单命令	single command	一条命令|单行	qual	draft
+qual-slow-speed	慢行	slow speed	慢速|缓行	qual	draft
+qual-smooth	流畅	smooth	不卡	qual	draft
+qual-solo	零子代理	solo	亲写|单线 solo	qual	draft
+qual-stop-on-person	见人即停	stop on person	见人停	qual	draft
+qual-stutter	卡顿	stutter	掉帧	qual	draft
+qual-ten-years	十年	ten years	电池十年	qual	draft
+qual-throughput	每秒十万	hundred-thousand per second	十万每秒	qual	draft
+qual-transparent-bg	透明背景	transparent background	无背景	qual	draft
+scope-all-staff	全员	all staff	多人|所有人	scope	draft
+scope-backend	后台	backend	手表后台	scope	draft
+scope-cloud	云端	cloud	云	scope	draft
+scope-crowded	人多	crowded area	人多处	scope	draft
+scope-customer	客户	customer	顾客	scope	draft
+scope-finance-ledger	财务账	finance ledger	财务	scope	draft
+scope-local	本地	local	本地存储|存本地	scope	draft
+scope-management	领导	leadership	管理层|老板	scope	draft
+scope-online	联机	online multiplayer	好友|好友联机	scope	draft
+scope-per-project	分项目	per project	按项目	scope	draft
+scope-per-service	各服务	per service	全服务	scope	draft
+scope-whole-warehouse	全仓	whole warehouse	全库区	scope	draft

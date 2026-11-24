@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -648,6 +648,44 @@ test('an interrupted associated assistant is reported as uncertain, and legacy m
   await restored.writeChain;
 });
 
+test('a request whose queue died with the process is still sendable from the page', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  // The process died after the inbox marked the batch processing and before any reply existed.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text: 'Ship the hotfix', clientMessageId: 'orphan-1',
+    clientMessageHash: engine.userMessageFingerprint('Ship the hotfix', []), dispatchState: 'processing',
+  });
+  await store.writeChain;
+
+  const restored = new Store(dir);
+  await restored.init();
+  let runs = 0;
+  const reopened = new Engine({ store: restored, memory, logger: { warn() {} }, broadcast() {}, retryDelaysMs: [], agent: {
+    async run(input, options) { runs += 1; return { ...started(input, options, 'resumed'), status: 'finished', text: 'Shipped' }; },
+  } });
+  reopened.startScheduler();
+  reopened.tasks.start();
+
+  // The load-time mapping keeps `pending`, which the client retry path needs. The queue that owned
+  // it is gone, so the resume route has to recognise it too or the request is stranded for good.
+  const afterRestart = (await restored.getMessages(chatId)).find((message) => message.id === user.id);
+  assert.equal(afterRestart.dispatchState, 'pending');
+  await until(() => idle(reopened));
+  // Nothing replays it on its own: the turn may already have run tools before the process died.
+  assert.equal(runs, 0);
+
+  await reopened.inbox.resume(chatId);
+  await until(() => idle(reopened));
+  assert.equal(runs, 1);
+  const messages = await restored.getMessages(chatId);
+  assert.equal(messages.find((message) => message.id === user.id).dispatchState, 'delivered');
+  assert.equal(messages.filter((message) => message.sourceMessageId === user.id).length, 1);
+  reopened.dispose();
+  await restored.writeChain;
+});
+
 test('repeated pending submissions do not duplicate queued turns or revive a deliberately cancelled queue', async (t) => {
   const { store, engine } = await fixture(t);
   const bot = store.state.bots[0];
@@ -1236,4 +1274,222 @@ test('sending after Stop does not restore an explicitly cancelled request that n
   assert.doesNotMatch(calls[0].text, /Cancelled task/);
   assert.equal(original.dispatchState, 'cancelled');
   assert.equal(replacement.dispatchState, 'delivered');
+});
+
+test('a resume that loses the race to a same-id retry does not send the request twice', async (t) => {
+  const { dir, store, memory, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const text = 'Ship the hotfix';
+  // A request the restart left pending, with no reply.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text, clientMessageId: 'race-1',
+    clientMessageHash: engine.userMessageFingerprint(text, []), dispatchState: 'pending',
+  });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'reply'), status: 'finished', text: 'Reply' };
+  } };
+
+  // Hold the resume's write, so the retry gets in first.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const realUpdate = store.updateMessages.bind(store);
+  let held = false;
+  store.updateMessages = async (id, ids, patch, options) => {
+    if (!held && patch?.dispatchState === 'pending') { held = true; await gate; }
+    return realUpdate(id, ids, patch, options);
+  };
+
+  const resuming = engine.inbox.resume(chatId).catch((error) => error);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await engine.sendUserMessage(chatId, text, [], 'race-1').catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  release();
+  await resuming;
+  await until(() => idle(engine));
+
+  // One request, one turn, one reply that answers it.
+  assert.equal(runs, 1);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.role === 'bot' && message.sourceMessageId === user.id).length, 1);
+  engine.dispose();
+  await store.writeChain;
+});
+
+test('a failed session write during a turn is reported, not thrown as an unhandled rejection', async (t) => {
+  const { dir, store, memory } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const rejected = [];
+  const onRejection = (error) => rejected.push(error);
+  process.on('unhandledRejection', onRejection);
+  t.after(() => process.removeListener('unhandledRejection', onRejection));
+
+  const logged = [];
+  const engine = new Engine({ store, memory, broadcast() {}, retryDelaysMs: [], logger: { warn: (key) => logged.push(key) }, agent: {
+    async run(input, options) {
+      options.onEvent({ type: 'turn.started', sessionId: 'host-session', turnId: 'turn-1' });
+      return { sessionId: 'host-session', turnId: 'turn-1', status: 'finished', text: 'Done' };
+    },
+  } });
+  // Every state write fails from here on.
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+
+  await engine.sendUserMessage(chatId, 'Ship the hotfix', [], 'session-write').catch(() => {});
+  await until(() => idle(engine));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // The Host fails the whole Mini App process on an unhandled rejection, so this one has to be caught.
+  assert.deepEqual(rejected.map((error) => error?.code ?? 'unknown'), []);
+  assert.ok(logged.includes('minimax_bot.session_save_failed'), `logged: ${logged.join(',')}`);
+  engine.dispose();
+  await store.writeChain.catch(() => {});
+});
+
+test('a failed save in the schedule tick is reported, not thrown as an unhandled rejection', async (t) => {
+  const { dir, store, memory } = await fixture(t);
+  const bot = store.state.bots[0];
+  const rejected = [];
+  const onRejection = (error) => rejected.push(error);
+  process.on('unhandledRejection', onRejection);
+  t.after(() => process.removeListener('unhandledRejection', onRejection));
+
+  // A schedule that is already due, so one tick touches it.
+  store.state.schedules.push({
+    id: 'sch_due', createdAt: Date.now(), name: 'Due', botId: bot.id, prompt: 'Ping',
+    kind: 'interval', time: '09:00', everyMinutes: 60, enabled: true, nextRunAt: Date.now() - 1000,
+  });
+  await store.save();
+
+  const logged = [];
+  const engine = new Engine({ store, memory, logger: { warn: (key) => logged.push(key) }, broadcast() {}, retryDelaysMs: [], agent: {
+    async run() { return { sessionId: 's', turnId: 'turn-2', status: 'finished', text: 'ok' }; },
+  } });
+  const statePath = join(dir, 'state.json');
+  await rm(statePath, { force: true });
+  await mkdir(statePath, { recursive: true });
+
+  // The scheduler fires the tick without awaiting it, so a rejection would surface as an unhandled
+  // rejection unless the engine catches it.
+  engine.startScheduler();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.deepEqual(rejected.map((error) => error?.code ?? 'unknown'), []);
+  assert.ok(logged.includes('minimax_bot.schedule_tick_failed'), `logged: ${logged.join(',')}`);
+  engine.dispose();
+  await store.writeChain.catch(() => {});
+});
+
+test('stopping a helper while its admission is still being saved stops it for good', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const finish = deferred();
+  const saveEntered = deferred();
+  const finishSave = deferred();
+  t.after(() => { finish.resolve(); finishSave.resolve(); });
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    const ids = started(input, options, 'source');
+    runs += 1;
+    await finish.promise;
+    return { ...ids, status: 'finished', text: 'Done' };
+  } };
+  const source = engine.runBotTurn({ bot, chatId, text: 'Start background work', kind: 'private' });
+  await until(() => runs === 1);
+
+  // Hold the save that admits the helper, so the stop lands while it is still `queued` and no run
+  // exists yet. That is the window the page's stop button can be pressed in.
+  const save = store.save.bind(store);
+  store.save = async () => {
+    if (store.state.helpers.some((helper) => helper.status === 'queued')) { saveEntered.resolve(); await finishSave.promise; }
+    return save();
+  };
+  const starting = engine.startHelper(bot, { task: 'A new task' });
+  await saveEntered.promise;
+  const queued = store.state.helpers.find((helper) => helper.status === 'queued');
+  assert.equal(engine.helperRuns.size, 0);
+  const stopped = engine.stopHelper(null, queued.id);
+  assert.equal(stopped.stopped, true);
+  finishSave.resolve();
+  await starting;
+
+  // The helper must stay stopped and must never start a background turn.
+  finish.resolve();
+  await source;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(store.state.helpers.find((helper) => helper.id === queued.id).status, 'stopped');
+  assert.equal(runs, 1);
+});
+
+test('a successful retry marks the request it answered as delivered', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  engine.agent = { async run(input, options) {
+    return { ...started(input, options, 'retry-reply'), status: 'finished', text: 'The answer' };
+  } };
+  // The first attempt failed and left its verdict on the user's line.
+  const user = await store.appendMessage(chatId, {
+    role: 'user', text: 'Do the thing', clientMessageId: 'retry-1',
+    clientMessageHash: engine.userMessageFingerprint('Do the thing', []), dispatchState: 'failed',
+  });
+  const failed = await store.appendMessage(chatId, {
+    role: 'bot', botId: bot.id, text: '', status: 'error', sourceMessageId: user.id,
+    retryable: true, retryInput: 'Do the thing', errorCode: 'agent_unavailable',
+  });
+  await store.writeChain;
+
+  await engine.retryMessage(chatId, failed.id);
+  await until(() => idle(engine));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  // The retry answered the same request, so its line is delivered now, not still "not sent".
+  const input = (await store.getMessages(chatId)).find((message) => message.id === user.id);
+  assert.equal(input.dispatchState, 'delivered');
+  engine.dispose();
+  await store.writeChain;
+});
+
+test('a group round whose members pass does not report a pass as its outcome', async (t) => {
+  const { store, engine } = await fixture(t);
+  const { a, chatId } = groupFixture(store);
+  // The only member to speak passes: the round produced nothing, so there is nothing to report.
+  engine.agent = { async run(input, options) {
+    return { ...started(input, options, 'pass-session'), status: 'finished', text: '[PASS]' };
+  } };
+
+  const result = await engine.driveGroup(store.state.groups[0], [a.id], undefined);
+
+  assert.equal(result.text, '', 'a round that only passed has no outcome to hand over');
+  assert.equal(result.status, 'done', 'the round finished; it was not a turn that never ran');
+  assert.doesNotMatch(String(result.text ?? ''), /PASS/i);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.status === 'pass').length, 1, 'the pass is still recorded in the chat');
+});
+
+test('a pass by the last speaker does not overwrite what an earlier one said', async (t) => {
+  const { store, engine } = await fixture(t);
+  const { a, b, chatId } = groupFixture(store);
+  store.state.groups[0].memberIds = [a.id, b.id];
+  // Alice speaks, Bob adds nothing: the round's outcome is Alice's text, not Bob's pass.
+  engine.agent = { async run(input, options) {
+    const alice = input.text.includes("It's your turn (Alice)");
+    return { ...started(input, options, alice ? 'a-session' : 'b-session'), status: 'finished',
+      text: alice ? '@Bob take a look' : '[PASS]' };
+  } };
+
+  const result = await engine.driveGroup(store.state.groups[0], [a.id], undefined);
+
+  assert.equal(result.text, '@Bob take a look');
+  assert.equal(result.status, 'done');
+  assert.doesNotMatch(String(result.text ?? ''), /PASS/i);
+  const messages = await store.getMessages(chatId);
+  assert.equal(messages.filter((message) => message.status === 'pass').length, 1);
 });

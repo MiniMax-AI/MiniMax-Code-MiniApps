@@ -36,9 +36,12 @@ async function fixture(t) {
   await memory.init();
   setLocale('en');
   const engine = new Engine({ store, memory, logger: { warn() {} }, broadcast() {}, retryDelaysMs: [] });
+  const runHelper = t.mock.method(engine, 'runHelper');
   t.after(async () => {
     engine.dispose();
-    await until(() => engine.running.size === 0 && engine.helperRuns.size === 0);
+    // A helper releases its slot before its final writes finish.
+    await Promise.all(runHelper.mock.calls.map(({ result }) => result));
+    await until(() => engine.running.size === 0);
     await store.writeChain;
     await rm(dir, { recursive: true, force: true });
   });

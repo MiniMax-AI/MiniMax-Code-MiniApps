@@ -100,6 +100,40 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - **Start new chat**, deleting a Bot and deleting a group all empty the transcript and then write the state that forgets the chat. When that state write failed, the empty transcript was already on disk: the request reported a failure, the chat was still listed, and its history was gone for good.
 - The state is now written first, and the in-memory session entry is dropped only after that write succeeded. A failure leaves the chat, its messages and its session cursor as they were, so the same action can simply be tried again.
 
+## 0.7.30 A create that fails does not leave the thing behind
+
+- Creating a Bot, a group or a scheduled task writes into the live state and then saves it. When that save failed, the new object stayed in memory: the request reported a failure while the Bot, group or task was already there, and the next unrelated save — changing a setting, any other write — published it to disk. After a restart the thing the user was told had failed was in the team.
+- A failed save now puts the state back: a new object is removed and a changed schedule returns to the values still on disk, so a refusal leaves nothing for a later save to publish. This is the rule `updateBot` already followed; the three create paths now do the same.
+
+## 0.7.31 A request the plugin already accepted is still sendable after a restart
+
+- MiniMax Code may stop the plugin's Node process while no page is visible, and it does so without a callback. A request that was already accepted and had produced no reply used to come back as waiting for a queue that no longer existed: it stayed in the chat with no answer, the page offered no way to send it again, and the resume route refused it. The request was unreachable for good.
+- The page now offers the same **Continue with follow-ups** button for it, and the resume route accepts it, so the request can be sent again. Nothing is replayed on its own: the turn may already have run tools before the process stopped, so sending it again stays the user's decision.
+- A request whose reply had already started is unchanged, and a request this page has just sent never offers to resume itself.
+
+## 0.7.32 A failed write is reported instead of taking the process down
+
+- Two writes the plugin fires and forgets had nothing to catch their failure: the session id recorded when a turn starts, and the scheduled-task scan that runs every 30 seconds. A failed write there became an unhandled rejection, and the Host fails the whole Mini App process on one of those — so a disk that would not take a write took every running turn with it, and the scheduled task kept retrying every 30 seconds.
+- Both now report the failure through the plugin log, the way the task save next to one of them already did. The turn carries on, and the scan keeps running.
+
+## 0.7.33 Stopping a queued background task actually stops it
+
+- The Stop button is offered for a background task that is still queued, but the request only found a run to abort once that task had started: pressed before then, it answered `stopped: false`, left the task queued, and the task started anyway. A queued task could not be stopped at all.
+- Stopping before the run exists now marks the task stopped and saves that, and a task already marked stopped no longer starts a background turn.
+- A task that had already started is unchanged: it is stopped by aborting its run, as before.
+
+## 0.7.34 A retry that succeeds clears the "not delivered" line it answers
+
+- When a turn failed, the user's message kept the failed delivery state even after the reply was retried successfully: the chat showed a reply next to an input still marked as not delivered, and the line stayed that way for good.
+- A retry that reaches the Host now marks the request it answered as delivered, so the badge matches what happened. Only a line still carrying the first attempt's verdict is changed; anything a later action wrote stays as it is.
+
+## 0.7.35 A round of passes does not hand [PASS] back as its outcome
+
+- When a member of a group has nothing to add it replies `[PASS]` and is skipped. That turn was still kept as the round's result, so a discussion that ended on a pass reported `[PASS]` as what it produced. A group task opened from a private chat showed exactly that in its result line.
+- It was worse when an earlier member had said something real: the last pass replaced the round's text with `[PASS]`, so the work that was actually done was dropped from the result and only the chat still had it.
+- A pass is no longer kept as the round's result, so a round that ends on a pass keeps the last thing that was really said. The pass itself is still marked and still skipped: nothing changes about who speaks.
+- A round in which every member passed still finished, so it ends as a finished round with an empty reply — not as a turn that never reached the Agent. Before this section, such a round settled its task as `cancelled`; it settles as `done` now.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

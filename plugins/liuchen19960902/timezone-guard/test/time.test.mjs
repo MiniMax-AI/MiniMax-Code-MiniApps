@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import time from '../miniapp/client/time.js';
 
-const { STORAGE_KEY, resolveZone, periodOf, bandOf, parseOffset, formatDiff, dayDelta } = time;
+const { STORAGE_KEY, resolveZone, periodOf, bandOf, parseOffset, formatDiff, dayDelta, relativeDayNote } = time;
 
 /**
  * 这里测的是 miniapp/client/time.js —— 浏览器和 Node 跑的是同一份源码，
@@ -88,6 +88,18 @@ test('dayDelta: 只看日历日，不看时刻', () => {
   // 跨月、跨年
   assert.equal(dayDelta(day(2026, 10, 1), day(2026, 9, 30)), 1);
   assert.equal(dayDelta(day(2027, 1, 1), day(2026, 12, 31)), 1);
+});
+
+test('relativeDayNote: 日期变更线两侧可相差两个日历日，同日没有后缀', () => {
+  // 2026-11-22T10:30Z：帕果帕果为 21 日 23:30，UTC 为 22 日，基里蒂马蒂为 23 日 00:30。
+  const pagoPago = { year: 2026, month: 11, day: 21 };
+  const utc = { year: 2026, month: 11, day: 22 };
+  const kiritimati = { year: 2026, month: 11, day: 23 };
+  assert.equal(relativeDayNote(pagoPago, kiritimati), '对方还在前天');
+  assert.equal(relativeDayNote(pagoPago, utc), '对方还在昨天');
+  assert.equal(relativeDayNote(utc, utc), '');
+  assert.equal(relativeDayNote(kiritimati, utc), '对方那边已是明天');
+  assert.equal(relativeDayNote(kiritimati, pagoPago), '对方那边已是后天');
 });
 
 test('periodOf: 中文时段替代 AM/PM', () => {

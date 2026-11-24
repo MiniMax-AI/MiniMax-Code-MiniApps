@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": {
+      "width": 1080,
+      "height": 780,
+      "minWidth": 480,
+      "minHeight": 420
+    }
+  },
+  "mcpEndpoints": [
+    {
+      "server": "github-star-shelf",
+      "path": "/mcp/github-star-shelf"
+    }
+  ],
+  "agentAccess": [
+    "session.run"
+  ],
+  "agentConcurrency": 4,
+  "engines": {
+    "mcode": ">=3.1.6"
+  }
+}

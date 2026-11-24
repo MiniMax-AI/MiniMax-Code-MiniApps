@@ -555,9 +555,11 @@ export function createConnectorRunner(context, options = {}) {
           // one when the mode says the picture is the ending.
           const anchor = shape.kind === 'lastFrame' ? shape.last.url : shape.first.url;
           request.input_image = { url: anchor };
-          // reference_type says which end the picture is: the first frame,
-          // the last one, or a clip that ends on it.
-          request.reference_type = shape.kind === 'keyframe' ? 'first_frame' : 'last_frame';
+          // reference_type says what input_image is. The provider takes
+          // ONE ending: when last_frame_image stands beside it, input_image
+          // has to be declared the first frame — declaring it the last one
+          // there is two endings, and the provider refuses the request.
+          request.reference_type = shape.kind === 'lastFrame' ? 'last_frame' : 'first_frame';
           // The frame decides the shape, so the provider ignores a ratio here.
           // Without a frame there is nothing to follow, and the run is a plain
           // text-to-video one that needs a shape of its own.

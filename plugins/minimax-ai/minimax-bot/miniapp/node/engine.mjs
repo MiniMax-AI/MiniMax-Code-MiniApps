@@ -137,6 +137,15 @@ function skippedTurn() {
 }
 
 /**
+ * Result of a round that ran to the end without producing any text: every member that was called
+ * passed. The round did finish, so this is a finished turn with an empty reply — not a turn that
+ * never reached the Agent, which would settle a group task as cancelled.
+ */
+function quietTurn() {
+  return { status: 'done', text: '', messageId: '', safeToContinue: true, accepted: true };
+}
+
+/**
  * Answer failures raised before the Host saved the answer: the questionnaire is still pending,
  * so the user may submit it again. Anything else (notably AGENT_OUTCOME_UNKNOWN) may already
  * have been recorded and must not be offered for a blind resend.
@@ -644,7 +653,8 @@ export class Engine {
             task.sessionId = event.sessionId;
             void this.tasks.save().catch((error) => this.logger.warn('minimax_bot.task_save_failed', { taskId: task.id, code: error?.code ?? 'unknown' }));
           }
-          void this.store.setSession(chatId, bot.id, { sessionId: event.sessionId });
+          void this.store.setSession(chatId, bot.id, { sessionId: event.sessionId })
+            .catch((error) => this.logger.warn('minimax_bot.session_save_failed', { chatId, code: error?.code ?? 'unknown' }));
           flush(true);
           break;
         case 'text.delta':
@@ -1332,18 +1342,21 @@ export class Engine {
         const handover = this.handoverFor(fresh, noteRound);
         hops += 1;
         const result = await this.runBotTurn({ bot, chatId, text: '', kind: 'group', sourceMessageId, sourceMessageIds, signal: options.signal, taskId: options.taskId, handover });
-        lastResult = result;
         accepted ||= result.accepted;
         if (result.status === 'aborted' && (options.signal?.aborted || loop.cancelled)) queue.unshift(botId);
-        if (result.safeToContinue === false) break;
+        if (result.safeToContinue === false) { lastResult = result; break; }
         // Resume this member's verification under the same task before advancing the group.
-        if (result.status === 'done' && result.waitingForTasks) break;
+        if (result.status === 'done' && result.waitingForTasks) { lastResult = result; break; }
         if (result.status === 'done' && !result.pendingQuestion && PASS_RE.test(result.text)) {
           await this.store.updateMessage(chatId, result.messageId, { status: 'pass' });
           const updated = (await this.store.getMessages(chatId)).find((m) => m.id === result.messageId);
           this.broadcast({ type: 'message.upsert', chatId, message: updated });
+          // A member that passes said nothing, so its turn is not the round's result: a round
+          // that ends on a pass hands over the last thing that was really said, not `[PASS]`.
+          // `lastResult` therefore keeps whatever the round produced before this pass.
           continue;
         }
+        lastResult = result;
         if (result.status === 'error' && !loop.cancelled) {
           // One member could not reply (its error and a retry button are in the chat): the round
           // goes on. If nobody else is queued, the admin picks it up so the user is not left hanging.
@@ -1389,7 +1402,11 @@ export class Engine {
         this.broadcastSummary(chatId);
       }
       if (!paused && loop.cancelled && queue.length) paused = 'interrupted';
-      return { ...(lastResult ?? skippedTurn()), accepted, paused, remaining: [...queue] };
+      // A round where every turn that ran only passed has no text to hand over, but it did run
+      // to the end: report it as a finished turn with an empty reply rather than as a turn that
+      // never reached the Agent, which settles a group task as cancelled instead of done.
+      const everybodyPassed = !lastResult && hops > 0;
+      return { ...(lastResult ?? (everybodyPassed ? quietTurn() : skippedTurn())), accepted, paused, remaining: [...queue] };
     } finally {
       if (this.groupLoops.get(chatId) === loop) this.groupLoops.delete(chatId);
       loop.cancelled = true;
@@ -1482,6 +1499,19 @@ export class Engine {
       this.broadcast({ type: 'message.upsert', chatId, message });
       const run = async () => {
         const result = await this.runBotTurn({ bot, chatId, text, kind: group ? 'group' : message.kind ?? 'private' });
+        // The retry answers the same request, so the input it belongs to is delivered now. Without
+        // this the user's line keeps the failed badge the first attempt set, and reads as "not sent"
+        // next to a reply that did arrive.
+        if (result.accepted && message.sourceMessageId) {
+          const history = await this.store.getMessages(chatId);
+          const input = history.find((m) => m.id === message.sourceMessageId);
+          // Only a line that still carries the first attempt's verdict: a later state (a newer
+          // supplement, a cancel) outranks this retry and must not be overwritten.
+          if (input && (input.dispatchState === 'failed' || input.dispatchState === 'uncertain')) {
+            await this.store.updateMessage(chatId, input.id, { dispatchState: 'delivered' });
+            this.broadcast({ type: 'message.upsert', chatId, message: input });
+          }
+        }
         if (!group || result.status !== 'done' || result.pendingQuestion || PASS_RE.test(result.text)) return;
         const next = this.mentionsIn(result.text, group, bot.id);
         if (next.length) await this.driveGroup(group, next);
@@ -1624,9 +1654,12 @@ export class Engine {
 
   // ------------------------------------------------------------------ schedules
   startScheduler() {
-    this.scheduleTimer = setInterval(() => void this.tickSchedules(), 30_000);
+    // A failed save inside the tick must not become an unhandled rejection: the Host turns one of
+    // those into a failed Mini App process, so a bad disk would take every running turn with it.
+    const tick = () => this.tickSchedules().catch((error) => this.logger.warn('minimax_bot.schedule_tick_failed', { code: error?.code ?? 'unknown' }));
+    this.scheduleTimer = setInterval(() => void tick(), 30_000);
     this.scheduleTimer.unref?.();
-    void this.tickSchedules();
+    void tick();
   }
 
   async tickSchedules() {
@@ -1797,6 +1830,9 @@ export class Engine {
   }
 
   async runHelper(helper) {
+    // The stop button can be pressed while the helper is still `queued` and no run exists yet; that
+    // path marks the helper stopped instead of aborting a controller. Nothing to do here then.
+    if (helper.status === 'stopped') return;
     const controller = new AbortController();
     const run = { controller };
     const approvals = new Set();
@@ -2000,9 +2036,21 @@ export class Engine {
     const helper = (this.store.state.helpers ?? []).find((h) => h.id === String(id ?? ''));
     if (!helper) throw new EngineError('not_found', t('err.helperMissing', { id: String(id ?? '') }));
     if (caller && !caller.isMain && helper.botId !== caller.id) throw new EngineError('forbidden', t('err.helperNotYours'));
+    const who = caller ? caller.name : 'user';
     const run = this.helperRuns.get(helper.id);
-    if (!run || !HELPER_ACTIVE.has(helper.status)) return { stopped: false, status: helper.status };
-    run.stoppedBy = caller ? caller.name : 'user';
+    if (!run) {
+      // A helper is in the list before `runHelper` registers a run for it, and the page offers the
+      // stop button for `queued` too. Without this the request is answered `stopped: false` and the
+      // job starts anyway: mark it so `runHelper` sees it and leaves it alone.
+      if (helper.status !== 'queued') return { stopped: false, status: helper.status };
+      helper.status = 'stopped';
+      helper.endedAt = Date.now();
+      void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_stop_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
+      this.broadcastHelpers();
+      return { stopped: true, status: 'stopped' };
+    }
+    if (!HELPER_ACTIVE.has(helper.status)) return { stopped: false, status: helper.status };
+    run.stoppedBy = who;
     run.controller.abort();
     return { stopped: true, status: 'stopped' };
   }

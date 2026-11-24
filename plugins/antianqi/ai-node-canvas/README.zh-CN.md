@@ -5,7 +5,7 @@
 MiniMax Code 里的无限画布节点图。每个节点是一次模型运行，每条连线是一条数据通路——
 把文本节点连到图片节点，上游文本会自动注入下游提示词。
 
-作者：[antianqi](https://github.com/antianqi) · 版本：`1.22.9`
+作者：[antianqi](https://github.com/antianqi) · 版本：`1.22.10`
 
 ![画布：铺了「图片复刻」模板——参考图进去，提示词从这张图里反推出来，再照着它重新生成一张](docs/preview.png)
 
@@ -264,7 +264,7 @@ provider 有**几种不同的请求**把素材变成视频，不是同一个请�
 | 请求 | 送什么 | 谁会跑 |
 | --- | --- | --- |
 | 首帧 | `input_image` + `reference_type: first_frame` | 三个模型都会 |
-| 首尾帧 | 首帧 + `last_frame_image` | H3、H3-Max |
+| 首尾帧 | `input_image` + `reference_type: first_frame` + `last_frame_image` | H3、H3-Max |
 | 末帧 | `input_image` + `reference_type: last_frame` | H3、H3-Max |
 | 参考集合 | `reference_images` / `reference_videos` / `reference_audios` | 只有 H3 |
 

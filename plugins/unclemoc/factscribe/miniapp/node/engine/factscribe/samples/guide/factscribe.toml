@@ -1,0 +1,8 @@
+# factscribe 项目声明（最小验收样例）
+[project]
+title = "factscribe 最小验收样例"
+authors = ["factscribe"]
+sections = "sections/*.tex"
+facts = "facts/*.toml"
+bib = "refs.bib"
+build = "tectonic -X compile main.tex"
