@@ -134,6 +134,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - A pass is no longer kept as the round's result, so a round that ends on a pass keeps the last thing that was really said. The pass itself is still marked and still skipped: nothing changes about who speaks.
 - A round in which every member passed still finished, so it ends as a finished round with an empty reply — not as a turn that never reached the Agent. Before this section, such a round settled its task as `cancelled`; it settles as `done` now.
 
+## 0.7.40 A value that is not there is left out, not refused
+
+- The reply mode of a group and the kind of a scheduled task are checked against the values the catalogue offers, so a value that is not one of them is refused instead of quietly becoming another one. A value that is not there at all was refused too, when it arrived as null: many models write an optional field they did not fill in as null, and the call failed with "reply_mode must be one of: admin, all".
+- A null is now read as what it is — a field that was left out — so the default applies, the same as when the field is absent. A value that is there but is not one of the allowed ones is still refused, and so is the text "null".
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
