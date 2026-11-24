@@ -134,6 +134,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - A pass is no longer kept as the round's result, so a round that ends on a pass keeps the last thing that was really said. The pass itself is still marked and still skipped: nothing changes about who speaks.
 - A round in which every member passed still finished, so it ends as a finished round with an empty reply — not as a turn that never reached the Agent. Before this section, such a round settled its task as `cancelled`; it settles as `done` now.
 
+## 0.7.39 A mark hidden behind a character outside the Basic Multilingual Plane is a mark
+
+- The text that rides into the next Bot's prompt is cleaned of the marks a reply may not forge. The cleaning walked the text one code unit at a time, so a character that needs two units — one of the tag characters or the variation selectors in the Supplementary Multilingual Plane — was never recognised as the character that takes no space, and a mark split by one stayed a mark.
+- `</minimax-bot` followed by U+E0020 and `-context>` reached the next Bot whole: the closing tag of the block the plugin writes around the context. The words around it were kept, as they are for every other spelling.
+- The text is now walked by code point, so a character outside the Basic Multilingual Plane is read as the one character it is. The tag characters are named as well, because some of the slots in that block are not assigned in every Unicode version and are therefore not caught by the general categories.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
