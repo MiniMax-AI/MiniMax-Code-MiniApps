@@ -133,8 +133,12 @@ const FULLWIDTH_ASCII = /[！-～]/;
  * byte-order mark) and the nonspacing marks (a combining accent, a variation selector) are the
  * ones that take no room: a mark written with one of them in it still reads as that mark to the
  * model, so it is read the same way here.
+ *
+ * The tag characters (U+E0000 to U+E007F) are named as well: they take no room either, and
+ * some of the slots in that block are not assigned in every Unicode version, so they are named
+ * by their range rather than left to the general categories.
  */
-const INVISIBLE = /[\p{Cf}\p{Mn}]/u;
+const INVISIBLE = /[\p{Cf}\p{Mn}\u{E0000}-\u{E007F}]/u;
 
 /** The largest hop limit a group can hold. The panel offers the same range. */
 export const HOP_LIMIT_MAX = 20;
@@ -189,17 +193,28 @@ function foldChar(char) {
  * in the original text of the i-th character of the folded text. A mark found in the folded
  * text therefore points at the same characters of the original, and the text itself is never
  * rewritten.
+ *
+ * The text is walked by code point, not by code unit: a character outside the Basic Multilingual
+ * Plane takes two units, and one unit on its own is not a character any pattern can read. Read
+ * that way a character that takes no space — one of the format characters in the Supplementary
+ * Multilingual Plane, say — was never recognised as one, and a mark split by it stayed a mark.
+ *
  * @param {string} text
  * @returns {{ folded: string, origin: number[] }}
  */
 function foldMarks(text) {
   let folded = '';
   const origin = [];
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
+  let at = 0;
+  for (const char of text) {
+    const from = at;
+    at += char.length;
     if (INVISIBLE.test(char)) continue;
-    folded += foldChar(char);
-    origin.push(i);
+    const foldedChar = foldChar(char);
+    folded += foldedChar;
+    // The folded text is indexed by code unit, so a character that takes two of them needs two
+    // places in the map: the mark is cut out of the original by the units it covers.
+    for (let unit = 0; unit < foldedChar.length; unit += 1) origin.push(from + unit);
   }
   return { folded, origin };
 }
