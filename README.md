@@ -95,6 +95,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 | [Express Media](plugins/andre-1998/express-media/) | Compress a video to the size each platform accepts and report whether it fits; the bundled limits table shows where every number comes from | [Andre-1998](https://github.com/Andre-1998) |
 | [FactScribe Paper Workbench](plugins/unclemoc/factscribe/) | A local workbench for writing papers: open your manuscript projects, read the check report, the fact ledger and the knowledge base, and let the assistant propose edits you approve before anything reaches the file. 17 MCP tools, read-mostly by design; every write is gated by your confirmation. Requires MiniMax Code 3.1.2 or later | [UncleMoc (BGISMALL)](https://github.com/UncleMoc) |
 | [GitHub Star Shelf](plugins/start3208/github-star-shelf/) | Turn your GitHub stars into collections you can search and ask the AI to explain in plain language: from the README alone, or after it has read a shallow clone of the code. One session per project, your own notes, and collections the Agent can arrange | [start3208](https://github.com/start3208) |
+| [Plugin Listing Workbench](plugins/zhuyankarl/submission-workbench/) | Prepare a plugin submission: fill in the manifest and listing fields, check every required field and cross-file consistency, then download a reviewable listing package that names what is missing; a bundled Skill gives the Agent the same checklist | [zhuyankarl](https://github.com/zhuyankarl) |
 
 <details>
 <summary>Preview: Cutline</summary>

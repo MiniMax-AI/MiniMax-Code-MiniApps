@@ -95,6 +95,7 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 | [急件 · 视频投递](plugins/andre-1998/express-media/README.zh-CN.md) | 把视频压到各平台能收的体积，并如实告诉你发不发得出去；内置上限表标明每个数字的来源 | [Andre-1998](https://github.com/Andre-1998) |
 | [FactScribe 论文工作台](plugins/unclemoc/factscribe/README.zh-CN.md) | 写论文的本地工作台：打开你的稿盘，看检查报告、事实账与知识库，助手给的改动先成提议单，你在页面上点采纳才落盘。17 个 MCP 工具以只读为主，写盘一律由你确认。需要 MiniMax Code 3.1.2 或更高版本 | [UncleMoc (BGISMALL)](https://github.com/UncleMoc) |
 | [GitHub 收藏夹](plugins/start3208/github-star-shelf/README.zh-CN.md) | 把 GitHub Star 分进收藏夹，按名称、README 和备注搜索；让 AI 用大白话讲清每个项目：只看 README 讲，或读一遍浅克隆的代码再讲。一个项目一个会话，可以写备注，也能让 Agent 整理收藏夹 | [start3208](https://github.com/start3208) |
+| [插件上架材料工作台](plugins/zhuyankarl/submission-workbench/README.zh-CN.md) | 填写插件清单与上架信息，逐项核对必填字段与内容一致性，生成可审核的上架材料包并标出缺失项；内置 Skill 让 Agent 拿到同一套检查清单 | [zhuyankarl](https://github.com/zhuyankarl) |
 
 <details>
 <summary>预览：Cutline</summary>
