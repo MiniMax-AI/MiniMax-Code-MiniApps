@@ -134,6 +134,11 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - A pass is no longer kept as the round's result, so a round that ends on a pass keeps the last thing that was really said. The pass itself is still marked and still skipped: nothing changes about who speaks.
 - A round in which every member passed still finished, so it ends as a finished round with an empty reply — not as a turn that never reached the Agent. Before this section, such a round settled its task as `cancelled`; it settles as `done` now.
 
+## 0.7.36 A shortened task result says that it was shortened
+
+- The report a finished task batch hands back was trimmed to 4,000 characters per task without saying so. The task record already carries a marker when it had to shorten a result itself, and the report did not consult it, so a reader had no way to tell "this is the whole answer" from "this is the first part of it".
+- A result that was cut now ends with the same truncation mark the rest of the plugin uses. A result that fits is unchanged, and the full text is still read back with `get_tasks`.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
