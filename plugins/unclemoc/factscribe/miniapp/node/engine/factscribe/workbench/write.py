@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .. import i18n
 from ..config import ConfigError, load_config, load_facts
+from ..landing import resolve_landing
 from ..textio import dominant_newline, read_text_exact, split_keepends
 from .projects import (ABSTRACT_BLOCK_ID as _ABSTRACT_BLOCK_ID,
                        CONFIG_NAME, TOKEN_CLOSE, TOKEN_OPEN, TOKEN_RE,
@@ -750,9 +751,13 @@ def _safe_section_file(disk_root: Path, rel: str) -> Path:
                           code="SECTION_PATH_INVALID")
     root = disk_root.resolve()
     target = disk_root.joinpath(*[p for p in pure.parts if p not in ("", ".")])
+    # 落点先解析：解不出来（成环软链等）→ 判成不可解 → 拒写，不许裸崩成
+    # 「工具内部错误」（exit 4）。判据是语义，不是 errno 白名单（D1）。
+    resolved = resolve_landing(target, what="章节文件", name=rel,
+                               code="SECTION_PATH_INVALID")
     try:
-        inside = target.resolve().relative_to(root)
-    except (OSError, ValueError):
+        inside = resolved.relative_to(root)
+    except ValueError:
         raise ConfigError("章节文件越出项目根：%s" % rel,
                           code="SECTION_PATH_INVALID")
     if target.suffix.lower() != ".tex":
@@ -810,9 +815,13 @@ def _root_tex_file(disk_root: Path) -> tuple[str, Path]:
                           code="SECTION_PATH_INVALID")
     root = Path(disk_root).resolve()
     target = Path(disk_root).joinpath(*[p for p in pure.parts if p not in ("", ".")])
+    # 落点先解析：解不出来（成环软链等）→ 判成不可解 → 拒写，不许裸崩成
+    # 「工具内部错误」（exit 4）。判据是语义，不是 errno 白名单（D1）。
+    resolved = resolve_landing(target, what="根文件", name=rel,
+                               code="SECTION_PATH_INVALID")
     try:
-        inside = target.resolve().relative_to(root)
-    except (OSError, ValueError):
+        inside = resolved.relative_to(root)
+    except ValueError:
         raise ConfigError("根文件越出项目根：%s" % rel,
                           code="SECTION_PATH_INVALID")
     if target.suffix.lower() != ".tex":

@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from .audit import _aggregate_exit, run_audit, source_path
 from .brief import build_brief, payload as brief_payload
 from .config import (ConfigError, load_config, load_facts, load_sections)
+from .landing import resolve_landing
 from .textio import write_text_exact
 from .evidence import (freeze_evidence, lock_check, log_state, read_lock,
                        unfreeze_evidence, unfrozen_info)
@@ -131,17 +132,20 @@ def write_section_data(project: Path | str, file: str, text: str,
         raise ConfigError("file 必填：要写哪一节")
     if not isinstance(text, str):
         raise ConfigError("text 必须是字符串")
+    # 落点先解析：解不出来（成环软链等）→ 判成不可解 → 拒写，不许裸崩成
+    # 「工具内部错误」（exit 4）。判据是语义，不是 errno 白名单（D1）。
+    root = cfg.root.resolve()
+    target = resolve_landing(cfg.root / rel, what="章节", name=rel,
+                             code="PATH_ESCAPE")
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise ConfigError("章节越出项目根：%s" % rel)
     sections = dict(load_sections(cfg))
     if rel not in sections:
         raise ConfigError("file 不在审计闭包内：%s" % rel)
     if not rel.endswith(".tex"):
         raise ConfigError("只允许写 .tex 章节：%s" % rel)
-    root = cfg.root.resolve()
-    target = (cfg.root / rel).resolve()
-    try:
-        target.relative_to(root)
-    except ValueError:
-        raise ConfigError("章节越出项目根：%s" % rel)
     tmp = target.with_name(target.name + ".tmp")
     # newline=""：不翻译换行。正文里的 '\r\n' 原样落盘——
     # Windows 上默认文本模式会把它写成 '\r\r\n'（内容损坏）。

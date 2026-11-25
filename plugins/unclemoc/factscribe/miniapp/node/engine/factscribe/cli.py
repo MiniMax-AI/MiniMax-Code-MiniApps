@@ -27,6 +27,7 @@ from .brief import render as render_brief
 from .buildpdf import _is_font_error, auto_build
 from .config import (Config, ConfigError, load_config, load_facts,
                      load_sections)
+from .console import safe_stdio
 from .constants import (EXIT_CONFIG, EXIT_INTERNAL, EXIT_OK, EXIT_RED,
                         EXIT_YELLOW, VERSION)
 from .doctor import collect as collect_doctor
@@ -2259,6 +2260,11 @@ def cmd_evidence(args) -> int:
 
 
 def main(argv=None) -> int:
+    # 非 UTF-8 控制台（中文 Windows 的 cp936/gbk）上，人读输出里的装饰字符
+    # 编不出来 → UnicodeEncodeError → 命令退成 exit 4（工具内部错误）。
+    # 这里在入口把 stdout/stderr 装上「安全降级」的编码错误处理器：
+    # 编不出来的字符换同义 ASCII，命令照常跑完、退出码照旧。
+    safe_stdio()
     try:
         args = build_parser().parse_args(argv)
     except SystemExit as exc:
