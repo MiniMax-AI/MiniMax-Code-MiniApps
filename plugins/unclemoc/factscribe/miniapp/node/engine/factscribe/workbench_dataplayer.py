@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from .audit import _aggregate_exit, run_audit, source_path
 from .brief import build_brief, payload as brief_payload
 from .config import (ConfigError, load_config, load_facts, load_sections)
+from .textio import write_text_exact
 from .evidence import (freeze_evidence, lock_check, log_state, read_lock,
                        unfreeze_evidence, unfrozen_info)
 from .i18n import issue_dict
@@ -142,7 +143,9 @@ def write_section_data(project: Path | str, file: str, text: str,
     except ValueError:
         raise ConfigError("章节越出项目根：%s" % rel)
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    # newline=""：不翻译换行。正文里的 '\r\n' 原样落盘——
+    # Windows 上默认文本模式会把它写成 '\r\r\n'（内容损坏）。
+    write_text_exact(tmp, text)
     os.replace(tmp, target)
     return {"file": rel, "bytes": len(text.encode("utf-8"))}
 
@@ -296,7 +299,7 @@ def create_section_data(project: Path | str, file: str, text=None,
         raise SectionError("父目录不存在：%s（先建目录再建节）" % rel,
                            code="SECTION_PARENT_MISSING")
     content = text if isinstance(text, str) else DEFAULT_SECTION_TEXT
-    target.write_text(content, encoding="utf-8")
+    write_text_exact(target, content)
     return {"file": rel, "bytes": len(content.encode("utf-8"))}
 
 

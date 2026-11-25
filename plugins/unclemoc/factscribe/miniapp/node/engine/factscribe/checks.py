@@ -51,6 +51,7 @@ from typing import Callable
 
 from .config import Config, ConfigError, _config_warn, load_toml
 from .constants import EXIT_RED, EXIT_YELLOW, SEV_INFO
+from .textio import to_lf
 from .i18n import finding_key
 
 # --------------------------------------------------------------------------
@@ -520,6 +521,8 @@ def run_packages(cfg: Config, facts, sections, resolve: bool = False):
     只发生在槽路径：每条发现多 `domain` 键（DomainIssue.as_dict），
     summary 末尾多 `by_domain` 计数（§3.2 只增键）。
     """
+    # 分析入口归一行尾（读盘侧按原样读，CRLF 不丢）：归一的是内存副本。
+    sections = [(rel, to_lf(text)) for rel, text in sections]
     packages = resolve_packages(cfg)
     red, yellow, hints = [], [], []
     unresolved: list = []

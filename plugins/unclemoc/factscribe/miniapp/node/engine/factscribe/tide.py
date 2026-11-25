@@ -27,6 +27,7 @@ from .config import ConfigError
 from .constants import EXIT_OK, EXIT_RED, SEV_RED
 from .protect import _code_view, _heading_items
 from .protect import compare as compare_protect
+from .textio import dominant_newline, read_text_exact
 
 RISE = "rise"
 FALL = "fall"
@@ -325,7 +326,7 @@ def _read_ledger(path: Path) -> list[dict]:
     if not path.exists():
         return []
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = read_text_exact(path)
     except OSError as exc:
         raise ConfigError("读不了账本 %s：%s" % (path, exc)) from exc
     events: list[dict] = []
@@ -356,7 +357,7 @@ def _append_ledger(path: Path, events: list[dict]) -> int:
     if path.exists():
         try:
             existing = {line for line in
-                        path.read_text(encoding="utf-8").splitlines()
+                        read_text_exact(path).splitlines()
                         if line.strip()}
         except OSError as exc:
             raise ConfigError("读不了账本 %s：%s" % (path, exc)) from exc
@@ -364,9 +365,13 @@ def _append_ledger(path: Path, events: list[dict]) -> int:
     if not new:
         return 0
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
+    # 行尾跟账本自身走：账本是 append-only 的机器产物，但它长在用户盘里——
+    # 追写不能造出「一半 LF 一半 CRLF」的混合行尾（Windows 上默认文本模式
+    # 会把追加的 '\n' 翻译成 '\r\n'）。账本里占多数的行尾说了算。
+    newline = dominant_newline(read_text_exact(path)) if path.exists() else "\n"
+    with path.open("a", encoding="utf-8", newline="") as fh:
         for line in new:
-            fh.write(line + "\n")
+            fh.write(line + newline)
     return len(new)
 
 

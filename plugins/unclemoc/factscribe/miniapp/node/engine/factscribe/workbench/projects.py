@@ -18,6 +18,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..textio import read_text_exact
+
 CONFIG_NAME = "factscribe.toml"
 MAX_DEPTH = 3
 
@@ -147,7 +149,7 @@ def _title_command(target: Path) -> tuple[int, int, str] | None:
     （换下一个候选文件）。判定口径与读侧一字不差。
     """
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(target, errors="replace")
     except OSError:
         return None
     match = _TITLE_CMD_RE.search(text)
@@ -839,7 +841,7 @@ def _section_files(path: Path) -> list[tuple[str, str]]:
     for candidate in candidates:
         try:
             out.append((str(candidate.relative_to(path)),
-                        candidate.read_text(encoding="utf-8", errors="replace")))
+                        read_text_exact(candidate, errors="replace")))
         except (OSError, ValueError):
             continue
     return out
@@ -1033,7 +1035,7 @@ def cover_abstract_block(path: str | Path) -> dict | None:
     if root_tex is None:
         return None
     try:
-        text = root_tex.read_text(encoding="utf-8")
+        text = read_text_exact(root_tex)
     except (OSError, UnicodeDecodeError):
         return None
     span = abstract_env_span(text)

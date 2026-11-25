@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import fonts as fontcache
 from .constants import EXIT_CONFIG, EXIT_INTERNAL, EXIT_MISSING, EXIT_OK
+from .textio import read_text_exact, write_text_exact
 
 TIMEOUT_SECONDS = 600
 TAIL_LINES = 20
@@ -212,13 +213,13 @@ def auto_build(root: Path, output: str = "main.pdf",
                     % (cjk_font, _tail(out))), info
             if font is not None:
                 patched = rewrite_cjk_font(
-                    target.read_text(encoding="utf-8"), font)
+                    read_text_exact(target), font)
                 info["font_source"] = "system"
                 info["cjk_font"] = str(font)
                 mode = "temp-cjk-font"
             elif fandol_dir is not None:
                 patched = rewrite_cjk_font_fandol(
-                    target.read_text(encoding="utf-8"), fandol_dir)
+                    read_text_exact(target), fandol_dir)
                 info["font_source"] = "fandol"
                 info["font_dir"] = str(fandol_dir)
                 mode = "temp-fandol-font"
@@ -234,11 +235,12 @@ def auto_build(root: Path, output: str = "main.pdf",
                         "（先跑 `python3 -m factscribe fonts --fetch`，"
                         "或试 --cjk-font <路径>）。\n%s" % _tail(out)), info
                 patched = rewrite_cjk_font(
-                    target.read_text(encoding="utf-8"), font)
+                    read_text_exact(target), font)
                 info["font_source"] = "system"
                 info["cjk_font"] = str(font)
                 mode = "temp-cjk-font"
-            target.write_text(patched, encoding="utf-8")
+            # newline=""：临时副本与源文件逐字节对应（不引入 CRLF 翻译）。
+            write_text_exact(target, patched)
             rc, out = _run_engine(exe, work, tex.name)
             info["attempts"].append({
                 "attempt": 2, "mode": mode, "returncode": rc,

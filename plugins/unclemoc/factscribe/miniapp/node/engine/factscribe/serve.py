@@ -36,6 +36,7 @@ from .projects import (ProjectCreateError, create_project, factscribe_dir,
 from .constants import EXIT_OK, VERSION
 from .report import ReportError, _payload, _severity_of
 from .reportapi import report_action_data, reports_data, report_template_data
+from .textio import read_text_exact
 from .samples import SampleError, install_guide_sample, is_guide_path
 from .workbench import (SectionError, add_fact_data, audit_data, brief_data,
                         create_section_data, delete_section_data,
@@ -602,7 +603,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not pdf.is_file():
             raise ConfigError("还没有编译产物 %s，先编译一次" % out,
                               code="PDF_MISSING")
-        title = section_title(tex.read_text(encoding="utf-8", errors="replace"))
+        title = section_title(read_text_exact(tex, errors="replace"))
         try:
             data = locate(pdf, title)
         except FileNotFoundError:

@@ -26,6 +26,7 @@ from .config import (Config, ConfigError, find_config_file, load_config,
                      load_facts, load_sections, load_toml)
 from .evidence import LOCK_REL, read_lock, unfrozen_info
 from .scaffold import INIT_FILES
+from .textio import read_text_exact, to_lf
 
 LEVEL_OK = "ok"
 LEVEL_WARN = "warn"
@@ -57,7 +58,7 @@ def _tool_version(exe: str) -> str:
 
 def _read_text(path: Path, limit: int = 400_000) -> str:
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")[:limit]
+        return to_lf(read_text_exact(path, errors="ignore"))[:limit]
     except OSError:
         return ""
 
@@ -69,7 +70,7 @@ def _uses_cjk(cfg: Config) -> bool:
     if main.is_file():
         texts.append(_read_text(main))
     try:
-        texts.extend(text for _, text in load_sections(cfg))
+        texts.extend(to_lf(text) for _, text in load_sections(cfg))
     except ConfigError:
         pass
     blob = "\n".join(texts)
@@ -219,7 +220,7 @@ def _project_check(root: Path) -> tuple[dict, Config | None]:
 
 def _sections_check(cfg: Config) -> dict:
     try:
-        sections = load_sections(cfg)
+        sections = [(rel, to_lf(text)) for rel, text in load_sections(cfg)]
     except ConfigError as exc:
         return _check("sections", "章节", LEVEL_FAIL, str(exc),
                       fix="检查 factscribe.toml 的 sections / root_tex")

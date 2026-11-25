@@ -23,6 +23,7 @@ from .constants import (EXIT_OK, EXIT_RED, EXIT_YELLOW, SEV_INFO, SEV_RED,
                         SEV_YELLOW)
 from .texscan import (_balanced, _blank, _extract_numbers,
                       _line_of, _mask_envs_and_verb, scan_tex)
+from .textio import read_text_exact, to_lf
 
 
 # --------------------------------------------------------------------------
@@ -573,8 +574,8 @@ def compare(before: Path | str, after: Path | str,
 
     for rel in sorted(set(bfiles) & set(afiles)):
         try:
-            btext = bfiles[rel].read_text(encoding="utf-8", errors="replace")
-            atext = afiles[rel].read_text(encoding="utf-8", errors="replace")
+            btext = to_lf(read_text_exact(bfiles[rel], errors="replace"))
+            atext = to_lf(read_text_exact(afiles[rel], errors="replace"))
         except OSError as exc:
             raise ConfigError("读不了 %s：%s" % (rel, exc)) from exc
         b = _surface(btext)

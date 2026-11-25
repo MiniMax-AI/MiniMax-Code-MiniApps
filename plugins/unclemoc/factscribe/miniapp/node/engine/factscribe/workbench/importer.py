@@ -18,6 +18,8 @@ import re
 import time
 from pathlib import Path
 
+from ..textio import read_text_exact, write_text_exact
+
 #: 报告目录里认的扩展名。
 REPORT_SUFFIXES = (".toml", ".json")
 
@@ -225,7 +227,7 @@ def parse_report(path: str | Path) -> dict:
     if not target.is_file():
         raise ImportError_("报告文件不在：%s" % target, "REPORT_FILE_MISSING")
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(target, errors="replace")
     except OSError as exc:
         raise ImportError_("读不了报告文件：%s" % exc, "REPORT_READ_FAILED") from exc
     suffix = target.suffix.lower()
@@ -360,7 +362,7 @@ def write_draft(disk_path: str | Path, report_name: str, rows: list[dict],
         written += 1
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("\n".join(lines), encoding="utf-8")
+        write_text_exact(target, "\n".join(lines))
     except OSError as exc:
         raise ImportError_("写草稿失败：%s" % exc, "DRAFT_WRITE_FAILED") from exc
     return {"ok": True, "draft_path": str(target), "count": written,
@@ -370,7 +372,7 @@ def write_draft(disk_path: str | Path, report_name: str, rows: list[dict],
 def _draft_fact_count(path: Path) -> int:
     """草稿里的条目数（`[[fact]]` 的个数）。"""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(path, errors="replace")
     except OSError:
         return 0
     return text.count("[[fact]]")
@@ -432,7 +434,7 @@ def read_draft(disk_path: str | Path, report_name: str) -> dict:
     if not target.is_file():
         raise ImportError_("找不到这条导入记录：%s" % report_name, "DRAFT_NOT_FOUND")
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(target, errors="replace")
     except OSError as exc:
         raise ImportError_("读不了草稿：%s" % exc, "DRAFT_READ_FAILED") from exc
     head: dict = {}
@@ -489,7 +491,7 @@ def delete_draft(disk_path: str | Path, report_name: str) -> dict:
         raise ImportError_("没有这条导入记录：%s" % name, "DRAFT_MISSING")
     source = ""
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(target, errors="replace")
     except OSError:
         text = ""
     for line in text.splitlines():

@@ -57,6 +57,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from ..config import ConfigError
+from ..textio import read_text_exact
 from .projects import MAX_DEPTH, disk_meta, disk_sections, load_projects
 from .proposal import (ProposalError, create_proposal, list_proposals,
                         read_proposal, resolve_proposal)
@@ -713,7 +714,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if not rel:
                 return ""
             path = Path(disk) / rel
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text_exact(path, errors="replace")
             for block in render_tex(text, stem=Path(rel).stem, disk_root=disk):
                 if block.get("id") == block_id:
                     return str(block.get("html") or "")

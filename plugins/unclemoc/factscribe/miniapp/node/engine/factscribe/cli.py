@@ -63,6 +63,7 @@ from .term_suggest import (add_from_tsv, json_payload, render_tsv,
                            suggest)
 from .tide import DEFAULT_SNAPSHOT_ROOT
 from .tide import render_human as render_tide
+from .textio import read_text_exact, to_lf
 from .tide import render_restore as render_tide_restore
 from .tide import render_snapshot as render_tide_snapshot
 from .tide import restore_snapshot, run_tide, save_snapshot
@@ -1746,7 +1747,7 @@ def _cmd_style_doc(args, paths: list[str]) -> int:
         path = Path(raw)
         if not path.is_file():
             raise ConfigError("--doc 指向的 %s 不存在" % raw)
-        sections.append((raw, path.read_text(encoding="utf-8")))
+        sections.append((raw, to_lf(read_text_exact(path))))
         formats[raw] = mdscan.format_of(raw)
     rules_info = load_style_rules_info(root, args.rules)
     cfg = Config(root=root)

@@ -29,6 +29,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from .textio import read_text_exact
+
 DEFAULT_TERMS_DIR = Path(__file__).resolve().parent / "terms"
 DEFAULT_WORKSPACE_PATH = DEFAULT_TERMS_DIR / "workspace.tsv"
 DEFAULT_PAPER_PATH = DEFAULT_TERMS_DIR / "paper.tsv"
@@ -296,7 +298,7 @@ def parse_glossary(text: str, source: str = "paper") -> Glossary:
 
 
 def _load_glossary_file(path: Path, source: str | None = None) -> Glossary:
-    return parse_glossary(path.read_text(encoding="utf-8"),
+    return parse_glossary(read_text_exact(path),
                           source or _source_for_path(path))
 
 

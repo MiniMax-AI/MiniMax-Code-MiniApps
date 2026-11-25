@@ -26,6 +26,8 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+from ..textio import write_text_exact
+
 #: 项目级工作台配置文件名（与 `ai.py` / `knowledge.py` 同源）。
 CONFIG_NAME = "workbench.toml"
 
@@ -103,10 +105,10 @@ def _ensure_config(path: Path) -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        write_text_exact(
+            path,
             "# FactScribe 工作台配置（项目级）。\n"
-            "# [ai] 放模型后端；[workbench] 放工作台自己的字段；[venue] 放目标刊物。\n",
-            encoding="utf-8")
+            "# [ai] 放模型后端；[workbench] 放工作台自己的字段；[venue] 放目标刊物。\n")
     except OSError as exc:
         raise VenueError("建不了 %s：%s" % (path, exc),
                          "VENUE_CONFIG_FAILED") from exc
