@@ -48,6 +48,28 @@ Code and ask the Agent to "Open the FactScribe paper workbench".
 MiniMax Code 3.1.11 and later can also import the package straight from a Git repository: paste the
 repository URL, pick the package directory, and confirm the preview.
 
+### Python interpreter (the machine needs ≥3.10)
+
+The engine is written in Python. Its source is vendored into the package, so there is nothing to `pip install`, but the machine still needs a **Python ≥3.10** interpreter. The Mini App looks for one in PATH and in the usual install locations, and the settings page states what it found, what is missing and whether the version is high enough.
+
+**Windows**: download the 3.10 or newer installer from <https://www.python.org/downloads/windows/> and tick **Add python.exe to PATH**; open a fresh command prompt afterwards and run `py -3 --version` to confirm. A `py` launcher on its own is enough (the Mini App tries `py`, `py -3`, `py -3.14` down to `py -3.10`). An interpreter outside PATH is found too: `%LOCALAPPDATA%\Programs\Python\Python3xx\`, `%PROGRAMFILES%\Python3xx\` and `C:\Python3xx\` are all probed. If it still finds nothing, point the `FS_PYTHON` environment variable at the absolute path and restart MiniMax Code.
+
+**Why 3.9 does not work**: the engine needs ≥3.10 (on 3.10 it falls back to the TOML parser bundled with the package, on 3.11 and newer it uses the standard library `tomllib`), so Python 3.9 and older cannot run this engine. The Mini App therefore reports the highest version it found (3.9) and which executable it came from. An old version can stay installed next to 3.10 or newer.
+
+**macOS / Linux**: unchanged. The Mini App tries `python3`, `python`, `/usr/bin/python3`, `/opt/homebrew/bin/python3` and `/usr/local/bin/python3` in that order, and `FS_PYTHON` can point at an absolute path there too.
+
+### Line endings
+
+A save keeps the line endings your file already had. The engine reads sections with Python's
+universal-newline mode (CRLF becomes LF before the text ever reaches the page) and writes the
+file back byte for byte, so without a second step **every save rewrites the whole file with LF
+endings** — a CRLF manuscript loses all its CR bytes on the first edit. The Node shell therefore
+reads the real endings from the file on disk before the save, hands the engine an LF-only body,
+and puts the original endings back afterwards: lines the save did not touch keep their exact
+endings (a file with mixed endings stays mixed), the edited lines take the file's dominant
+ending, and the text itself is never altered — only the endings move. If the file changed
+underneath while the save was running, the endings are left alone instead of being overwritten.
+
 On first use the page asks for your paper root directory: any directory that contains a
 `factscribe.toml` is treated as a paper project. It can be changed later from the settings page.
 
@@ -55,13 +77,23 @@ On first use the page asks for your paper root directory: any directory that con
 
 - MiniMax Code 3.1.16 on macOS 26.6.2 (arm64). Installed from this directory, opened through the
   Agent, page rendered, and all 17 MCP tools called end to end over the Host's MCP runtime.
-- Node 26.7 and Python 3.14 on the same machine. The Python engine is vendored inside the
-  package, so nothing has to be installed.
+- Node 26.7 and Python 3.14 on the same machine. The Python engine source is vendored inside the
+  package, so nothing has to be `pip install`ed; the machine still needs a Python ≥3.10
+  interpreter (see above).
 - Minimum client version: 3.1.2. The package declares `agentAccess: ["session.run"]`, which
   needs 3.1.2; no `engines` bound is declared, so clients from 3.1.2 on still install it and
   only lose the assistant model picker when their client does not expose the model catalogue.
+- Node 26.7 with the package's own tests: `node --test tests/*.test.mjs` — 19 cases, all
+  green (16 unit cases for the line-ending module, plus 3 end-to-end cases that start the
+  vendored Python engine and save into a copy of the sample paper).
+- The line-ending round trip was measured on the vendored sample paper: a 678-byte section with
+  11 CRLF endings came back with all 11 endings and the same text. Without the fix the engine's
+  own save rewrote the same file as 667 bytes with 0 CRLF endings — every CR byte lost.
 - Not verified: Windows and Linux hosts. The package ships no platform-specific binary and the
-  Node entry uses only Node built-ins, but no run on those platforms has been done.
+  Node entry uses only Node built-ins, but no run on those platforms has been done. The Windows
+  interpreter discovery (`py` launcher, versioned commands, common install directories) is
+  covered by unit tests, but no end-to-end run on a real Windows machine has been done; the 36
+  Windows candidates are generated from the platform string, not measured on Windows.
 
 ## Data & access
 
@@ -72,13 +104,18 @@ On first use the page asks for your paper root directory: any directory that con
   `proposals/` (proposal records) and `custom-models.json` (an API key you typed yourself, mode
   0600). Inside your paper directory, only where you click: `sections/*.tex` (atomic write plus a
   `.bak` copy, refused when the file changed underneath) and `facts/draft/` for imported drafts.
-  Opening a disk also records `last_opened` in that disk's `factscribe.toml`.
+  Opening a disk also records `last_opened` in that disk's `factscribe.toml`. Restoring the
+  original line endings after a save writes the same file again through a sibling temporary file
+  (`<name>.eol-tmp-<pid>`) and renames it over the original, so no extra file is left behind; the
+  temporary file is removed if the write fails.
 - **Network hosts**: none by default. The Node service and the Python engine listen on loopback
   only (`127.0.0.1`). If you add a custom model in the panel, the Node shell sends the prompt to
   the OpenAI-compatible endpoint you typed; the host Agent turn is run by the Host on your
   MiniMax Code account and plan.
-- **Processes spawned**: `python3 -B -m factscribe workbench --root <your root> --port 0 --json
-  --no-browser` (the engine; killed when the Mini App stops), `factscribe audit` (read-only
+- **Processes spawned**: `<interpreter> -B -m factscribe workbench --root <your root> --port 0 --json
+  --no-browser` (the engine; killed when the Mini App stops; the interpreter is the Python ≥3.10
+  the Mini App found on this machine, possibly `python3`, `py -3` or the absolute path named by
+  `FS_PYTHON`), `factscribe audit` (read-only
   re-run of the check report), `tectonic` (only for the optional PDF render button) and macOS
   `open` (only for the "open folder" button).
 - **Agent turns**: the panel runs Host Agent turns through `agentAccess: ["session.run"]`. The
