@@ -226,3 +226,39 @@ test('the usage panel counts every model call, background jobs included', async 
   assert.equal(usage.totals.tools, 1);
   assert.ok(usage.totals.durationMs > 0);
 });
+
+test('a job stopped and then killed still leaves its turn in the ledger', async (t) => {
+  const { store, engine, dir } = await fixture(t);
+  const bot = { id: 'bot_a', name: 'Alice', role: 'Writer' };
+  store.state.bots = [bot];
+  const chatId = `bot:${bot.id}`;
+  const helperDone = deferred();
+  engine.agent = { async run(input, options) {
+    const ids = { sessionId: 'session-1', turnId: 'turn-1' };
+    options.onEvent({ type: 'turn.started', ...ids });
+    if (input.text.startsWith(HELPER_PROMPT)) {
+      await helperDone.promise;
+      return { ...ids, status: 'finished', text: 'BACKGROUND_ANSWER' };
+    }
+    await engine.startHelper(bot, { task: 'Look this up' });
+    return { ...ids, status: 'finished', text: 'Started' };
+  } };
+  await engine.runBotTurn({ bot, chatId, text: 'START_BACKGROUND', kind: 'private' });
+  await until(() => store.state.helpers[0]?.status === 'running');
+  // The stop is asked for and the job says so at once; the turn it is in does not come back.
+  engine.stopHelper(null, store.state.helpers[0].id);
+  await until(() => store.state.helpers[0]?.status === 'stopped');
+  // The turn is still in its tool call; the process goes away with it still running.
+  helperDone.resolve();
+  engine.dispose();
+  await until(() => store.state.helpers[0]?.status === 'stopped');
+
+  // A restart has to say the job spent a turn.
+  const restored = new Store(dir);
+  await restored.init();
+  const rows = await restored.readUsage(0);
+  const background = rows.find((row) => row.kind === 'helper-run');
+  assert.ok(background, 'the stopped job left a row in the ledger');
+  assert.equal(background.status, 'aborted');
+  assert.equal(background.turnId, store.state.helpers[0].id);
+});

@@ -804,7 +804,13 @@ function userDelivery(message) {
   const stranded = status === 'pending' && !sentHere.has(message.id) && !state.busy.has(message.chatId)
     && !(state.messages.get(message.chatId) ?? []).some(
       (item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
-  const button = status === 'held' || stranded ? h('button', {
+  // A turn whose outcome is unknown holds every later message of the chat. The page has to offer
+  // the way out on the message that carries that state: asking from anywhere else would not show
+  // the user where the chat is stuck.
+  // Once the user has confirmed it, the asking is done: the button goes away, so the page says
+  // that the confirmation took effect.
+  const confirmed = message.continuationAcknowledged === true;
+  const button = status === 'held' || (status === 'uncertain' && !confirmed) || stranded ? h('button', {
     type: 'button', class: 'btn sm', disabled: deliveryActions.has(key),
     onclick: async (event) => {
       if (deliveryActions.has(key)) return;
@@ -825,7 +831,7 @@ function userDelivery(message) {
     },
   }, t('delivery.resume')) : null;
   return h('div', { class: 'message-delivery', role: 'status' },
-    h('span', null, tOr(`delivery.${status}`, undefined, '')), button);
+    h('span', null, confirmed && status === 'uncertain' ? t('delivery.uncertainConfirmed') : tOr(`delivery.${status}`, undefined, '')), button);
 }
 const deliveryActions = new Set();
 

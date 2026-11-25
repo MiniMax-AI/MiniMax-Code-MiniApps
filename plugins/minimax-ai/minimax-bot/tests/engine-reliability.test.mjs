@@ -1493,3 +1493,150 @@ test('a pass by the last speaker does not overwrite what an earlier one said', a
   const messages = await store.getMessages(chatId);
   assert.equal(messages.filter((message) => message.status === 'pass').length, 1);
 });
+
+test('a chat with one unknown outcome can be let go, so it is not stuck for good', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  // A turn that was cut off leaves its request uncertain: the outcome cannot be known, and the
+  // request is never replayed on its own. Every later message of the chat waits for it.
+  await store.appendMessage(chatId, { role: 'user', text: 'Possibly already executed', dispatchState: 'uncertain' });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'after-unknown'), status: 'finished', text: 'Done' };
+  } };
+
+  // The user says they have seen it: the chat goes on. The unknown turn itself is not sent again.
+  const resumed = await engine.inbox.resumeHeld(chatId);
+  assert.deepEqual(resumed, { ok: true });
+  const history = await store.getMessages(chatId);
+  assert.equal(history.find((m) => m.text === 'Possibly already executed').continuationAcknowledged, true);
+
+  // And a later request is no longer held back by it.
+  await engine.sendUserMessage(chatId, 'A new request', [], 'after-unknown-1');
+  await until(() => idle(engine));
+  assert.equal(runs, 1, 'the new request runs');
+  const after = await store.getMessages(chatId);
+  assert.equal(after.find((m) => m.text === 'A new request').dispatchState, 'delivered');
+});
+
+test('an unknown outcome does not stop a later request from running once it is acknowledged', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  await store.appendMessage(chatId, { role: 'user', text: 'Possibly already executed', dispatchState: 'uncertain' });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'held-then-asked'), status: 'finished', text: 'Done' };
+  } };
+
+  // A request that arrives while the outcome is unknown waits for it.
+  await engine.sendUserMessage(chatId, 'A correction', [], 'held-1');
+  await until(() => idle(engine));
+  assert.equal(runs, 0, 'the correction waits for the unknown outcome');
+  assert.equal((await store.getMessages(chatId)).find((m) => m.text === 'A correction').dispatchState, 'held');
+
+  // Asking lets the chat go: the unknown outcome is confirmed as seen and the waiting request
+  // is sent.
+  await engine.inbox.resumeHeld(chatId);
+  await until(() => idle(engine));
+  assert.equal(runs, 1, 'the waiting request is sent');
+  const after = await store.getMessages(chatId);
+  assert.equal(after.find((m) => m.text === 'A correction').dispatchState, 'delivered');
+});
+
+test('a running helper shows as stopped the moment the stop is asked for', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  const finish = deferred();
+  let insideHelper = false;
+  engine.agent = { async run(input, options) {
+    const ids = started(input, options, 'helper-session');
+    if (input.text.startsWith('<minimax-bot-helper>')) {
+      insideHelper = true;
+      // The run is inside a tool call that does not come back on its own.
+      await finish.promise;
+      return { ...ids, status: 'finished', text: 'Done' };
+    }
+    await engine.startHelper(bot, { task: 'Watch the automation' });
+    return { ...ids, status: 'finished', text: 'Started' };
+  } };
+  const source = engine.runBotTurn({ bot, chatId, text: 'Watch the automation for me', kind: 'private' });
+  await until(() => insideHelper);
+  const helper = store.state.helpers.find((item) => item.status === 'running');
+  assert.ok(helper, 'the helper is running');
+
+  const stopped = engine.stopHelper(null, helper.id);
+  assert.equal(stopped.stopped, true);
+
+  // The Host ends a turn between its steps, so the run is still winding down. The page must
+  // not keep reading "running": a stop button that changes nothing looks like it did nothing.
+  assert.equal(store.state.helpers.find((item) => item.id === helper.id).status, 'stopped');
+
+  finish.resolve();
+  await source;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(store.state.helpers.find((item) => item.id === helper.id).status, 'stopped');
+});
+
+test('confirming an unknown outcome tells the page about it', async (t) => {
+  const { store, engine, events } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  await store.appendMessage(chatId, { role: 'user', text: 'Possibly already executed', dispatchState: 'uncertain' });
+  await store.writeChain;
+
+  await engine.inbox.resumeHeld(chatId);
+
+  // The page can only say the confirmation took effect if it hears about it.
+  const sent = events.filter((event) => event.type === 'message.upsert'
+    && event.chatId === chatId
+    && event.message?.continuationAcknowledged === true);
+  assert.equal(sent.length, 1, 'the confirmed message is sent to the page');
+  const stored = (await store.getMessages(chatId)).find((message) => message.text === 'Possibly already executed');
+  assert.equal(stored.continuationAcknowledged, true);
+  assert.equal(stored.dispatchState, 'uncertain', 'the message itself is still not replayed');
+});
+
+test('a message that arrives while the confirmation is written goes out with it', async (t) => {
+  const { store, engine } = await fixture(t);
+  const bot = store.state.bots[0];
+  const chatId = `bot:${bot.id}`;
+  await store.appendMessage(chatId, { role: 'user', text: 'Possibly already executed', dispatchState: 'uncertain' });
+  await store.writeChain;
+
+  let runs = 0;
+  engine.agent = { async run(input, options) {
+    runs += 1;
+    return { ...started(input, options, 'after-confirm'), status: 'finished', text: 'Done' };
+  } };
+
+  // Hold the write that confirms the unknown outcome, and let a new message arrive behind it.
+  const writing = deferred();
+  const release = deferred();
+  const update = store.updateMessages.bind(store);
+  let first = true;
+  store.updateMessages = async (...args) => {
+    if (first && args[2]?.continuationAcknowledged) { first = false; writing.resolve(); await release.promise; }
+    return update(...args);
+  };
+  const confirming = engine.inbox.resumeHeld(chatId);
+  await writing.promise;
+  await store.appendMessage(chatId, { role: 'user', text: 'A correction', dispatchState: 'held' });
+  await store.writeChain;
+  release.resolve();
+  await confirming;
+  await until(() => idle(engine));
+
+  // The correction was held while the confirmation was being written; it must not need a
+  // second press of the button.
+  assert.equal(runs, 1);
+  assert.equal((await store.getMessages(chatId)).find((message) => message.text === 'A correction').dispatchState, 'delivered');
+});

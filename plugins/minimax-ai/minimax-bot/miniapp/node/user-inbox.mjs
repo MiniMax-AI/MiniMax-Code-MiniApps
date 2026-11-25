@@ -152,25 +152,41 @@ export class UserInbox {
 
   async resumeHeld(chatId) {
     // Only resend supplements that never started; an uncertain original request is never replayed.
-    const history = await this.engine.store.getMessages(chatId);
-    const held = history.filter((message) => {
+    /** The messages of a list that can be sent again. */
+    const recoverableOf = (list) => list.filter((message) => {
       if (message.role !== 'user' || this.has(message.id)) return false;
       if (message.dispatchState === 'held') return true;
       // A restart leaves an accepted request `pending` with the queue that owned it gone. It is
       // recoverable on the same proof the retry path uses: no reply and no durable assistant
       // placeholder means the request never reached the Host.
       return message.dispatchState === 'pending'
-        && !history.some((item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
+        && !list.some((item) => item.sourceMessageId === message.id || item.sourceMessageIds?.includes(message.id));
     });
-    if (!held.length || this.busy(chatId) || [...this.engine.tickets].some((ticket) => ticket.chatId === chatId)) {
+    /** The same list, read fresh: it changes while the disk is written. */
+    const recoverable = async () => recoverableOf(await this.engine.store.getMessages(chatId));
+    const history = await this.engine.store.getMessages(chatId);
+    const held = await recoverable();
+    // A turn whose outcome is unknown holds every later message of the chat, so a chat that has
+    // one is stuck until the user says what to do with it. Asking is the only way out, so the
+    // asking must work even when there is nothing to send again: the unknown turn is confirmed
+    // as seen, and the chat goes on.
+    const uncertainIds = history.filter((message) => message.role === 'user' && message.dispatchState === 'uncertain').map((message) => message.id);
+    if ((!held.length && !uncertainIds.length) || this.busy(chatId) || [...this.engine.tickets].some((ticket) => ticket.chatId === chatId)) {
       throw new this.ErrorType('busy', t('err.messageAlreadyProcessing'));
     }
     const bot = chatId.startsWith('bot:') ? this.engine.store.getBot(chatId.slice(4)) : undefined;
     const group = chatId.startsWith('group:') ? this.engine.store.getGroup(chatId.slice(6)) : undefined;
     if (!bot && !group) throw new this.ErrorType('not_found', t('err.chatMissing'));
-    const uncertainIds = history.filter((message) => message.role === 'user' && message.dispatchState === 'uncertain').map((message) => message.id);
-    await this.engine.store.updateMessages(chatId, uncertainIds, { continuationAcknowledged: true });
-    const heldIds = new Set(held.map((message) => message.id));
+    // Confirming the unknown turn is not replaying it: it is the user saying they have seen it.
+    // The turn itself is never sent again.
+    const acknowledged = await this.engine.store.updateMessages(chatId, uncertainIds, { continuationAcknowledged: true });
+    // The page has to hear about it: without this the button stays on the message that was just
+    // confirmed, and the user cannot tell whether asking did anything.
+    for (const message of acknowledged) this.engine.broadcast({ type: 'message.upsert', chatId, message });
+    // Read the list again: a message that arrived while the confirmation was being written was
+    // held too, and it belongs to this continuation rather than to the next button press.
+    const heldNow = await recoverable();
+    const heldIds = new Set(heldNow.map((message) => message.id));
     // Re-check inside the write: a retry carrying the same clientMessageId can enqueue the message
     // while this call waits for the disk, and a message that moved on must not be sent a second
     // time. Only the state this call actually reached is still recoverable.
