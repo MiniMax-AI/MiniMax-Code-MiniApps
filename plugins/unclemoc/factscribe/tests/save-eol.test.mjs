@@ -21,10 +21,12 @@ import { createServer as createNetServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { start } from '../miniapp/node/server.mjs';
 
-const PACKAGE_ROOT = new URL('..', import.meta.url).pathname;
+// fileURLToPath：Windows 上 URL 的 pathname 是 /C:/...，不能直接当路径用。
+const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SAMPLE = join(PACKAGE_ROOT, 'miniapp/node/engine/factscribe/samples/guide');
 
 let available = false;

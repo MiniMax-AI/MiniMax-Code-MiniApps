@@ -40,6 +40,7 @@ __all__ = [
     "split_lines",
     "dominant_newline",
     "to_lf",
+    "restore_newlines",
 ]
 
 
@@ -150,3 +151,38 @@ def dominant_newline(text: str, default: str = "\n") -> str:
     if lf == best:
         return "\n"
     return "\r"
+
+
+def restore_newlines(new_text: str, original: str,
+                     fallback: str = "\n") -> str:
+    """把新正文的行尾还原成**原文**的行尾。
+
+    浏览器交回来的正文恒是 LF——DOM 里没有 CRLF（contenteditable 的
+    textContent 一律给 LF）。若照单写回，CRLF 稿子存一次就变成 LF，或者
+    变成一半 CRLF 一半 LF 的混合稿子，违反「保存必须逐字保留正文内容」。
+
+    规则（**逐行**对齐，不是整篇一刀切）：
+
+    * 新文的第 k 次断行 → 沿用原文第 k 次断行的行尾。原文是混合行尾时，
+      哪一行原本是 CRLF，改完还是 CRLF，一行不差；
+    * 原文的断行数不够（新文多出了行）→ 多出来的断行用 fallback
+      （调用方给的是**文件**的主导行尾），免得在 CRLF 稿子里补出 LF 行；
+    * 原文末尾没有行尾的，新文末尾也不补。
+
+    original 是**这一块**的原文（不是整份文件）：块的行尾归这一块自己
+    管，块外的行尾一个都不碰。
+    """
+    orig_ends = [end for _, end in split_keepends(original)]
+    # 原文最后一段若没有行尾，它就不是一次「断行」，不算进断行表。
+    if orig_ends and orig_ends[-1] == "":
+        orig_ends = orig_ends[:-1]
+    extra = fallback or dominant_newline(original)
+    out: list[str] = []
+    for index, (line, end) in enumerate(split_keepends(to_lf(new_text))):
+        if end == "":
+            # 最后一段没有断行：原样留着（不补行尾）。
+            out.append(line)
+            continue
+        out.append(line + (orig_ends[index]
+                           if index < len(orig_ends) else extra))
+    return "".join(out)

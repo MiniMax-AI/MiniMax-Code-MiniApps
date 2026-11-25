@@ -808,6 +808,12 @@ def _section_files(path: Path) -> list[tuple[str, str]]:
     走审计那套闭包（`load_sections`）：配置写 `sections/*.tex` 时收章节，
     写 `main.tex` 时收 `\input` 链。根文件（main.tex）的导言区不当作正文，
     还有别的章节文件时把它剔掉。
+
+    **文本按落盘原样读**（`read_text_exact`）：闭包里的文本走的是通用换行
+    翻译，CRLF 会被读成 LF。块指纹（sha）是在文本上算的——显示路径（页面
+    给出的那段指纹）与写回路径（保存时校验的那段指纹）必须看**同一份**文本；
+    两边口径不一致时，CRLF 稿子的指纹必然对不上，保存直接 409
+    （BLOCK_STALE）。
     """
     from ..config import ConfigError, load_config, load_sections
 
@@ -822,7 +828,8 @@ def _section_files(path: Path) -> list[tuple[str, str]]:
                 name, text = row
             except (TypeError, ValueError):
                 continue
-            rows.append((str(name), str(text)))
+            rows.append((str(name),
+                         _read_section_exact(cfg, str(name), str(text))))
     except Exception:  # noqa: BLE001 - 坏文件不该让整页崩
         rows = []
     if rows:
@@ -845,6 +852,24 @@ def _section_files(path: Path) -> list[tuple[str, str]]:
         except (OSError, ValueError):
             continue
     return out
+
+
+def _read_section_exact(cfg, rel: str, fallback: str) -> str:
+    """按落盘原样读一个章节文件；读不动就退回闭包里那份。
+
+    闭包（`load_sections`）给的相对名是相对**解析后**的项目根算的
+    （软链被解析过），而 `cfg.root` 可能还是调用方传进来的那条路径。
+    两边拼出来的路径指向同一个文件；这里先按 `cfg.root` 拼，不在就按
+    解析后的根再试一次。
+    """
+    for base in (cfg.root, cfg.root.resolve()):
+        try:
+            target = base / rel
+            if target.is_file():
+                return read_text_exact(target)
+        except (OSError, ValueError):
+            continue
+    return fallback
 
 
 def _is_generated(rel: str) -> bool:

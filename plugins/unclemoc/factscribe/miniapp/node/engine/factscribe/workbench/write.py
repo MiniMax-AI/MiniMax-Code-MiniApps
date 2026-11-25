@@ -36,7 +36,8 @@ from pathlib import Path
 from .. import i18n
 from ..config import ConfigError, load_config, load_facts
 from ..landing import resolve_landing
-from ..textio import dominant_newline, read_text_exact, split_keepends
+from ..textio import (dominant_newline, read_text_exact, restore_newlines,
+                       split_keepends, to_lf)
 from .projects import (ABSTRACT_BLOCK_ID as _ABSTRACT_BLOCK_ID,
                        CONFIG_NAME, TOKEN_CLOSE, TOKEN_OPEN, TOKEN_RE,
                        abstract_env_span as _abstract_env_span,
@@ -881,9 +882,11 @@ def save_abstract(disk_root: Path, client_text: str,
     """
     block = abstract_block(disk_root)
     _check_expect_sha(block, expect_sha)
-    prose = _abstract_prose(client_text)
+    # 分析层统一 LF 口径（与 save_block 同一条）：客户端交回来的正文恒是
+    # LF，块原文可能是 CRLF。
+    prose = to_lf(_abstract_prose(client_text))
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     _check_token_count(segments, expect_tokens)
     new_raw, warnings = _rebuild(segments, prose, code=TOKEN_MISMATCH_CODE)
     if not _balanced_ok(new_raw):
@@ -897,6 +900,9 @@ def save_abstract(disk_root: Path, client_text: str,
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到摘要所在文件：%s（%s）" % (rel, exc),
                           code="SECTION_MISSING")
+    # 落盘层：摘要这一块原有的行尾还原回去（CRLF 稿子存一次仍是 CRLF）。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=dominant_newline(text))
     # 重新定位：文件可能被人外部改过（绕过服务端），按当前结构再算一次——
     # 写回落在**现在**的摘要块里，不会叠出第二层。
     span = _abstract_span(text)
@@ -911,6 +917,18 @@ def save_abstract(disk_root: Path, client_text: str,
             "sha": _short_sha(new_raw),
             "backup": result["backup"], "warnings": _warn_texts(warnings)}
 
+
+def _file_newline(disk_root: Path, rel_file: str) -> str:
+    """这个文件的主导行尾（读不动就用 LF）。
+
+    新写进去的行按**文件**的行尾走：CRLF 的稿子里不补出 LF 行，免得同一
+    份稿子两种行尾混着。
+    """
+    try:
+        text = read_text_exact(_safe_section_file(disk_root, rel_file))
+    except (ConfigError, OSError, UnicodeDecodeError):
+        return "\n"
+    return dominant_newline(text)
 
 
 def find_block(disk_root: Path, rel_file: str, block_id: str) -> Block:
@@ -1139,12 +1157,16 @@ def save_block(disk_root: Path, rel_file: str, block_id: str,
     """
     block = find_block(disk_root, rel_file, block_id)
     _check_expect_sha(block, expect_sha)
-    shape_warnings = _block_shape_guard(block, client_text, disk_root,
+    # 分析层统一 LF 口径：客户端（浏览器 contenteditable）交回来的正文恒是
+    # LF，块原文可能是 CRLF。两边都归一到 LF 再做结构活（切保护面、锚点
+    # 回插、保护面比对），落盘时再把这一块原有的行尾还原回去。
+    text_in = to_lf(str(client_text or ""))
+    shape_warnings = _block_shape_guard(block, text_in, disk_root,
                                        code="EDIT_SHAPE_MISMATCH")
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     _check_token_count(segments, expect_tokens)
-    new_raw, warnings = _rebuild(segments, client_text,
+    new_raw, warnings = _rebuild(segments, text_in,
                                 code=TOKEN_MISMATCH_CODE)
     warnings = list(warnings) + shape_warnings
     if not _balanced_ok(new_raw):
@@ -1157,6 +1179,10 @@ def save_block(disk_root: Path, rel_file: str, block_id: str,
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
+    # 落盘层：把这一块**原有**的行尾还原到新正文上——CRLF 稿子存一次仍是
+    # CRLF，LF 稿子不会被改成 CRLF，混合稿子逐行照旧。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=dominant_newline(text))
     new_text = text[:block.start] + new_raw + text[block.end:]
     result = atomic_write(path, new_text, keep=BACKUP_KEEP)
     return {"ok": True, "file": rel_file, "block": block_id,
@@ -1179,14 +1205,15 @@ def propose_block_edit(disk_root: Path, rel_file: str, block_id: str,
     """
     block = find_block(disk_root, rel_file, block_id)
     _check_expect_sha(block, expect_sha)
-    text = client_text if isinstance(client_text, str) else ""
+    # 分析层统一 LF 口径（与 save_block 同一条）。
+    text = to_lf(client_text) if isinstance(client_text, str) else ""
     if not text.strip():
         raise ConfigError("提议内容是空的，没什么可改的。",
                           code="PROPOSAL_TEXT_EMPTY")
     shape_warnings = _block_shape_guard(block, text, disk_root,
                                        code=SHAPE_MISMATCH_CODE)
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     new_raw, warnings = _rebuild(segments, text,
                                 code="PROPOSAL_TOKEN_MISMATCH")
     warnings = list(warnings) + shape_warnings
@@ -1195,6 +1222,10 @@ def propose_block_edit(disk_root: Path, rel_file: str, block_id: str,
                           code="EDIT_UNBALANCED")
     _guard_surface_kept(segments, new_raw, bound_values,
                          "PROPOSAL_TOKEN_MISMATCH")
+    # 落盘层：与 save_block 同一套还原——差异卡上看到的落盘结果，就是
+    # 真写回时写进去的那一份（含行尾）。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=_file_newline(disk_root, rel_file))
     return {"kind": "block_edit",
             "file": rel_file,
             "block": block_id,
