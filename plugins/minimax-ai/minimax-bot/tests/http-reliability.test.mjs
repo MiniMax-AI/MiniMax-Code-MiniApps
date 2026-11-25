@@ -10,6 +10,8 @@ import { pathToFileURL } from 'node:url';
 const pluginRoot = resolve(process.env.BOT_PLUGIN_ROOT ?? resolve(import.meta.dirname, '..'));
 const { start } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/server.mjs')).href);
 const { Store } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/store.mjs')).href);
+const { Engine, UPLOAD_NAME_RE } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/engine.mjs')).href);
+const { MemoryStore } = await import(pathToFileURL(join(pluginRoot, 'miniapp/node/memory.mjs')).href);
 
 async function fixture(t, { messages = 0, prepare, agent } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'bot-http-reliability-'));
@@ -358,4 +360,70 @@ test('HTTP task snapshot and stop endpoint control an admitted MCP delegation', 
   let status;
   for(let i=0;i<100;i++){ status=(await (await fetch(`${base}/api/state`)).json()).tasks[0].status;if(status==='cancelled')break;await new Promise((resolve)=>setTimeout(resolve,5)); }
   assert.equal(status,'cancelled');
+});
+
+test('an upload whose name carries .. still produces an id the attachment reader accepts', async (t) => {
+  const { base } = await fixture(t);
+  // The attachment reader refuses any id containing `..`, so the stored name must not carry it.
+  const response = await fetch(`${base}/api/uploads?name=${encodeURIComponent('report..final.txt')}`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.upload.id.includes('..'), false, body.upload.id);
+  assert.equal(UPLOAD_NAME_RE.test(body.upload.id), true, body.upload.id);
+  // A normal name is left alone.
+  const plain = await fetch(`${base}/api/uploads?name=notes.txt`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  assert.equal((await plain.json()).upload.name, 'notes.txt');
+});
+
+test('an upload whose name carries .. keeps its extension, so it is still served and read as an image', async (t) => {
+  const { base, dataDir } = await fixture(t);
+  const bytes = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+
+  // The attachment reader refuses any id containing `..`, so the stored name must not carry it.
+  // The extension decides the content type and whether a Bot reads the file as an image.
+  const response = await fetch(`${base}/api/uploads?name=${encodeURIComponent('photo..png')}`, {
+    method: 'POST', body: bytes, headers: { 'content-type': 'application/octet-stream' },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.upload.id.includes('..'), false, body.upload.id);
+  assert.equal(UPLOAD_NAME_RE.test(body.upload.id), true, body.upload.id);
+  assert.equal(body.upload.name, 'photo.png', body.upload.name);
+  assert.equal(body.upload.kind, 'image', body.upload.kind);
+
+  // Served back, it is a PNG and the bytes are the ones that went in.
+  const served = await fetch(`${base}/api/uploads/${encodeURIComponent(body.upload.id)}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), bytes);
+
+  // And the Bot that receives the attachment reads it as an image, not as a plain file.
+  const store = new Store(dataDir);
+  await store.init();
+  const memory = new MemoryStore(dataDir);
+  await memory.init();
+  const engine = new Engine({ store, memory, logger: { warn() {} }, broadcast() {}, retryDelaysMs: [] });
+  const attachments = await engine.resolveAttachments([body.upload.id]);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].kind, 'image', attachments[0].kind);
+  assert.equal(attachments[0].name, 'photo.png');
+  engine.dispose();
+
+  // A name with the dots further from the extension keeps its extension too.
+  const other = await fetch(`${base}/api/uploads?name=${encodeURIComponent('report..final.txt')}`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  const otherBody = await other.json();
+  assert.equal(otherBody.upload.name, 'report_final.txt', otherBody.upload.name);
+  assert.equal(otherBody.upload.kind, 'file', otherBody.upload.kind);
+
+  // A normal name is left alone.
+  const plain = await fetch(`${base}/api/uploads?name=notes.txt`, {
+    method: 'POST', body: 'hello', headers: { 'content-type': 'application/octet-stream' },
+  });
+  assert.equal((await plain.json()).upload.name, 'notes.txt');
 });

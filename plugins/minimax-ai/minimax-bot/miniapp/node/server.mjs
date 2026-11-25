@@ -95,8 +95,28 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 /** A file name safe to keep on disk and show back: no path parts, controls or leading dots. */
 function safeUploadName(raw) {
   const base = String(raw ?? '').split(/[\\/]/).pop() ?? '';
-  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^\.+/, '').trim().slice(0, 140);
-  return clean || 'file';
+  const cleaned = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_');
+  // The extension decides how the file is served and whether a Bot reads it as an image, so it
+  // is kept apart from the rest of the name and survives the cleaning: `photo..png` stays a PNG.
+  const dot = cleaned.lastIndexOf('.');
+  const hasExtension = dot > 0 && dot < cleaned.length - 1 && /^\.[A-Za-z0-9]{1,15}$/.test(cleaned.slice(dot));
+  const extension = hasExtension ? cleaned.slice(dot) : '';
+  const stem = hasExtension ? cleaned.slice(0, dot) : cleaned;
+  // `..` reaches the stored id, and the attachment reader refuses any id carrying it, so the file
+  // could never be attached again. A dot at the end of the stem would join the extension into
+  // one, so it goes as well.
+  const safeStem = stem.replace(/\.{2,}/g, '_').replace(/^\.+|\.+$/g, '').trim();
+  // A stem that was nothing but dots leaves nothing behind, so it falls back like an empty name.
+  const stemText = stem.replace(/\./g, '') === '' ? 'file' : safeStem;
+  // Cut by code point so a character such as an emoji is not left half-written, and keep room
+  // for the extension: a name that is cut short must still end in it.
+  const budget = Math.max(1, 140 - extension.length);
+  let clean = '';
+  for (const point of stemText) {
+    if (clean.length + point.length > budget) break;
+    clean += point;
+  }
+  return `${clean || 'file'}${extension}`;
 }
 
 /** Whether a Bot (or a relay) in this chat named `src` in its text — the only files /api/media serves. */

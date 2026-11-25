@@ -139,6 +139,12 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - The report a finished task batch hands back was trimmed to 4,000 characters per task without saying so. The task record already carries a marker when it had to shorten a result itself, and the report did not consult it, so a reader had no way to tell "this is the whole answer" from "this is the first part of it".
 - A result that was cut now ends with the same truncation mark the rest of the plugin uses. A result that fits is unchanged, and the full text is still read back with `get_tasks`.
 
+## 0.7.37 An uploaded file whose name carries `..` can be attached
+
+- An upload kept the file name as given apart from a few forbidden characters, so a name containing `..` reached the stored id. The attachment reader refuses any id with `..` in it, and the file could never be attached again — the upload looked fine and the message that tried to use it failed.
+- The stored name now replaces a run of dots, and a long name is cut on a whole character so an emoji is never left half-written.
+- The extension is kept apart from the rest of the name and survives that cleaning, because it decides how the file is served: `photo..png` was stored as `photo_png`, so it went out as `application/octet-stream` and the Bot received a plain file instead of an image. It is stored as `photo.png` now and stays a PNG end to end.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.
