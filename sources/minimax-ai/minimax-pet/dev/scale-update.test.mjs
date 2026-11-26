@@ -17,7 +17,7 @@ function harness(overrides = {}) {
     screen: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1080 },
     fitWindowToScreen: async () => { calls.push(['fit']); return { error: null }; },
     player: { setScale: (value) => calls.push(['scale', value]) },
-    savePreferences: (patch) => calls.push(['save', patch.scale]), renderScale() {}, refreshInteractivity() {}, positionMenu() {},
+    savePreferences: (patch) => calls.push(['save', patch.scale]), renderScale() {}, refreshInteractivity() {}, positionMenu() {}, cancelDrag() {},
     onWindowState: (state) => calls.push(['state', state?.window?.height]),
     errCode: (error) => error?.code ?? error?.message ?? 'unknown',
     closeWorkbench: async () => { app.workbenchOpen = false; calls.push(['close']); },

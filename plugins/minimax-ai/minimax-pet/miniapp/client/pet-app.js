@@ -99,6 +99,7 @@ let panelDetailId = null;
 const app = {
   mode: 'standalone', // 'standalone' | 'inline' | 'window'
   modeSwitching: false,
+  scaleChanging: false,
   pets: [],
   spriteUrls: new Map(),
   pet: null, // LoadedPet from the player module
@@ -887,7 +888,7 @@ function noteInteraction() {
 // ---------------------------------------------------------------------------
 
 function onSpritePointerDown(e) {
-  if (app.mode !== 'window' || e.button !== 0 || !app.pet) return;
+  if (app.mode !== 'window' || app.restoringPosition || app.scaleChanging || e.button !== 0 || !app.pet) return;
   noteInteraction();
   if (app.menuOpen) closeMenu();
   e.preventDefault();
@@ -909,7 +910,7 @@ function onSpritePointerDown(e) {
 
 function onSpritePointerMove(e) {
   const d = app.drag;
-  if (!d || e.pointerId !== d.pointerId) return;
+  if (!d || e.pointerId !== d.pointerId || app.scaleChanging) return;
   const dx = e.screenX - d.startX;
   const dy = e.screenY - d.startY;
   if (!d.active) {
@@ -926,7 +927,12 @@ function onSpritePointerMove(e) {
   }
   updateDragDirection(d, e.screenX);
   if (!d.win) return;
-  callBridge(() => win.update({ x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy) })).catch((error) => {
+  // On Windows a position-only update can return enlarged native bounds. Send the
+  // design size with the move, rather than carrying the enlarged bounds into the next one.
+  callBridge(() => win.update({
+    x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy),
+    width: DESK_WIDTH, height: deskHeight(prefs.scale),
+  })).catch((error) => {
     const code = errCode(error);
     if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
@@ -1504,6 +1510,9 @@ async function deletePet(pet) {
 
 function setScale(value) {
   const intent = ++scaleIntent;
+  // Geometry stays with the size setting until its bounds and preference agree.
+  app.scaleChanging = true;
+  cancelDrag();
   const current = () => !disposed && intent === scaleIntent;
   scaleUpdates = scaleUpdates.then(async () => {
     if (!current()) return;
@@ -1543,7 +1552,9 @@ function setScale(value) {
     prefs.scale = value;
     savePreferences({ scale: value });
     renderScale();
-  }).catch(logError('scale_update'));
+  }).catch(logError('scale_update')).finally(() => {
+    if (intent === scaleIntent) app.scaleChanging = false;
+  });
   return scaleUpdates;
 }
 

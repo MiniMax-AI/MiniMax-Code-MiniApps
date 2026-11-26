@@ -121,3 +121,44 @@ test('the card never resizes the window, and the fixed height always fits it', a
     assert.ok(deskHeight(scale) >= Math.ceil(208 * scale) + 216, `scale ${scale} leaves room for the card`);
   }
 });
+
+function dragHarness(scale, overrides = {}) {
+  const updates = [];
+  const app = { mode: 'window', workbenchOpen: true, pet: {}, winPos: { x: -100, y: 160 }, oneShotToken: 0, ...overrides };
+  const context = vm.createContext({
+    app, prefs: { scale }, DRAG_THRESHOLD: 4,
+    els: { sprite: { setPointerCapture() {}, classList: { add() {} } } },
+    win: { update: async (patch) => updates.push({ ...patch }) },
+    callBridge: (run) => Promise.resolve(run()),
+    noteInteraction() {}, stopLook() {}, hideQuickbar() {}, refreshInteractivity() {}, updateDragDirection() {},
+  });
+  vm.runInContext(`${slice('const DESK_WIDTH', '// Saved positions')}\n${slice('function onSpritePointerDown(', 'function updateDragDirection(')}
+    globalThis.api = { onSpritePointerDown, onSpritePointerMove };`, context);
+  const pointer = { pointerId: 1, button: 0, screenX: 50, screenY: 70, preventDefault() {} };
+  context.api.onSpritePointerDown(pointer);
+  return { app, updates, move: (x, y) => context.api.onSpritePointerMove({ ...pointer, screenX: x, screenY: y }) };
+}
+
+test('desktop drag gives the Host absolute position and the same size on every move', () => {
+  // A position-only request was followed by growing native bounds on Windows. The page must
+  // keep requesting the designed size, not feed back whatever bounds the Host last reported.
+  for (const [scale, height] of [[0.5, 436], [0.75, 488], [1, 540]]) {
+    const h = dragHarness(scale);
+    h.move(51, 71); // Below the click/drag threshold.
+    h.move(85, 88);
+    h.app.winBounds = { width: 975, height: 1090 };
+    h.move(28, 60);
+    assert.deepEqual(h.updates, [
+      { x: -65, y: 178, width: 280, height },
+      { x: -122, y: 150, width: 280, height },
+    ]);
+    assert.equal(h.app.workbenchOpen, true);
+  }
+});
+
+test('a drag cannot send its size while an intentional scale change owns the window', () => {
+  const h = dragHarness(0.5);
+  h.app.scaleChanging = true;
+  h.move(85, 88);
+  assert.deepEqual(h.updates, []);
+});
