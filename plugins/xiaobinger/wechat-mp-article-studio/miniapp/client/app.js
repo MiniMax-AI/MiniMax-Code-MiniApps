@@ -439,6 +439,52 @@ function renderDetail() {
   const allConfirmed = gateOrder.every((key) => checks[key]?.status === 'confirmed');
   const allInterface = gateOrder.every((key) => checks[key]?.status === 'confirmed' && checks[key]?.confirmedBy === 'interface');
 
+  // The publish interfaces this machine offers. When there is more than one the
+  // user picks the one to publish through; the app never picks silently.
+  const interfaceCheck = checks.interface || {};
+  const interfaceNames = Array.isArray(interfaceCheck.detectedNames) ? interfaceCheck.detectedNames : [];
+  const interfaceLabels = Array.isArray(interfaceCheck.detected) ? interfaceCheck.detected : [];
+  const interfaceOptions = interfaceNames.map((name, index) => ({
+    name,
+    label: interfaceLabels[index] || name,
+  }));
+  const chosenInterface = String(interfaceCheck.chosen || '');
+  const chosenInterfaceLabel =
+    interfaceOptions.find((option) => option.name === chosenInterface)?.label || '';
+  // One interface needs no choice; several need one before publishing.
+  const interfaceReady = interfaceOptions.length <= 1 || Boolean(chosenInterface);
+  const interfacePickerHtml = interfaceOptions.length
+    ? `<div class="gate-item" style="margin-top:8px;">
+        <div>
+          <div class="row">
+            <span class="gate-item__label">发布接口</span>
+            <span class="pill ${chosenInterface ? 'pill--ok' : 'pill--warn'}">${chosenInterface ? '已选定' : '待选择'}</span>
+          </div>
+          ${
+            interfaceOptions.length > 1
+              ? `<div class="row" style="margin-top:8px;">
+                  <select id="interface-picker" data-id="${esc(draft.id)}" style="max-width:320px;">
+                    ${interfaceOptions
+                      .map(
+                        (option) =>
+                          `<option value="${esc(option.name)}"${option.name === chosenInterface ? ' selected' : ''}>${esc(option.label)}</option>`,
+                      )
+                      .join('')}
+                  </select>
+                  <button class="btn" data-action="choose-interface" data-id="${esc(draft.id)}" type="button">使用这个接口</button>
+                </div>
+                <p class="gate-item__note">检测到 ${interfaceOptions.length} 个发布接口，请选一个；发布会用选中的接口，确认框里会写明是哪一个。</p>`
+              : `<p class="gate-item__note mono">${esc(interfaceOptions[0].label)}</p>`
+          }
+          ${
+            chosenInterfaceLabel
+              ? `<p class="gate-item__note">本次发布将使用：${esc(chosenInterfaceLabel)}</p>`
+              : ''
+          }
+        </div>
+      </div>`
+    : '';
+
   const gateHtml = gateOrder
     .map((key) => {
       const check = checks[key];
@@ -673,6 +719,7 @@ function renderDetail() {
         <button class="btn" data-action="publish-check" data-id="${esc(draft.id)}" type="button"${state.busy ? ' disabled' : ''}>重新检测</button>
       </div>
       <div style="margin-top:8px;">${gateHtml}</div>
+      ${interfacePickerHtml}
       <div class="notice notice--${allConfirmed ? 'ok' : 'warn'}" style="margin-top:12px;">
         ${
           allConfirmed
@@ -681,9 +728,14 @@ function renderDetail() {
         }
       </div>
       <div class="row" style="margin-top:12px;">
-        <button class="btn btn--primary" data-action="publish" data-mode="api" data-id="${esc(draft.id)}" type="button"${allInterface ? '' : ' disabled'}>通过接口发布</button>
+        <button class="btn btn--primary" data-action="publish" data-mode="api" data-id="${esc(draft.id)}" type="button"${allInterface && interfaceReady ? '' : ' disabled'}>通过接口发布</button>
         <button class="btn" data-action="publish" data-mode="manual" data-id="${esc(draft.id)}" type="button"${allConfirmed ? '' : ' disabled'}>记录为已发布（手动）</button>
       </div>
+      ${
+        allInterface && !interfaceReady
+          ? '<p class="field__hint" style="margin-top:8px;">检测到多个发布接口，请先在上方选一个，才能通过接口发布。</p>'
+          : ''
+      }
       ${
         allInterface
           ? ''
@@ -797,6 +849,25 @@ async function send(path, method, body) {
 function reportError(message, error) {
   console.error(message, error);
   toast(`${message}：${error?.message || '未知错误'}`, 'error');
+}
+
+/**
+ * The publish interface this draft would use, named for the confirmation.
+ *
+ * @param {string} draftId
+ * @returns {string}
+ */
+function chosenInterfaceLabel(draftId) {
+  const draft = (state.snapshot.drafts || []).find((item) => item.id === draftId);
+  const check = (draft && draft.publishChecks && draft.publishChecks.interface) || {};
+  const names = Array.isArray(check.detectedNames) ? check.detectedNames : [];
+  const labels = Array.isArray(check.detected) ? check.detected : [];
+  const chosen = String(check.chosen || '');
+  if (chosen) {
+    const index = names.indexOf(chosen);
+    return index >= 0 ? labels[index] || chosen : chosen;
+  }
+  return names.length === 1 ? labels[0] || names[0] : '';
 }
 
 /* ------------------------------------------------------------------ *
@@ -1014,14 +1085,35 @@ document.addEventListener('click', async (event) => {
       return;
     }
 
+    if (action === 'choose-interface') {
+      const picker = document.getElementById('interface-picker');
+      const name = picker ? String(picker.value || '') : '';
+      if (!name) {
+        toast('请先在下拉框里选择要使用的发布接口', 'error');
+        return;
+      }
+      const result = await send(`/api/drafts/${encodeURIComponent(id)}/choose-interface`, 'POST', { name });
+      await refresh();
+      toast(result.message || '已选定发布接口', 'ok');
+      return;
+    }
+
     if (action === 'publish') {
       const mode = actionEl.dataset.mode;
       if (mode === 'manual') {
         const confirmed = window.confirm('确认你已经在公众号后台发布了这篇文章？应用只记录状态，不会调用任何发布接口。');
         if (!confirmed) return;
       } else {
+        // The confirmation names the interface that will be called. A publish
+        // that does not say which tool it uses is a publish the user cannot
+        // check against.
+        const label = chosenInterfaceLabel(id);
+        if (!label) {
+          toast('没有可用的发布接口，未做任何发布动作', 'error');
+          return;
+        }
         const confirmed = window.confirm(
-          '将通过本机检测到的公众号发布接口真实提交这篇文章。确认发布？',
+          `将通过「${label}」真实提交这篇文章。确认发布？`,
         );
         if (!confirmed) return;
       }

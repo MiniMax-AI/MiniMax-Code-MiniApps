@@ -29,7 +29,7 @@
 
 import { decodeHostConnectorValue } from './host-connector-value.mjs';
 
-/** @typedef {{ key: string, label: string, status: 'confirmed'|'pending'|'unavailable', detected: string[], note: string, confirmedBy: string, confirmedAt: string }} PublishCheck */
+/** @typedef {{ key: string, label: string, status: 'confirmed'|'pending'|'unavailable', detected: string[], detectedNames?: string[], chosen?: string, note: string, confirmedBy: string, confirmedAt: string }} PublishCheck */
 
 /** @typedef {{ label: string, name: string }} DetectedTool */
 
@@ -50,7 +50,9 @@ const ACCOUNT_WORDS = new Set([
   'userinfo',
 ]);
 const MATERIAL_WORDS = new Set(['material', 'materials', 'media', 'thumb', 'thumbnail']);
-const PUBLISH_WORDS = new Set(['freepublish', 'publish', 'submit']);
+// `submit` on its own is too generic to stand for a publish interface; a
+// 公众号 publish operation names itself `publish` or `freepublish`.
+const PUBLISH_WORDS = new Set(['freepublish', 'publish']);
 
 /** Chinese markers are matched inside a token, because Chinese has no spaces. */
 const WECHAT_CJK = ['公众号', '微信'];
@@ -203,6 +205,16 @@ function labelsOf(tools) {
 }
 
 /**
+ * The runtime names of the detected tools, parallel to their labels.
+ *
+ * @param {DetectedTool[]} tools
+ * @returns {string[]}
+ */
+function namesOf(tools) {
+  return tools.map((tool) => tool.name);
+}
+
+/**
  * Build the three publish gates from a live inventory scan.
  *
  * @param {any} context
@@ -221,6 +233,7 @@ export async function evaluateGates(context) {
         label: '公众号账号授权',
         status: 'confirmed',
         detected: labelsOf(found.account),
+        detectedNames: namesOf(found.account),
         note: `检测到账号授权接口 ${found.account.length} 个，可读取授权主体。`,
         confirmedBy: 'interface',
         confirmedAt: new Date().toISOString(),
@@ -243,6 +256,7 @@ export async function evaluateGates(context) {
         label: '素材访问范围',
         status: 'confirmed',
         detected: labelsOf(found.material),
+        detectedNames: namesOf(found.material),
         note: `检测到素材接口 ${found.material.length} 个，可确认可写入的素材范围。`,
         confirmedBy: 'interface',
         confirmedAt: new Date().toISOString(),
@@ -265,7 +279,11 @@ export async function evaluateGates(context) {
         label: '可用发布接口',
         status: 'confirmed',
         detected: labelsOf(found.interface),
-        note: `检测到发布接口 ${found.interface.length} 个，可用于真实发布。`,
+        detectedNames: namesOf(found.interface),
+        note:
+          found.interface.length > 1
+            ? `检测到 ${found.interface.length} 个发布接口，请选择一个用于发布。`
+            : `检测到发布接口 ${found.interface.length} 个，可用于真实发布。`,
         confirmedBy: 'interface',
         confirmedAt: new Date().toISOString(),
       }
@@ -419,6 +437,10 @@ const ERROR_TEXT_PATTERN =
 /**
  * Look for an error marker inside a tool result payload.
  *
+ * The result code decides first. A payload that carries `errcode: 0` or
+ * `code: 0` succeeded, and the status string next to it — `errmsg: "ok"` is
+ * what 公众号 answers with on success — is informational, not a failure.
+ *
  * @param {unknown} value
  * @param {number} depth
  * @returns {string}
@@ -441,25 +463,38 @@ export function findErrorMarker(value, depth = 0) {
 
   const record = /** @type {Record<string, any>} */ (value);
 
+  // The explicit result code is the strongest signal there is.
+  /** @type {any} */
+  let code;
+  let hasCode = false;
   for (const key of ['errcode', 'errCode', 'error_code']) {
-    const code = record[key];
-    if (typeof code === 'number' && code !== 0) return `接口返回错误码 ${code}`;
-    if (typeof code === 'string' && code.trim() && code.trim() !== '0') return `接口返回错误码 ${code.trim()}`;
+    if (record[key] !== undefined) {
+      code = record[key];
+      hasCode = true;
+      break;
+    }
   }
-  if (typeof record.code === 'number' && record.code !== 0) return `接口返回错误码 ${record.code}`;
+  if (!hasCode && record.code !== undefined) {
+    code = record.code;
+    hasCode = true;
+  }
+
+  // A zero code means the call succeeded. A code that names anything else is
+  // a failure. A code that says nothing at all — null, an empty string —
+  // is not read as a success either.
+  let codeSaysSuccess = false;
+  if (hasCode) {
+    if (typeof code === 'number') {
+      if (code !== 0) return `接口返回错误码 ${code}`;
+      codeSaysSuccess = true;
+    } else if (typeof code === 'string') {
+      const trimmed = code.trim();
+      if (trimmed && trimmed !== '0') return `接口返回错误码 ${trimmed}`;
+      codeSaysSuccess = trimmed === '0';
+    }
+  }
 
   if (record.success === false) return '接口返回 success=false';
-
-  for (const key of ['error', 'errmsg', 'errorMessage', 'error_message']) {
-    const text = record[key];
-    if (typeof text === 'string' && text.trim()) return `接口返回错误：${text.trim().slice(0, 200)}`;
-    if (text && typeof text === 'object') return '接口返回错误对象';
-  }
-
-  const message = record.message;
-  if (typeof message === 'string' && ERROR_TEXT_PATTERN.test(message)) {
-    return `接口返回错误：${message.trim().slice(0, 200)}`;
-  }
 
   const failed = record.failed_items ?? record.failedItems;
   if (Array.isArray(failed) && failed.length > 0) {
@@ -468,6 +503,31 @@ export function findErrorMarker(value, depth = 0) {
       (first && typeof first === 'object' && (first.reason || first.message)) ||
       (typeof first === 'string' ? first : '');
     return `接口报告 ${failed.length} 个失败项${reason ? `：${String(reason).slice(0, 120)}` : ''}`;
+  }
+
+  // An explicit error field is an error whatever the code said: the code
+  // names the outcome, this field names the failure.
+  for (const key of ['error', 'errorMessage', 'error_message']) {
+    const text = record[key];
+    if (text === undefined || text === null) continue;
+    if (typeof text === 'string') {
+      if (!text.trim()) continue;
+      return `接口返回错误：${text.trim().slice(0, 200)}`;
+    }
+    if (typeof text === 'object' && Object.keys(text).length > 0) return '接口返回错误对象';
+  }
+
+  // `errmsg` and `message` sit next to the result code as status strings:
+  // 公众号 answers a successful publish with `errmsg: "ok"`. They are read
+  // as an error only when the payload carries no result code at all.
+  if (!codeSaysSuccess) {
+    const errmsg = record.errmsg;
+    if (typeof errmsg === 'string' && errmsg.trim()) return `接口返回错误：${errmsg.trim().slice(0, 200)}`;
+    if (errmsg && typeof errmsg === 'object' && Object.keys(errmsg).length > 0) return '接口返回错误对象';
+    const message = record.message;
+    if (typeof message === 'string' && ERROR_TEXT_PATTERN.test(message)) {
+      return `接口返回错误：${message.trim().slice(0, 200)}`;
+    }
   }
 
   return '';
@@ -581,32 +641,47 @@ export async function publishViaInterface(context, checks, draft) {
     };
   }
 
-  // Only a tool that declares a field for the article body may receive the
-  // article; the others are skipped instead of being called blindly.
-  /** @type {{ tool: any, args: Record<string, unknown> } | null} */
-  let chosen = null;
-  for (const detected of found.interface) {
-    const tool = inventory.find((item) => item && item.name === detected.name);
-    if (!tool) continue;
-    const args = buildPublishArguments(tool, draft);
-    if (args) {
-      chosen = { tool, args };
-      break;
-    }
+  // The interface to publish through is the one the user chose in the page.
+  // When there is exactly one candidate it is used; when there are several
+  // and none was chosen, nothing is published.
+  const chosenName = String(checks.interface?.chosen ?? '');
+  /** @type {DetectedTool[]} */
+  let candidates;
+  if (chosenName) {
+    candidates = found.interface.filter((detected) => detected.name === chosenName);
+  } else if (found.interface.length === 1) {
+    candidates = found.interface;
+  } else {
+    candidates = [];
   }
 
-  if (!chosen) {
+  if (!candidates.length) {
     return {
       ok: false,
-      message:
-        '检测到的发布接口没有声明可承载正文的参数，为避免把文章发给不合适的工具，未做任何发布动作，草稿保持不变。',
-      interfaceName: labelsOf(found.interface).join('、'),
+      message: chosenName
+        ? '选定的发布接口在本轮清单里已不可用，未做任何发布动作，草稿保持不变。'
+        : `检测到 ${found.interface.length} 个发布接口，请先在页面上选择一个再发布；未做任何发布动作，草稿保持不变。`,
+      interfaceName: '',
     };
   }
 
-  const interfaceName = toolLabel(chosen.tool);
+  // Only the chosen interface is called, and only when it declares a field for
+  // the article body. It is never quietly swapped for another one.
+  const detected = candidates[0];
+  const target = inventory.find((item) => item && item.name === detected.name);
+  const args = target ? buildPublishArguments(target, draft) : null;
+  if (!target || !args) {
+    return {
+      ok: false,
+      message:
+        '选定的发布接口没有声明可承载正文的参数，为避免把文章发给不合适的工具，未做任何发布动作，草稿保持不变。',
+      interfaceName: detected.label,
+    };
+  }
+
+  const interfaceName = toolLabel(target);
   try {
-    const result = await context.tool.call(chosen.tool.name, chosen.args, {});
+    const result = await context.tool.call(target.name, args, {});
     const verdict = interpretPublishResult(result);
     if (!verdict.ok) {
       return {

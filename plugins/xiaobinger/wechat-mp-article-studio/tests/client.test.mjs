@@ -63,9 +63,17 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
     documentElement: createElement(),
   };
 
+  /** @type {string[]} */
+  const confirms = [];
+  /** @type {{ path: string, method: string }[]} */
+  const requests = [];
+
   const window = {
     addEventListener() {},
-    confirm: () => true,
+    confirm: (/** @type {string} */ message) => {
+      confirms.push(String(message));
+      return true;
+    },
     mcode: undefined,
   };
 
@@ -74,7 +82,8 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
     window,
     navigator: { language: 'zh-CN' },
     console,
-    fetch: async (path) => {
+    fetch: async (/** @type {string} */ path, /** @type {any} */ options = {}) => {
+      requests.push({ path: String(path), method: String(options.method || 'GET') });
       const payload = String(path).startsWith('/api/tools') ? tools : snapshot;
       return { ok: true, status: 200, json: async () => payload };
     },
@@ -99,7 +108,7 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
   };
   context.globalThis = context;
 
-  return { context, elements, listeners, document, window };
+  return { context, elements, listeners, document, window, confirms, requests };
 }
 
 /**
@@ -216,4 +225,111 @@ test('the page does not claim a version was saved when none was', async () => {
   });
   const main = dom.elements.get('app-main');
   assert.doesNotMatch(main.innerHTML, /润色完成，已保存为新版本/);
+});
+
+/* ------------------------------------------------------------------ *
+ * Several publish interfaces: the page asks, the confirmation names.
+ * ------------------------------------------------------------------ */
+
+/**
+ * @param {string} [chosen]
+ * @returns {any}
+ */
+function interfaceFixture(chosen = '') {
+  const snapshot = draftFixture({
+    drafts: [],
+    styles: [],
+    statusLabels: { draft: '草稿' },
+    notice: '',
+    updatedAt: '',
+  });
+  const check = (key, label, detected, names) => ({
+    key,
+    label,
+    status: 'confirmed',
+    detected,
+    detectedNames: names,
+    chosen: '',
+    note: '',
+    confirmedBy: 'interface',
+    confirmedAt: '2026-01-01T00:00:00.000Z',
+  });
+  snapshot.drafts[0].publishChecks = {
+    account: check('account', '公众号账号授权', ['wechat / get_account_info'], ['mcp__wechat__get_account_info']),
+    material: check('material', '素材访问范围', ['wechat / add_material'], ['mcp__wechat__add_material']),
+    interface: {
+      ...check(
+        'interface',
+        '可用发布接口',
+        ['wechat / publish_article', 'wechat / freepublish'],
+        ['mcp__wechat__publish_article', 'mcp__wechat__freepublish'],
+      ),
+      chosen,
+    },
+  };
+  return snapshot;
+}
+
+/**
+ * @param {any} dom
+ * @param {any} dataset
+ */
+async function clickAction(dom, dataset) {
+  const action = { dataset };
+  await dom.listeners.click({
+    target: {
+      closest: (/** @type {string} */ selector) => (selector === '[data-action]' ? action : null),
+    },
+  });
+}
+
+test('the page offers a picker when several publish interfaces exist', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+
+  const main = dom.elements.get('app-main');
+  assert.match(main.innerHTML, /id="interface-picker"/);
+  assert.match(main.innerHTML, /检测到 2 个发布接口/);
+  assert.match(main.innerHTML, /data-action="choose-interface"/);
+});
+
+test('publishing through the interface stays disabled until one is chosen', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+
+  const main = dom.elements.get('app-main');
+  const button = /data-action="publish" data-mode="api"[^>]*?>/.exec(main.innerHTML);
+  assert.ok(button, 'the publish button is rendered');
+  assert.match(button[0], /disabled/);
+});
+
+test('the publish confirmation names the chosen interface', async () => {
+  const dom = await bootClient(interfaceFixture('mcp__wechat__freepublish'));
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+  await clickAction(dom, { action: 'publish', mode: 'api', id: 'draft-1' });
+
+  assert.ok(dom.confirms.length, 'the publish asked for a confirmation');
+  assert.match(dom.confirms[0], /wechat \/ freepublish/);
+});
+
+test('choosing an interface sends the name to the server', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+
+  dom.document.getElementById('interface-picker').value = 'mcp__wechat__freepublish';
+  await clickAction(dom, { action: 'choose-interface', id: 'draft-1' });
+
+  const posted = dom.requests.find(
+    (request) => request.path === '/api/drafts/draft-1/choose-interface' && request.method === 'POST',
+  );
+  assert.ok(posted, 'the chosen interface is sent to the server');
+});
+
+test('a manual publish never claims to have called an interface', async () => {
+  const dom = await bootClient(interfaceFixture('mcp__wechat__freepublish'));
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+  await clickAction(dom, { action: 'publish', mode: 'manual', id: 'draft-1' });
+
+  assert.ok(dom.confirms.length, 'the manual publish asked for a confirmation');
+  assert.doesNotMatch(dom.confirms[0], /freepublish/);
 });

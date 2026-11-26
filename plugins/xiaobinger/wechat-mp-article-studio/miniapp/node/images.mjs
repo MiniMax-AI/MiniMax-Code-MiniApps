@@ -28,14 +28,17 @@ const MIME_BY_EXT = {
 };
 
 /**
- * Hosts a signed image URL may point at.
+ * The object storage bucket a signed image URL may point at.
  *
  * The URL comes from `connector__matrix__get_asset_url` and points at the
- * Matrix Drive object storage bucket, so only an Alibaba Cloud OSS host is
- * fetched. A tool that returns an internal address — or a 302 that points
- * one — can therefore never make this process request it.
+ * Matrix Drive object storage bucket, so only that one bucket is fetched. The
+ * region may differ between environments, the bucket may not: a URL that
+ * names any other bucket — including one an attacker controls — is refused
+ * before a single byte is requested.
  */
-const ASSET_HOST_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}\.oss-[a-z0-9-]{2,30}\.aliyuncs\.com$/;
+export const ASSET_BUCKET = 'matrix-internal-cn';
+
+const ASSET_HOST_PATTERN = /^matrix-internal-cn\.oss-[a-z0-9-]{2,30}\.aliyuncs\.com$/;
 const MAX_REDIRECTS = 3;
 
 /**
@@ -51,6 +54,24 @@ export function isAllowedAssetHost(hostname) {
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
   if (host.includes(':')) return false;
   return ASSET_HOST_PATTERN.test(host);
+}
+
+/**
+ * A redirect may not carry the request to another host.
+ *
+ * The allowlist alone is not enough: a 302 from the pinned bucket to some
+ * other allowed-looking host would still be a request this app made on
+ * behalf of whoever sent the redirect. Every hop therefore has to stay on
+ * the very host the first URL named.
+ *
+ * @param {string} hostname
+ * @param {string} pinnedHost
+ * @returns {boolean}
+ */
+export function isSameAssetHost(hostname, pinnedHost) {
+  const host = String(hostname ?? '').toLowerCase().replace(/\.$/, '');
+  const pinned = String(pinnedHost ?? '').toLowerCase().replace(/\.$/, '');
+  return Boolean(host) && host === pinned;
 }
 
 /**
@@ -223,12 +244,20 @@ export async function resolveAssetUrl(context, nodeId, options = {}) {
  * @param {string} url
  * @returns {Promise<Buffer>}
  */
-async function downloadAsset(url) {
-  let current = url;
-  // Redirects are followed by hand: every hop is checked against the same
-  // allowlist, so a 302 can never move the request to another host.
+export async function downloadAsset(url) {
+  // The host the signed URL names is pinned for the whole download. Every
+  // redirect hop is checked against the allowlist *and* against that host,
+  // so a 302 can never move the request to another bucket.
+  const first = assertAllowedAssetUrl(url);
+  const pinnedHost = first.hostname.toLowerCase();
+  let current = first.toString();
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     const parsed = assertAllowedAssetUrl(current);
+    if (!isSameAssetHost(parsed.hostname, pinnedHost)) {
+      const error = new Error(`素材地址重定向到了另一个主机：${parsed.hostname}`);
+      error.code = 'ASSET_URL_HOST_NOT_ALLOWED';
+      throw error;
+    }
     const response = await fetch(parsed.toString(), {
       redirect: 'manual',
       signal: AbortSignal.timeout(45000),

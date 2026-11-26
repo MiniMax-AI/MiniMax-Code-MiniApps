@@ -68,11 +68,17 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   `publisher` is not `publish`. Camel case is split first, so `freePublish` is `free` + `publish`.
 - **The role comes from the operation.** A tool must be named 公众号 — in its namespace
   (`wechat`, `weixin`, `gzh`, `mp_weixin`, `公众号`) or in its own name — *and* its operation name
-  must carry the role (`publish`, `freepublish`, `submit`, `发布`, `群发` for the publish gate;
+  must carry the role (`publish`, `freepublish`, `发布`, `群发` for the publish gate;
   `material`, `thumb`, `media` for the asset gate). A draft interface (`draft_add`, `add_news`) is
-  not a publish interface, so it can never open the gate.
+  not a publish interface, so it can never open the gate. A generic `submit` operation does not
+  name a publish role either, so it is not treated as one.
 - **The live list is re-read.** When you press 「通过接口发布」 the inventory is listed and classified
-  again, and the tool is picked from that fresh result — never from the label shown earlier.
+  again, and the tool is picked from that fresh result — never from the label shown earlier. An
+  interface that is no longer in the fresh list publishes nothing.
+- **You name the interface.** When more than one publish interface is detected, the page lists them
+  and you pick the one to publish through; until that pick is made nothing is published, and the
+  publish button stays disabled. The confirmation dialog names the chosen interface, and only that
+  interface is called — it is never quietly swapped for another one.
 - **Only declared fields are sent.** The arguments are built from the target tool's own
   `inputSchema`. A tool that declares no field for the article body is not called at all, so the
   article is never handed to a tool that cannot receive it.
@@ -80,7 +86,9 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   a transport error: an MCP result is a failure when `isError` is set or when its
   `structuredContent` or content blocks carry an error code, and a Connector result is a failure
   when its payload carries a non-zero `errcode` / `code`, `success: false`, or a non-empty
-  `failed_items`. Only then is the version written as `已发布（接口）`.
+  `failed_items`. A zero result code wins over the status string next to it — 公众号 answers a
+  successful publish with `{errcode: 0, errmsg: "ok"}`, and that is a success. Only then is the
+  version written as `已发布（接口）`.
 
 ## Tested environment
 
@@ -94,10 +102,14 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   no errors and the network log no failed request.
 - The publish gate was re-run against the live inventory of this machine (203 tools): all three
   checks report 「未接入」 and both publish buttons stay disabled, with no console error.
+- The interface picker was exercised in the app's own Browser tab against a draft whose check record
+  listed two publish interfaces: the picker is rendered, the publish button stays disabled until an
+  interface is picked, the pick is sent to the server, and the confirmation dialog names the picked
+  interface.
 - The damaged-state path was exercised on a throwaway data directory: the damaged file keeps its
   exact bytes under `state.corrupt-<stamp>.json`, the page shows the notice that names the copy,
   and a later write leaves that copy untouched.
-- This package's own tests: `node --test "tests/**/*.test.mjs"` — 36 checks covering the publish
+- This package's own tests: `node --test "tests/**/*.test.mjs"` — 62 checks covering the publish
   gate's matching, the interface answer, the durable state, the questionnaire flow, the download
   allowlist, and the page.
 - Not verified: the Agent polish turn and the interface publish path were implemented but never
@@ -115,11 +127,12 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   written.
 - **Network hosts** — the app makes no request of its own. It calls the Connector tools listed below
   and fetches the short-lived signed URL that `connector__matrix__get_asset_url` returns. That URL
-  must be HTTPS and its host must be an Alibaba Cloud OSS host
-  (`<bucket>.oss-<region>.aliyuncs.com`, in practice
+  must be HTTPS and its host must be the pinned bucket
+  (`matrix-internal-cn.oss-<region>.aliyuncs.com`, in practice
   `matrix-internal-cn.oss-cn-shanghai.aliyuncs.com`); a literal address, a loopback or link-local
-  host, and any other host are refused. Redirects are followed by hand, and every hop is checked
-  against the same rule, so a 302 cannot move the request elsewhere.
+  host, and any other host — including another bucket on the same domain — are refused. Redirects are
+  followed by hand: every hop is checked against the same rule *and* against the host the first URL
+  named, so a 302 cannot move the request to another bucket or another region.
 - **Spawned processes** — none. No CLI, no shell, no child process.
 - **Agent turns** — declares `agentAccess: ["session.run"]` and runs one Agent turn when you press
   「交给 Agent 润色」. The turn is asked to rewrite only the article body and to return nothing else;

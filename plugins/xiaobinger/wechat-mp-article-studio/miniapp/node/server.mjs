@@ -594,6 +594,33 @@ export async function start(context) {
         return;
       }
 
+      if (method === 'POST' && path.endsWith('/choose-interface')) {
+        const id = path.slice('/api/drafts/'.length, path.length - '/choose-interface'.length);
+        const draft = store.draft(id);
+        if (!draft) {
+          sendJson(response, 404, { error: 'draft_not_found' });
+          return;
+        }
+        const body = await readJson(request);
+        const name = String(body.name ?? '');
+        const record = store.state.publishChecks[draft.id];
+        const known = Array.isArray(record?.interface?.detectedNames) ? record.interface.detectedNames : [];
+        if (!name || !known.includes(name)) {
+          sendJson(response, 400, {
+            error: 'unknown_interface',
+            message: '选定的发布接口不在本次检测到的接口里，请重新检测后再选择。',
+          });
+          return;
+        }
+        await store.mutate((state) => {
+          const checks = state.publishChecks[draft.id];
+          const current = checks.interface;
+          checks.interface = { ...current, chosen: name };
+        });
+        sendJson(response, 200, { checks: store.state.publishChecks[draft.id], draft: decorate(draft) });
+        return;
+      }
+
       if (method === 'POST' && path.endsWith('/publish')) {
         const id = path.slice('/api/drafts/'.length, path.length - '/publish'.length);
         const draft = store.draft(id);
