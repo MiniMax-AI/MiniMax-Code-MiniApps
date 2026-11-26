@@ -20,8 +20,8 @@ export async function restoreWindowPosition(handle, position, { isCurrent = () =
   }
 }
 
-/** Fit the complete transparent content area, not only the Host's minimum overlap. */
-export async function fitWindowToScreen(handle, { screenRect, isCurrent = () => true } = {}) {
+/** Fit the complete transparent content area; on pop-out keep the bottom-centered pet visible even when it cannot all fit. */
+export async function fitWindowToScreen(handle, { screenRect, isCurrent = () => true, size, keepPetVisible = false } = {}) {
   const cancelled = () => ({ cancelled: true, error: null, state: null });
   if (!isCurrent()) return cancelled();
   try {
@@ -34,11 +34,18 @@ export async function fitWindowToScreen(handle, { screenRect, isCurrent = () => 
       || bounds.width <= 0 || bounds.height <= 0) return { error: 'invalid_state' };
     if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(finite)
       || rect.width <= 0 || rect.height <= 0) return { error: 'screen_unavailable' };
-    if (bounds.width > rect.width || bounds.height > rect.height) return { error: 'screen_too_small' };
-    const x = Math.ceil(Math.max(rect.x, Math.min(bounds.x, rect.x + rect.width - bounds.width)));
-    const y = Math.ceil(Math.max(rect.y, Math.min(bounds.y, rect.y + rect.height - bounds.height)));
-    if (x === bounds.x && y === bounds.y) return { state, error: null };
-    const updated = await handle.update({ x, y });
+    const { width, height } = size ?? bounds;
+    const spareX = rect.width - width;
+    const spareY = rect.height - height;
+    if (!keepPetVisible && (spareX < 0 || spareY < 0)) return { error: 'screen_too_small' };
+    // The sprite is centered at the bottom of the window. On small work areas, keep that
+    // edge on-screen instead of clamping the top and pushing the sprite below the display.
+    const x = spareX < 0 ? Math.round(rect.x + spareX / 2) : Math.ceil(Math.max(rect.x, Math.min(bounds.x, rect.x + spareX)));
+    const y = spareY < 0 ? Math.floor(rect.y + spareY) : Math.ceil(Math.max(rect.y, Math.min(bounds.y, rect.y + spareY)));
+    if (x === bounds.x && y === bounds.y && width === bounds.width && height === bounds.height) return { state, error: null };
+    // Pop-out has a known design size. Include it with the move instead of relying on
+    // a position-only update to preserve the pre-correction dimensions.
+    const updated = await handle.update(size ? { x, y, width, height } : { x, y });
     if (!isCurrent() || updated?.mode !== 'window') return cancelled();
     return { state: updated, error: null };
   } catch (error) {
