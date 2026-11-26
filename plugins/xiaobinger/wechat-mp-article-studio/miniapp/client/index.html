@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>公众号图文工作台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="app-header__text">
+          <h1 class="app-title">公众号图文工作台</h1>
+          <p class="app-subtitle">输入主题与正文，产出封面与插图方案、查重结论和可发布内容</p>
+        </div>
+        <div class="app-header__actions">
+          <span class="gate-note" id="header-gate-note" role="status">正在读取工作台状态…</span>
+        </div>
+      </header>
+
+      <div class="app-body">
+        <nav class="app-nav" aria-label="主导航">
+          <button class="nav-item" data-nav="compose" type="button">
+            <span class="nav-item__label">新建文章</span>
+          </button>
+          <button class="nav-item" data-nav="drafts" type="button">
+            <span class="nav-item__label">草稿箱</span>
+            <span class="nav-item__count" id="nav-draft-count">0</span>
+          </button>
+          <button class="nav-item" data-nav="styles" type="button">
+            <span class="nav-item__label">视觉风格</span>
+          </button>
+          <p class="nav-footnote">
+            未完成发布前三项确认前，本应用只保存草稿，不会执行任何发布动作。
+          </p>
+        </nav>
+
+        <main class="app-main" id="app-main">
+          <p class="state-message" id="boot-state" role="status">正在载入工作台…</p>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

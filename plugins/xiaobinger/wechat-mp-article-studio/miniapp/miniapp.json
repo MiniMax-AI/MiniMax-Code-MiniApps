@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "client": [
+      "./miniapp/client"
+    ],
+    "node": [
+      "./miniapp/node"
+    ]
+  },
+  "runtime": {
+    "kind": "process",
+    "entry": "./miniapp/node/server.mjs",
+    "lifecycle": "on-demand"
+  },
+  "surface": {
+    "path": "/dashboard",
+    "window": {
+      "width": 1280,
+      "height": 860,
+      "minWidth": 760,
+      "minHeight": 520,
+      "resizable": true,
+      "frame": true,
+      "transparent": false,
+      "alwaysOnTop": false,
+      "skipTaskbar": false,
+      "clickThrough": false
+    }
+  },
+  "mcpEndpoints": [],
+  "toolAccess": [
+    "call"
+  ],
+  "agentAccess": [
+    "session.run"
+  ],
+  "agentConcurrency": 2
+}
