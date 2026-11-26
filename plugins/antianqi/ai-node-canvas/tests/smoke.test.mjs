@@ -23,6 +23,7 @@ import { createActionQueue, OWNER_TTL_MS } from '../miniapp/node/action-queue.mj
 import { decodeHostConnectorValue } from '../miniapp/node/host-connector-value.mjs';
 import { findMediaTool, RETIRED_TOOLS, TOOL_ACCEPTS, TOOL_PRODUCES, delogoRect } from '../miniapp/node/media-tools.mjs';
 import { cropRectAfterDrag, fanOutParams, nodeHasProduct, NODE_GAP, toolPrompt } from '../miniapp/client/tools.mjs';
+import { immersiveAction } from '../miniapp/client/immersive.mjs';
 import { providerFailure } from '../miniapp/node/connector-runner.mjs';
 import { scanFiles } from './scan-undefined.mjs';
 
@@ -12077,6 +12078,23 @@ test('an audio the provider would refuse is converted before it goes up', async 
   const workDir = join(h.dataDir, 'work');
   const leftovers = await readdir(workDir).catch(() => []);
   assert.deepEqual(leftovers.filter((name) => name.endsWith('.mp3')), [], 'the converted copy was left behind');
+});
+
+test('the immersive mode reads its keys in one place', () => {
+  // F11 is the key the README tells the user to press.
+  assert.equal(immersiveAction({ key: 'F11' }), 'toggle');
+  // The host may take F11 for itself, so the same verb has a second key.
+  assert.equal(immersiveAction({ key: 'f', ctrlKey: true, shiftKey: true }), 'toggle');
+  assert.equal(immersiveAction({ key: 'F', metaKey: true, shiftKey: true }), 'toggle');
+  // A find is not this mode's key, and neither is a bare letter.
+  assert.equal(immersiveAction({ key: 'f', ctrlKey: true }), '');
+  assert.equal(immersiveAction({ key: 'f' }), '');
+  // Escape leaves the mode, but only when it is on: otherwise it keeps
+  // closing whatever else is open.
+  assert.equal(immersiveAction({ key: 'Escape' }, { immersive: true }), 'exit');
+  assert.equal(immersiveAction({ key: 'Escape' }, { immersive: false }), '');
+  // No key at all is no meaning at all.
+  assert.equal(immersiveAction(null), '');
 });
 
 test('the first and last frame request declares one ending only', async (t) => {

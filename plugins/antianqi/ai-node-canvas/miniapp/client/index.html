@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="nxc-app">      <header class="nxc-toolbar">
+    <div id="nxc-app" class="nxc-app">      <header class="nxc-toolbar">
         <div class="nxc-toolbar__group">
           <h1 class="nxc-brand"><i class="nxc-brand__dot"></i>节点画布</h1>
           <button id="canvas-select" class="nxc-select nxc-select--canvas" type="button" title="切换画布"></button>
@@ -32,6 +32,7 @@
           <button id="btn-theme" class="nxc-btn" type="button" title="切换配色主题">主题：跟随系统</button>
           <button id="btn-reset" class="nxc-btn" type="button">重置视图</button>
           <button id="btn-popout" class="nxc-btn" type="button" hidden>独立窗口</button>
+          <button id="btn-immersive" class="nxc-btn" type="button" title="沉浸模式：工具栏收起，画布铺满（F11 / Ctrl+Shift+F）">沉浸</button>
           <button id="btn-add" class="nxc-btn nxc-btn--primary" type="button">添加节点</button>
         </div>
       </header>
@@ -51,6 +52,10 @@
           </div>
         </div>
       </main>
+
+      <!-- The way out of the immersive mode stands on the canvas: the mode
+           hides the toolbar, so the button that leaves it cannot live there. -->
+      <button id="immersive-exit" class="nxc-btn nxc-immersive-exit" type="button" hidden>退出沉浸（Esc）</button>
 
       <div id="context-menu" class="nxc-menu" hidden></div>
       <div id="add-menu" class="nxc-menu nxc-palette" hidden></div>

@@ -2997,3 +2997,34 @@ input {
   color: var(--brand);
   font-size: 13px;
 }
+
+/* ---------------- immersive ---------------- */
+
+/* The immersive mode: the chrome goes out of the way and the canvas takes
+   the whole surface. What the mode hides is a list, and the list lives here:
+   one class says the mode is on, and the stylesheet says what that means. */
+.nxc-app--immersive .nxc-toolbar {
+  display: none;
+}
+
+.nxc-immersive-exit {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 40;
+  min-height: 26px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  opacity: 0.35;
+  transition: opacity var(--mcode-duration-fast) var(--mcode-ease);
+}
+
+.nxc-immersive-exit:hover,
+.nxc-immersive-exit:focus-visible {
+  opacity: 1;
+}
+
+.nxc-immersive-exit[hidden] {
+  display: none;
+}
