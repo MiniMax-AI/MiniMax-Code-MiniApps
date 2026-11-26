@@ -20,6 +20,8 @@ Version **0.9.0** adds two settings. **Task notifications** sets how many second
 
 Version **0.9.0** also gives the desktop window one fixed size, tall enough for the open card. Earlier versions grew the window when a card opened, which moved it on screen and made the pet jump for a frame; now opening or closing a card only shows or hides it. The area above the pet is transparent and passes clicks through to whatever is behind it.
 
+Version **0.9.2** caps the desktop task card at 264 CSS pixels and centers it in wider windows. It can still fit narrower windows, with the existing 8-pixel side gutters. Drag handling, permissions and dependencies are unchanged.
+
 Version **0.8.1** fixes the desktop card: the title truncates to one line, only the reply scrolls, and the actions stay pinned, so a long title or reply no longer pushes 返回任务 / 打开对话 out of the card. Expanding the card also grows the window instead of squeezing the reply into one line.
 
 Version **0.8.0** aligns the panel with the MiniMax Code design language: 24px page margins and section gaps, 14px/22px body copy with 12px/18px supporting text, 32px minimum control height, 12px cards and 8px controls, 0.5px borders on desktop overlays, and press/focus states. The desktop pet keeps its 280px layout with the same tokens.

@@ -822,6 +822,9 @@ html.mode-window .pet-sprite:focus-visible {
   left: 8px;
   right: 8px;
   bottom: calc(var(--minimax-pet-height, 104px) + 8px);
+  /* Keep the 280px desk's two 8px gutters even if the native viewport becomes wider. */
+  max-width: 264px;
+  margin-inline: auto;
   /* Use the space the expanded window provides, up to what the desk leaves above the pet. */
   max-height: max(216px, calc(100% - var(--minimax-pet-height, 104px) - 24px));
   display: flex;

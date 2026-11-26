@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { createCompactPetView } from '../miniapp/client/compact-pet-view.mjs';
@@ -313,6 +314,31 @@ domTest('a markdown reply renders as structure in the detail, previews stay flat
   assert.equal(node.querySelector('.md-heading'), null);
   h.update({ taskSelection: selection(1, reply) });
   assert.equal(node.querySelector('.md-heading').textContent, '结论');
+});
+
+domTest('the desktop task card caps its width and keeps its side gutters', async (t) => {
+  const [html, css] = await Promise.all([
+    readFile(new URL('../miniapp/client/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../miniapp/client/pet.css', import.meta.url), 'utf8'),
+  ]);
+  const dom = new JSDOM(html);
+  t.after(() => dom.window.close());
+  const { document } = dom.window;
+  document.documentElement.classList.add('mode-window');
+  document.getElementById('desk').hidden = false;
+  const card = document.getElementById('workbench');
+  card.hidden = false;
+  const stylesheet = document.createElement('style');
+  stylesheet.textContent = css;
+  document.head.append(stylesheet);
+
+  // jsdom checks which declarations apply; it does not calculate layout dimensions.
+  const style = dom.window.getComputedStyle(card);
+  assert.equal(style.maxWidth, '264px');
+  assert.equal(style.marginInline, 'auto');
+  assert.equal(style.left, '8px');
+  assert.equal(style.right, '8px');
+  assert.equal(style.boxSizing, 'border-box');
 });
 
 domTest('a long title truncates on one line and a long reply cannot push the footer out', (t) => {
