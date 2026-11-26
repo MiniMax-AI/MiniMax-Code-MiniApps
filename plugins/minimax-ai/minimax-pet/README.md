@@ -20,7 +20,7 @@ Version **0.9.0** adds two settings. **Task notifications** sets how many second
 
 Version **0.9.0** also gives the desktop window one fixed size, tall enough for the open card. Earlier versions grew the window when a card opened, which moved it on screen and made the pet jump for a frame; now opening or closing a card only shows or hides it. The area above the pet is transparent and passes clicks through to whatever is behind it.
 
-Version **0.9.2** caps the desktop task card at 264 CSS pixels and centers it in wider windows. It can still fit narrower windows, with the existing 8-pixel side gutters. Drag handling, permissions and dependencies are unchanged.
+Version **0.9.2** keeps the desktop window at its intended size while dragging by sending the configured size with each move, rather than carrying forward unexpected native bounds. The desktop task card is centered and capped at 264 CSS pixels; it can still fit narrower windows with the existing 8-pixel side gutters. Permissions and dependencies are unchanged.
 
 Version **0.8.1** fixes the desktop card: the title truncates to one line, only the reply scrolls, and the actions stay pinned, so a long title or reply no longer pushes 返回任务 / 打开对话 out of the card. Expanding the card also grows the window instead of squeezing the reply into one line.
 
@@ -49,6 +49,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - An earlier UI version was exercised on macOS in a MiniMax Code development build: three tabs, wide/narrow layouts, task reading, real session/ask activity, import/delete, and desktop round trips. Version 0.6.0 has Node/DOM tests (including the open and theme paths against a simulated Host), an isolated HTTP smoke test, and a browser check of the panel layout outside the Host.
 - The default atlas is checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The separate octopus icon is checked by PNG decoding and visual review. On 2026-10-26, the packaged Skill was exercised with a real Agent in the macOS development build to create, validate, preview and import a custom v2 pet; all nine animation previews and the four cardinal mouse-look directions were checked. This does not replace released-client acceptance.
 - Version 0.9.0 has Node/DOM tests for the card timer, the preference round trip and the copy of both languages (every key the page uses must exist in both), plus a browser check of the panel and desktop window in both languages against a simulated Host. Not verified for 0.9.0: the language the real client reports on any given install, and both languages inside a real MiniMax Code window.
+- Version 0.9.2 was checked in MiniMax Code **3.1.19.232** on Windows 11 x64 (build 26200, 150% display scaling). With the task card open, four automated pointer drags moved the real window without cumulative width or height growth. A physical mouse and other display configurations were not tested for this fix.
 - Not verified for 0.6.0: opening a conversation or following the theme inside a real MiniMax Code 3.1.11+ window (panel or desktop pet), any Windows GUI, and released-client installation or GUI acceptance on 3.1.6. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
