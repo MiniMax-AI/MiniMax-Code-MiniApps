@@ -33,6 +33,7 @@ const state = {
   newStyle: { open: false, name: '', description: '' },
   polishNote: '',
   showStyleForm: false,
+  noticeDismissed: false,
 };
 
 /* ------------------------------------------------------------------ *
@@ -168,14 +169,31 @@ function render() {
     if (target === state.view) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
-  if (state.view === 'compose') main.innerHTML = renderCompose();
-  else if (state.view === 'drafts') main.innerHTML = renderDrafts();
-  else if (state.view === 'styles') main.innerHTML = renderStyles();
-  else if (state.view === 'detail') main.innerHTML = renderDetail();
+  const banner = state.noticeDismissed ? '' : renderNotice();
+  if (state.view === 'compose') main.innerHTML = banner + renderCompose();
+  else if (state.view === 'drafts') main.innerHTML = banner + renderDrafts();
+  else if (state.view === 'styles') main.innerHTML = banner + renderStyles();
+  else if (state.view === 'detail') main.innerHTML = banner + renderDetail();
   if (state.view === 'detail') {
     const frame = document.getElementById('export-frame');
     if (frame && state.exportPreview) frame.srcdoc = state.exportPreview;
   }
+}
+
+/**
+ * The board's own notice, for example a state file that could not be read.
+ *
+ * @returns {string}
+ */
+function renderNotice() {
+  const notice = String(state.snapshot.notice || '').trim();
+  if (!notice) return '';
+  return `<div class="notice notice--warn" style="margin-bottom:12px;">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;">
+        <span>${esc(notice)}</span>
+        <button class="btn" data-action="dismiss-notice" type="button">知道了</button>
+      </div>
+    </div>`;
 }
 
 function renderCompose() {
@@ -509,8 +527,17 @@ function renderDetail() {
     : '';
 
   const polishState = state.polish && state.polish.draftId === draft.id ? state.polish : null;
+  const polishTone = !polishState
+    ? ''
+    : polishState.status === 'failed'
+      ? 'danger'
+      : polishState.status === 'done'
+        ? polishState.committed
+          ? 'ok'
+          : 'warn'
+        : '';
   const polishBlock = polishState
-    ? `<div class="notice notice--${polishState.status === 'done' ? 'ok' : polishState.status === 'failed' ? 'danger' : ''}">
+    ? `<div class="notice notice--${polishTone}">
         <div class="row" style="justify-content:space-between;">
           <span>${esc(polishState.message)}</span>
           <span class="pill">${esc(polishState.status)}</span>
@@ -790,12 +817,18 @@ function startPolishPolling(callId, draftId) {
         status: call.status,
         message:
           call.status === 'done'
-            ? '润色完成，已保存为新版本'
+            ? call.committed
+              ? call.committedVersion
+                ? `润色完成，已保存为 v${call.committedVersion}`
+                : '润色完成，已保存为新版本'
+              : '润色完成，但没有保存为新版本，草稿保持不变'
             : call.status === 'failed'
               ? `润色失败${call.failureCode ? `（${call.failureCode}）` : ''}`
               : call.status === 'waiting_answer'
                 ? 'Agent 在等待你的回答'
                 : 'Agent 正在润色…',
+        committed: Boolean(call.committed),
+        committedVersion: call.committedVersion || 0,
         permission: call.permission,
         question: call.question,
       };
@@ -832,6 +865,14 @@ document.addEventListener('click', async (event) => {
   const id = actionEl.dataset.id;
 
   try {
+    if (action === 'dismiss-notice') {
+      // The notice stays in the saved state and comes back on the next reload;
+      // dismissing it only hides it for this session.
+      state.noticeDismissed = true;
+      render();
+      return;
+    }
+
     if (action === 'open-draft') {
       state.selectedId = id;
       state.view = 'detail';
@@ -977,6 +1018,11 @@ document.addEventListener('click', async (event) => {
       const mode = actionEl.dataset.mode;
       if (mode === 'manual') {
         const confirmed = window.confirm('确认你已经在公众号后台发布了这篇文章？应用只记录状态，不会调用任何发布接口。');
+        if (!confirmed) return;
+      } else {
+        const confirmed = window.confirm(
+          '将通过本机检测到的公众号发布接口真实提交这篇文章。确认发布？',
+        );
         if (!confirmed) return;
       }
       const result = await send(`/api/drafts/${encodeURIComponent(id)}/publish`, 'POST', { mode });

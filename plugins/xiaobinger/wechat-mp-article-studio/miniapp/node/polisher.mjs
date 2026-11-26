@@ -10,6 +10,11 @@
  *
  * The polished text always becomes a *new version*; the previous version is
  * kept, so nothing the user wrote is destroyed by an Agent turn.
+ *
+ * A questionnaire is addressed by its `requestId`. The Host carries that id on
+ * the `question.requested` event and on `result.pendingQuestion`, next to the
+ * questionnaire itself — never inside it — so the id is kept on its own here.
+ * Node names the questionnaire `requestId`; only the page uses `questionId`.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -34,9 +39,13 @@ export function createPolisher(context) {
       streamed: record.streamed,
       result: record.result,
       failureCode: record.failureCode,
+      failureMessage: record.failureMessage,
       permission: record.permission,
       question: record.question,
       sessionId: record.sessionId,
+      /** True only when the polished text really became a new version. */
+      committed: Boolean(record.committed),
+      committedVersion: record.committedVersion || 0,
     };
   }
 
@@ -66,11 +75,35 @@ export function createPolisher(context) {
   }
 
   /**
+   * Commit the polished body as a new version.
+   *
+   * The status is only `done` when this succeeded, so the page never claims
+   * that a version was saved when nothing was written.
+   *
+   * @param {any} record
+   * @param {string} polished
+   * @param {(draftId: string, body: string, source: string) => Promise<any>} commit
+   */
+  async function commitVersion(record, polished, commit) {
+    try {
+      const saved = await commit(record.draftId, polished, 'agent');
+      record.committed = true;
+      record.committedVersion = Number(saved?.version ?? 0) || 0;
+      record.status = 'done';
+    } catch (error) {
+      record.status = 'failed';
+      record.failureCode = 'COMMIT_FAILED';
+      record.failureMessage =
+        /** @type {any} */ (error)?.message || '润色内容未能保存为新版本，草稿保持不变。';
+    }
+  }
+
+  /**
    * Start one polish run.
    *
    * @param {any} draft
    * @param {string} note
-   * @param {(draftId: string, body: string, source: string) => Promise<void>} commit
+   * @param {(draftId: string, body: string, source: string) => Promise<any>} commit
    * @returns {{ callId: string }}
    */
   function start(draft, note, commit) {
@@ -82,10 +115,17 @@ export function createPolisher(context) {
       streamed: '',
       result: null,
       failureCode: '',
+      failureMessage: '',
       permission: null,
       question: null,
+      /** The questionnaire's id, kept beside the questionnaire and not inside it. */
+      questionRequestId: '',
+      committed: false,
+      committedVersion: 0,
       sessionId: '',
       controller: new AbortController(),
+      /** Kept on the record so a continued turn commits exactly like the first one. */
+      commit,
     };
     calls.set(callId, record);
 
@@ -114,6 +154,7 @@ export function createPolisher(context) {
           toolInput: event.toolInput || '',
         };
       } else if (event.type === 'question.requested') {
+        record.questionRequestId = String(event.requestId ?? '');
         record.question = event.request;
       }
     };
@@ -128,6 +169,7 @@ export function createPolisher(context) {
         record.sessionId = result.sessionId || record.sessionId;
         sessions.set(articleKey, record.sessionId);
         if (result.pendingQuestion) {
+          record.questionRequestId = String(result.pendingQuestion.requestId ?? '');
           record.question = result.pendingQuestion.request;
           record.status = 'waiting_answer';
           return;
@@ -138,11 +180,11 @@ export function createPolisher(context) {
           record.failureCode = result.error?.code || result.status || 'AGENT_NO_RESULT';
           return;
         }
-        await commit(record.draftId, polished, 'agent');
-        record.status = 'done';
+        await commitVersion(record, polished, commit);
       } catch (error) {
         record.status = 'failed';
         record.failureCode = /** @type {any} */ (error)?.code || 'AGENT_CALL_FAILED';
+        record.failureMessage = /** @type {any} */ (error)?.message || '';
       }
     })();
 
@@ -171,6 +213,11 @@ export function createPolisher(context) {
   }
 
   /**
+   * Answer a questionnaire and continue the turn.
+   *
+   * The commit callback is the one the run was started with, so a turn that
+   * asked a question saves its result the same way a turn that did not.
+   *
    * @param {string} callId
    * @param {any[]} answers
    */
@@ -179,26 +226,29 @@ export function createPolisher(context) {
     if (!record || !record.question) return { ok: false, message: '没有待回答的问题' };
     if (!context.agent) return { ok: false, message: 'Agent 不可用' };
     const sessionId = record.sessionId || record.result?.sessionId;
-    const questionId = record.question.requestId;
-    if (!sessionId || !questionId) return { ok: false, message: '问题上下文已失效' };
+    const requestId = record.questionRequestId;
+    if (!sessionId || !requestId) return { ok: false, message: '问题上下文已失效' };
     record.status = 'running';
     record.question = null;
     try {
-      const result = await context.agent.answer(
-        { sessionId, questionId, answers },
-        {},
-      );
+      const result = await context.agent.answer({ sessionId, requestId, answers }, {});
       record.result = result;
       const polished = typeof result.text === 'string' ? result.text.trim() : '';
       if (result.pendingQuestion) {
+        record.questionRequestId = String(result.pendingQuestion.requestId ?? '');
         record.question = result.pendingQuestion.request;
         record.status = 'waiting_answer';
         return { ok: true, message: 'Agent 继续提问' };
       }
       if (result.status === 'finished' && polished) {
-        record.polished = polished;
-        record.status = 'done';
-        return { ok: true, message: '润色完成' };
+        await commitVersion(record, polished, record.commit);
+        if (record.status !== 'done') {
+          return { ok: false, message: record.failureMessage || '润色内容未能保存为新版本' };
+        }
+        return {
+          ok: true,
+          message: record.committedVersion ? `润色完成，已保存为 v${record.committedVersion}` : '润色完成，已保存为新版本',
+        };
       }
       record.status = 'failed';
       record.failureCode = result.error?.code || result.status || 'AGENT_NO_RESULT';

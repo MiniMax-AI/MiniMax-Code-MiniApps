@@ -28,6 +28,58 @@ const MIME_BY_EXT = {
 };
 
 /**
+ * Hosts a signed image URL may point at.
+ *
+ * The URL comes from `connector__matrix__get_asset_url` and points at the
+ * Matrix Drive object storage bucket, so only an Alibaba Cloud OSS host is
+ * fetched. A tool that returns an internal address — or a 302 that points
+ * one — can therefore never make this process request it.
+ */
+const ASSET_HOST_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}\.oss-[a-z0-9-]{2,30}\.aliyuncs\.com$/;
+const MAX_REDIRECTS = 3;
+
+/**
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+export function isAllowedAssetHost(hostname) {
+  const host = String(hostname ?? '').toLowerCase().replace(/\.$/, '');
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host.endsWith('.local') || host.endsWith('.internal')) return false;
+  // Literal addresses are never allowed, loopback and private ones included.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  if (host.includes(':')) return false;
+  return ASSET_HOST_PATTERN.test(host);
+}
+
+/**
+ * @param {string} url
+ * @returns {URL}
+ */
+export function assertAllowedAssetUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    const error = new Error('素材地址无法解析');
+    error.code = 'ASSET_URL_INVALID';
+    throw error;
+  }
+  if (parsed.protocol !== 'https:') {
+    const error = new Error('素材地址必须使用 HTTPS');
+    error.code = 'ASSET_URL_PROTOCOL';
+    throw error;
+  }
+  if (!isAllowedAssetHost(parsed.hostname)) {
+    const error = new Error(`素材地址的主机不在允许范围内：${parsed.hostname}`);
+    error.code = 'ASSET_URL_HOST_NOT_ALLOWED';
+    throw error;
+  }
+  return parsed;
+}
+
+/**
  * @param {string} fileName
  * @returns {string}
  */
@@ -172,13 +224,35 @@ export async function resolveAssetUrl(context, nodeId, options = {}) {
  * @returns {Promise<Buffer>}
  */
 async function downloadAsset(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(45000) });
-  if (!response.ok) {
-    const error = new Error(`素材下载失败（HTTP ${response.status}）`);
-    error.code = 'ASSET_DOWNLOAD_FAILED';
-    throw error;
+  let current = url;
+  // Redirects are followed by hand: every hop is checked against the same
+  // allowlist, so a 302 can never move the request to another host.
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const parsed = assertAllowedAssetUrl(current);
+    const response = await fetch(parsed.toString(), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(45000),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) {
+        const error = new Error('素材地址返回了重定向，但没有目标地址');
+        error.code = 'ASSET_DOWNLOAD_FAILED';
+        throw error;
+      }
+      current = new URL(location, parsed).toString();
+      continue;
+    }
+    if (!response.ok) {
+      const error = new Error(`素材下载失败（HTTP ${response.status}）`);
+      error.code = 'ASSET_DOWNLOAD_FAILED';
+      throw error;
+    }
+    return Buffer.from(await response.arrayBuffer());
   }
-  return Buffer.from(await response.arrayBuffer());
+  const error = new Error('素材地址重定向次数过多');
+  error.code = 'ASSET_DOWNLOAD_FAILED';
+  throw error;
 }
 
 /**

@@ -249,6 +249,31 @@ export async function start(context) {
     return next;
   }
 
+  /**
+   * Save a polished body as a new version of the article.
+   *
+   * Used by the polish run itself and by the continuation after a
+   * questionnaire, so both paths save a version the same way.
+   *
+   * @param {string} draftId
+   * @param {string} body
+   * @param {string} source
+   * @returns {Promise<any>}
+   */
+  async function commitPolish(draftId, body, source) {
+    const target = store.draft(draftId);
+    if (!target) {
+      const error = new Error('草稿已不存在，润色结果没有保存');
+      error.code = 'DRAFT_NOT_FOUND';
+      throw error;
+    }
+    let saved;
+    await store.mutate(async () => {
+      saved = await applyPatch(target, { body }, source);
+    });
+    return saved;
+  }
+
   /* ---------------------------------------------------------------- *
    * Routes
    * ---------------------------------------------------------------- */
@@ -694,12 +719,7 @@ export async function start(context) {
           return;
         }
         const note = String(body.note ?? '').trim();
-        const call = polisher.start(draft, note, async (draftId, polished) => {
-          const target = store.draft(draftId);
-          if (!target) return;
-          await applyPatch(target, { body: polished }, 'agent');
-          await store.mutate(() => {});
-        });
+        const call = polisher.start(draft, note, commitPolish);
         sendJson(response, 202, { callId: call.callId });
         return;
       }
