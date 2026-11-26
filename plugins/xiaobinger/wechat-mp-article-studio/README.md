@@ -1,5 +1,7 @@
 # 公众号图文工作台 (WeChat Official Account Article Studio)
 
+English | [简体中文](README.zh-CN.md)
+
 Turns an article topic, body text, cover and illustration requirements, and a visual style into a
 cover/illustration plan, a duplication check against your previous article, a versioned draft list,
 and a paste-ready WeChat Official Account (公众号) body.
@@ -27,6 +29,14 @@ and a paste-ready WeChat Official Account (公众号) body.
   download it as a standalone HTML file.
 - **Agent polish (optional)** — hand the body to the Agent for rewriting. The result is saved as a
   new version and the original version is kept.
+
+## Screenshots
+
+The article below is synthetic sample content.
+
+![The cover and illustration plan, with a rendered cover and its ratio, pixel target and checklist](docs/preview-cover.png)
+
+![The publish gate: account, material and interface all report as not connected, so both publish buttons stay disabled](docs/preview-publish-gate.png)
 
 ## Install and open
 
