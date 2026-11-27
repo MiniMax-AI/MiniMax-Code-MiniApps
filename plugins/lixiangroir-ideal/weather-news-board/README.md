@@ -8,12 +8,19 @@ switchable news columns in one dashboard page.
   (for example `南京`); **切换** cycles through the places that share that name.
 - **自选股** — a personal watchlist of A-share codes and international symbols (gold, silver, crude
   oil, Bitcoin futures, SGE gold 9999). Prices refresh on their own interval, separately from the
-  weather and news interval. The list is laid out as a grid that reflows to the width the app is
-  actually given, so every entry stays on screen instead of pushing the rest below the fold.
+  weather and news interval, and the card ends with a count of the rising, falling and unchanged
+  entries.
 - **新闻** — six tabs: 要闻, 时政, 科技, 财经, 热榜 (Toutiao hot board) and 知乎日报.
 
 The whole page reacts to the width of its container rather than to the window size, so it looks the
-same whether it is opened in a narrow side panel or on a wide screen.
+same whether it is opened in a narrow side panel or on a wide screen. The watchlist is laid out as a
+grid that reflows to the available width, so every entry stays on screen instead of pushing the rest
+below the fold.
+
+A size handle sits in the bottom-right corner: drag it to set the dashboard width and its height
+limit (the dashboard scrolls inside once the limit is reached), and double-click it to go back to the
+automatic size. When the weather card and the watchlist card sit side by side they keep the same
+height, and the space that frees up is filled row by row with the hourly forecast.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -40,7 +47,11 @@ rejected.
   container queries at 420 px, 640 px, 1100 px, and 1440 px container widths and confirmed the
   dashboard reflows from one column to two to three, that every watchlist entry stays inside its
   card, that no width produces horizontal overflow, and that the watchlist packs into as many
-  columns as the available width allows; checked the dark theme; added and removed watchlist
+  columns as the available width allows; measured a height difference of 0 px between the weather
+  card and the watchlist card in the two-column layout, with the hourly forecast growing and
+  shrinking to the space that is actually free; dragged the size handle in the bottom-right corner
+  and confirmed that the dashboard width, its height limit, and the stored size all follow, and that
+  a double-click restores the automatic size; checked the dark theme; added and removed watchlist
   entries; switched every news tab; confirmed that one auto-refresh cycle advances the quote
   timestamp and the price; reloaded the page and confirmed the watchlist, the selected tab, and the
   theme persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
@@ -57,8 +68,8 @@ rejected.
 - **Files written** — `watchlist.json` in the Host-provided `context.dataDir`, written atomically
   (temporary file plus rename). The directory location is opaque and chosen by the Host.
 - **Browser storage** — `localStorage` holds view preferences only: the selected news tab, the two
-  refresh intervals, the current city, and the light/dark theme. No market or article data is
-  stored there.
+  refresh intervals, the current city, the light/dark theme, and the dashboard width and height
+  limit that the size handle was dragged to. No market or article data is stored there.
 - **Network hosts** (all read-only, outbound HTTPS from the Node service):
   `wttr.in`, `geocoding-api.open-meteo.com`, `www.chinanews.com.cn`, `www.ithome.com`,
   `sspai.com`, `www.yicai.com`, `www.toutiao.com`, `top.baidu.com`, `news-at.zhihu.com`,

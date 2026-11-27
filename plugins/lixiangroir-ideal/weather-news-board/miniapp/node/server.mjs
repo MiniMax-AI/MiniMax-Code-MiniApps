@@ -331,6 +331,32 @@ async function fetchWeatherAt(candidate) {
     };
   });
 
+  // 逐时预报：从当前时段起向后取若干个三小时档位，供空间富余时展开。
+  const currentSlot = Math.floor(localHour / 3) * 3;
+  const hourly = [];
+  for (let dayIndex = 0; dayIndex < days.length && hourly.length < 6; dayIndex += 1) {
+    const slots = Array.isArray(days[dayIndex].hourly) ? days[dayIndex].hourly : [];
+    for (const slot of slots) {
+      const hour = Number(slot.time) / 100;
+      if (!Number.isFinite(hour)) continue;
+      if (dayIndex === 0 && hour < currentSlot) continue;
+      const slotMeta = weatherMeta(slot.weatherCode);
+      hourly.push({
+        day: dayIndex === 0 ? '今天' : dayIndex === 1 ? '明天' : '后天',
+        time: `${String(Math.floor(hour)).padStart(2, '0')}:00`,
+        temp: Number(slot.tempC ?? 0),
+        probability: Number(slot.chanceofrain) || 0,
+        humidity: Number(slot.humidity) || 0,
+        windSpeed: Number(slot.windspeedKmph) || 0,
+        desc: slotMeta.desc,
+        icon: slotMeta.icon,
+      });
+      if (hourly.length >= 6) break;
+    }
+  }
+
+  const astronomy = Array.isArray(days[0]?.astronomy) ? days[0].astronomy[0] : null;
+
   return {
     // 优先用中文地名（open-meteo geocoding language=zh），再退回 wttr.in 的英文地名。
     city: candidate.name || String(area?.areaName?.[0]?.value ?? ''),
@@ -344,11 +370,17 @@ async function fetchWeatherAt(candidate) {
       humidity: Number(current.humidity ?? 0),
       windSpeed: Number(current.windspeedKmph ?? 0),
       precipitation: Number(current.precipMM ?? 0),
+      pressure: Number(current.pressure ?? 0),
+      visibility: Number(current.visibility ?? 0),
+      cloud: Number(current.cloudcover ?? 0),
+      sunrise: String(astronomy?.sunrise ?? ''),
+      sunset: String(astronomy?.sunset ?? ''),
       desc: meta.desc,
       icon: meta.icon,
       observationTime: String(current.observation_time ?? ''),
     },
     forecast,
+    hourly,
   };
 }
 

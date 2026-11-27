@@ -82,13 +82,13 @@
 
       /* 布局按可用容器宽度自适应，而非视口宽度 */
       .app-shell {
-        container-type: inline-size;
-        container-name: app;
         width: 100%;
       }
       .app {
-        max-width: 1440px;
-        margin: 0 auto;
+        container-type: inline-size;
+        container-name: app;
+        max-width: var(--app-width, 1440px);
+        margin: 0 auto 0 0;
         padding: 20px 24px 32px;
       }
 
@@ -258,12 +258,15 @@
         grid-template-columns: minmax(0, 1fr);
         gap: 16px;
         align-items: start;
+        max-height: var(--board-max-h, none);
+        overflow-y: auto;
+        overflow-x: hidden;
       }
       .top-grid {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
         gap: 16px;
-        align-items: start;
+        align-items: stretch;
       }
       .card {
         background: var(--mcode-surface);
@@ -318,9 +321,69 @@
         width: 100%;
       }
       .weather-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+      .weather-inner {
+        flex: 1;
+        min-height: 0;
         display: flex;
         flex-direction: column;
         gap: 12px;
+        justify-content: space-between;
+      }
+      .weather-hourly {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .weather-hour {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        font-size: 12px;
+      }
+      .hour-time {
+        width: 64px;
+        flex: none;
+        font-size: 11.5px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .hour-day {
+        color: var(--mcode-text-subtle);
+        margin-right: 2px;
+      }
+      .hour-icon {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        color: var(--mcode-text-muted);
+      }
+      .hour-temp {
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        min-width: 30px;
+      }
+      .hour-desc {
+        flex: 1;
+        min-width: 0;
+        color: var(--mcode-text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hour-rain {
+        flex: none;
+        font-size: 11px;
+        color: var(--mcode-text-subtle);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
       .weather-main {
         display: flex;
@@ -444,6 +507,14 @@
         }
         .forecast-day {
           width: 24px;
+        }
+        .hour-desc,
+        .hour-rain,
+        .hour-day {
+          display: none;
+        }
+        .hour-time {
+          width: 44px;
         }
       }
 
@@ -592,6 +663,27 @@
         padding: 10px 2px;
         font-size: 12.5px;
         color: var(--mcode-text-muted);
+      }
+      .stocks-summary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        font-size: 11.5px;
+        color: var(--mcode-text-muted);
+      }
+      .summary-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-variant-numeric: tabular-nums;
+      }
+      .summary-item.is-up {
+        color: var(--mcode-up);
+      }
+      .summary-item.is-down {
+        color: var(--mcode-down);
       }
       .hint {
         margin: auto 0 0;
@@ -809,6 +901,41 @@
         color: #ffffff;
       }
 
+      /* ---------- 尺寸手柄 ---------- */
+      .resize-grip {
+        position: fixed;
+        right: max(18px, calc(100% - var(--app-width, 100%)));
+        bottom: 10px;
+        width: 26px;
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface);
+        color: var(--mcode-text-subtle);
+        box-shadow: var(--mcode-shadow);
+        cursor: nwse-resize;
+        z-index: 30;
+        user-select: none;
+        touch-action: none;
+        padding: 0;
+        transition: color 150ms ease-out;
+      }
+      .resize-grip:hover {
+        color: var(--mcode-accent);
+      }
+      .resize-grip.is-active {
+        color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
+      }
+      .resize-grip svg {
+        width: 15px;
+        height: 15px;
+        pointer-events: none;
+      }
+
       /* ---------- 响应式（按容器宽度自适应，不依赖视口宽度） ---------- */
       @container app (min-width: 560px) {
         .top-grid {
@@ -842,7 +969,7 @@
           line-height: 22px;
         }
       }
-      @container tile (max-width: 140px) {
+      @container tile (max-width: 120px) {
         .stock-code {
           display: none;
         }
@@ -928,7 +1055,9 @@
               </div>
             </form>
             <div class="weather-body" id="weather-body" aria-live="polite">
-              <p class="list-empty">正在获取天气…</p>
+              <div class="weather-inner" id="weather-inner">
+                <p class="list-empty">正在获取天气…</p>
+              </div>
             </div>
           </article>
 
@@ -957,6 +1086,7 @@
               </div>
             </form>
             <ul class="stock-list" id="stock-list"></ul>
+            <div class="stocks-summary" id="stocks-summary"></div>
             <p class="hint">支持 A 股代码与黄金、原油等国际品种，非交易时段为最近成交价。</p>
           </article>
         </section>
@@ -975,6 +1105,21 @@
       </main>
       </div>
     </div>
+
+    <button
+      class="resize-grip"
+      id="resize-grip"
+      type="button"
+      aria-label="拖动调整看板大小，双击复位"
+      title="拖动调整看板大小，双击复位"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M14 4h6v6" />
+        <path d="M20 4l-7.5 7.5" />
+        <path d="M10 20H4v-6" />
+        <path d="M4 20l7.5-7.5" />
+      </svg>
+    </button>
 
     <div class="toast" id="toast" role="status" hidden></div>
 
@@ -1076,13 +1221,19 @@
           cityForm: document.getElementById('city-form'),
           cityInput: document.getElementById('city-input'),
           citySwitch: document.getElementById('city-switch'),
+          weatherCard: document.querySelector('.weather-card'),
+          stocksCard: document.querySelector('.stocks-card'),
           weatherBody: document.getElementById('weather-body'),
+          weatherInner: document.getElementById('weather-inner'),
+          weatherExtra: null,
           stockForm: document.getElementById('stock-form'),
           stockInput: document.getElementById('stock-input'),
           quoteAuto: document.getElementById('quote-auto'),
           quoteInterval: document.getElementById('quote-interval'),
           stockList: document.getElementById('stock-list'),
+          stocksSummary: document.getElementById('stocks-summary'),
           stocksUpdated: document.getElementById('stocks-updated'),
+          resizeGrip: document.getElementById('resize-grip'),
           newsTabs: document.getElementById('news-tabs'),
           newsList: document.getElementById('news-list'),
           newsUpdated: document.getElementById('news-updated'),
@@ -1272,12 +1423,135 @@
           });
         }
 
+        /* ================= 天气卡自适应 ================= */
+        var weatherTuneSig = '';
+        var weatherTuneRaf = 0;
+
+        function setHourlyLevel(level) {
+          var extra = el.weatherExtra;
+          if (!extra) return;
+          var blocks = extra.querySelectorAll('.weather-hour');
+          for (var i = 0; i < blocks.length; i += 1) {
+            blocks[i].hidden = i >= level;
+          }
+          extra.setAttribute('data-level', String(level));
+        }
+
+        /* 卡片内容自然高度（不受拉伸影响） */
+        function naturalHeight(card) {
+          if (!card) return 0;
+          var cs = getComputedStyle(card);
+          var total = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+          for (var i = 0; i < card.children.length; i += 1) {
+            var child = card.children[i];
+            var ccs = getComputedStyle(child);
+            total +=
+              child.offsetHeight +
+              (parseFloat(ccs.marginTop) || 0) +
+              (parseFloat(ccs.marginBottom) || 0);
+          }
+          return total;
+        }
+
+        /* 天气主体内容的自然高度 */
+        function weatherContentHeight() {
+          var inner = el.weatherInner;
+          if (!inner) return 0;
+          var gap = parseFloat(getComputedStyle(inner).rowGap) || 0;
+          var total = 0;
+          for (var i = 0; i < inner.children.length; i += 1) {
+            var child = inner.children[i];
+            var ccs = getComputedStyle(child);
+            total +=
+              child.offsetHeight +
+              (parseFloat(ccs.marginTop) || 0) +
+              (parseFloat(ccs.marginBottom) || 0);
+            if (i > 0) total += gap;
+          }
+          return total;
+        }
+
+        /* 天气卡除主体以外占用的高度（标题、查询框、内边距） */
+        function weatherChrome() {
+          var card = el.weatherCard;
+          if (!card) return 0;
+          var cs = getComputedStyle(card);
+          var total = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+          var head = card.querySelector('.card-head');
+          var form = card.querySelector('.city-form');
+          if (head) {
+            var hs = getComputedStyle(head);
+            total += head.offsetHeight + (parseFloat(hs.marginBottom) || 0);
+          }
+          if (form) {
+            var fs = getComputedStyle(form);
+            total += form.offsetHeight + (parseFloat(fs.marginBottom) || 0);
+          }
+          return total;
+        }
+
+        function scheduleWeatherTune() {
+          if (weatherTuneRaf) return;
+          weatherTuneRaf = window.requestAnimationFrame(function () {
+            weatherTuneRaf = 0;
+            tuneWeatherCard();
+          });
+        }
+
+        /**
+         * 天气卡与自选股卡并排时高度对齐：先按自选股卡的高度挑出
+         * 能放下的逐时预报档位，再由两卡共同决定这一行的最终高度。
+         */
+        function tuneWeatherCard() {
+          var card = el.weatherCard;
+          var inner = el.weatherInner;
+          var extra = el.weatherExtra;
+          if (!card || !inner || !extra) return;
+          var blocks = extra.querySelectorAll('.weather-hour');
+          var max = blocks.length;
+          if (!max) {
+            extra.hidden = true;
+            return;
+          }
+          extra.hidden = false;
+
+          var parent = card.parentElement;
+          var tracks = parent ? getComputedStyle(parent).gridTemplateColumns.split(' ').length : 1;
+          if (tracks <= 1) {
+            // 单栏堆叠：卡片高度由内容决定，逐时预报全部显示。
+            setHourlyLevel(max);
+            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max;
+            return;
+          }
+
+          var sig =
+            card.clientWidth + 'x' + card.clientHeight + '#' + (extra.getAttribute('data-level') || '0');
+          if (sig === weatherTuneSig) return;
+          weatherTuneSig = sig;
+
+          var chrome = weatherChrome();
+          var target = naturalHeight(el.stocksCard);
+          var level = 0;
+          for (var k = max; k >= 0; k -= 1) {
+            setHourlyLevel(k);
+            if (!target || chrome + weatherContentHeight() <= target) {
+              level = k;
+              break;
+            }
+          }
+          setHourlyLevel(level);
+          weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + level;
+        }
+
         /* ================= 天气 ================= */
         function renderWeather() {
           var data = state.weather;
+          var inner = el.weatherInner;
+          if (!inner) return;
           if (!data) {
-            el.weatherBody.innerHTML =
-              '<p class="list-empty">天气来源暂不可用，请稍后重试或更换城市。</p>';
+            inner.innerHTML = '<p class="list-empty">天气来源暂不可用，请稍后重试或更换城市。</p>';
+            el.weatherExtra = null;
+            weatherTuneSig = '';
             return;
           }
           var current = data.current || {};
@@ -1340,7 +1614,37 @@
           if (state.weatherStale) {
             html += '<p class="forecast-rain">来源异常，已保留上一次数据</p>';
           }
-          el.weatherBody.innerHTML = html;
+
+          var hourly = data.hourly || [];
+          if (hourly.length) {
+            html += '<div class="weather-hourly">';
+            hourly.forEach(function (slot) {
+              var dayLabel = slot.day && slot.day !== '今天' ? slot.day : '';
+              html +=
+                '<div class="weather-hour">' +
+                '<span class="hour-time">' +
+                (dayLabel ? '<span class="hour-day">' + esc(dayLabel) + '</span>' : '') +
+                esc(slot.time || '') +
+                '</span>' +
+                weatherSvg(slot.icon, 'hour-icon') +
+                '<span class="hour-temp">' +
+                esc(Math.round(Number(slot.temp) || 0)) +
+                '°</span>' +
+                '<span class="hour-desc">' +
+                esc(slot.desc || '') +
+                '</span>' +
+                '<span class="hour-rain">降水 ' +
+                esc(Math.max(0, Math.min(100, Number(slot.probability) || 0))) +
+                '%</span>' +
+                '</div>';
+            });
+            html += '</div>';
+          }
+
+          inner.innerHTML = html;
+          el.weatherExtra = inner.querySelector('.weather-hourly');
+          weatherTuneSig = '';
+          scheduleWeatherTune();
         }
 
         function loadWeather(options) {
@@ -1522,6 +1826,31 @@
           if (list.style.gridTemplateColumns !== next) list.style.gridTemplateColumns = next;
         }
 
+        function renderStocksSummary() {
+          var box = el.stocksSummary;
+          if (!box) return;
+          var up = 0;
+          var down = 0;
+          var flat = 0;
+          (state.stocks || []).forEach(function (item) {
+            if (item.error) return;
+            var change = Number(item.change) || 0;
+            if (change > 0) up += 1;
+            else if (change < 0) down += 1;
+            else flat += 1;
+          });
+          var total = up + down + flat;
+          if (!total) {
+            box.innerHTML = '';
+            return;
+          }
+          var html = '<span class="summary-item">' + total + ' 项</span>';
+          if (up) html += '<span class="summary-item is-up">涨 ' + up + '</span>';
+          if (down) html += '<span class="summary-item is-down">跌 ' + down + '</span>';
+          if (flat) html += '<span class="summary-item">平 ' + flat + '</span>';
+          box.innerHTML = html;
+        }
+
         function renderStocks() {
           var items = state.stocks.length
             ? state.stocks
@@ -1533,6 +1862,8 @@
             el.stockList.innerHTML =
               '<li class="stock-empty">还没有自选股。输入 6 位 A 股代码，或输入「黄金」「原油」等品种名称后点击「添加」。</li>';
             layoutStockList();
+            renderStocksSummary();
+            scheduleWeatherTune();
             return;
           }
 
@@ -1607,6 +1938,8 @@
 
           el.stocksUpdated.textContent = '更新 ' + fmtClock(state.stocksUpdatedAt);
           layoutStockList();
+          renderStocksSummary();
+          scheduleWeatherTune();
         }
 
         var REMOVE_ICON =
@@ -1656,6 +1989,111 @@
               showToast('网络异常，操作未生效', 'error');
               return false;
             });
+        }
+
+        /* ================= 看板尺寸 ================= */
+        var SIZE_KEY = 'weather-news-board:size:v1';
+        var sizeState = { width: null, height: null };
+        var saveTimer = 0;
+
+        function applySize() {
+          var root = document.documentElement;
+          if (sizeState.width) root.style.setProperty('--app-width', sizeState.width + 'px');
+          else root.style.removeProperty('--app-width');
+          if (sizeState.height) root.style.setProperty('--board-max-h', sizeState.height + 'px');
+          else root.style.removeProperty('--board-max-h');
+        }
+
+        function saveSize() {
+          try {
+            localStorage.setItem(
+              SIZE_KEY,
+              JSON.stringify({ width: sizeState.width, height: sizeState.height }),
+            );
+          } catch (error) {
+            /* 忽略存储失败 */
+          }
+        }
+
+        function restoreSize() {
+          try {
+            var raw = localStorage.getItem(SIZE_KEY);
+            if (raw) {
+              var saved = JSON.parse(raw);
+              if (saved && typeof saved === 'object') {
+                sizeState.width = typeof saved.width === 'number' ? saved.width : null;
+                sizeState.height = typeof saved.height === 'number' ? saved.height : null;
+              }
+            }
+          } catch (error) {
+            /* 忽略解析失败 */
+          }
+          applySize();
+        }
+
+        function initResizeGrip() {
+          var grip = el.resizeGrip;
+          if (!grip) return;
+          var start = null;
+
+          grip.addEventListener('pointerdown', function (event) {
+            event.preventDefault();
+            start = {
+              x: event.clientX,
+              y: event.clientY,
+              width: sizeState.width || document.documentElement.clientWidth,
+              height: sizeState.height || Math.round(window.innerHeight * 0.78),
+            };
+            try {
+              grip.setPointerCapture(event.pointerId);
+            } catch (error) {
+              /* 忽略捕获失败 */
+            }
+            grip.classList.add('is-active');
+          });
+
+          grip.addEventListener('pointermove', function (event) {
+            if (!start) return;
+            var dx = event.clientX - start.x;
+            var dy = event.clientY - start.y;
+            var maxWidth = document.documentElement.clientWidth;
+            var maxHeight = Math.max(320, window.innerHeight - 48);
+            sizeState.width = Math.round(Math.min(maxWidth, Math.max(340, start.width + dx)));
+            sizeState.height = Math.round(Math.min(maxHeight, Math.max(240, start.height + dy)));
+            applySize();
+            if (!saveTimer) {
+              saveTimer = setTimeout(function () {
+                saveTimer = 0;
+                saveSize();
+              }, 200);
+            }
+          });
+
+          function endDrag(event) {
+            if (!start) return;
+            start = null;
+            grip.classList.remove('is-active');
+            try {
+              grip.releasePointerCapture(event.pointerId);
+            } catch (error) {
+              /* 忽略释放失败 */
+            }
+            saveSize();
+            scheduleWeatherTune();
+          }
+
+          grip.addEventListener('pointerup', endDrag);
+          grip.addEventListener('pointercancel', endDrag);
+          // 指针可能在手柄之外抬起，兜底在窗口层收尾并保存。
+          window.addEventListener('pointerup', endDrag);
+          window.addEventListener('pointercancel', endDrag);
+          grip.addEventListener('dblclick', function () {
+            sizeState.width = null;
+            sizeState.height = null;
+            applySize();
+            saveSize();
+            scheduleWeatherTune();
+          });
         }
 
         /* ================= 状态栏 ================= */
@@ -1800,10 +2238,19 @@
             layoutStockList();
           });
           stockObserver.observe(el.stockList);
+          var weatherObserver = new ResizeObserver(function () {
+            scheduleWeatherTune();
+          });
+          if (el.weatherCard) weatherObserver.observe(el.weatherCard);
         }
-        window.addEventListener('resize', layoutStockList);
+        window.addEventListener('resize', function () {
+          layoutStockList();
+          scheduleWeatherTune();
+        });
 
         restoreViewState();
+        restoreSize();
+        initResizeGrip();
         applyTheme();
         renderTabs();
         syncControls();
