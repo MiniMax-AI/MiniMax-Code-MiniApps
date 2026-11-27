@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { checkManifest } from '../scripts/lib/rules/manifest.mjs';
 import { createReport } from '../scripts/lib/report.mjs';
@@ -129,4 +129,48 @@ test('manifest: hostCapabilities cannot be claimed by a manifest', async () => {
 test('manifest: non-object is a single error', async () => {
   const { report } = await run(() => null);
   assert.deepEqual(codes(report.diagnostics), ['MANIFEST_NOT_OBJECT']);
+});
+
+test('manifest: a path with a dot segment is an error, even when it resolves inside the package', async () => {
+  // `sub/../icon.png` names a file inside the package, but the segment is not portable and the Host
+  // rejects it as PATH_TRAVERSAL, so a package that passed here would fail at install time.
+  const inside = await run((m) => ({ ...m, icon: 'sub/../icon.png' }), async (dir) => {
+    await mkdir(path.join(dir, 'sub'));
+  });
+  assert.deepEqual(codes(inside.report.diagnostics), ['MANIFEST_FIELD_INVALID']);
+});
+
+test('manifest: an image path must stay inside the package', async () => {
+  // `../shared/icon.png` resolves outside the package. The validator must not read that file, so the
+  // test places a real PNG one level up: a traversal that is accepted would otherwise pass silently.
+  const shared = async (dir) => {
+    const target = path.join(path.dirname(dir), 'shared');
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, 'icon.png'), await readFile(path.join(dir, 'icon.png')));
+  };
+  const escapedIcon = await run((m) => ({ ...m, icon: '../shared/icon.png' }), shared);
+  assert.deepEqual(codes(escapedIcon.report.diagnostics), ['MANIFEST_FIELD_INVALID']);
+  const escapedDarkIcon = await run((m) => ({ ...m, darkIcon: '../shared/icon.png' }), shared);
+  assert.deepEqual(codes(escapedDarkIcon.report.diagnostics), ['MANIFEST_FIELD_INVALID']);
+});
+
+test('manifest: a reference with a dot segment is an error', async () => {
+  const skills = await run((m) => ({ ...m, skills: ['skills/../SKILL.md'] }));
+  assert.deepEqual(codes(skills.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
+  const servers = await run((m) => ({ ...m, mcpServers: ['../shared/probe.mcp.json'] }));
+  assert.deepEqual(codes(servers.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
+  const hooks = await run((m) => ({ ...m, hooks: ['../shared/probe.json'] }));
+  assert.deepEqual(codes(hooks.report.diagnostics), ['MANIFEST_REFERENCE_INVALID']);
+});
+
+test('manifest: canonical image and reference paths keep passing', async () => {
+  const plain = await run((m) => m);
+  assert.deepEqual(plain.report.diagnostics, []);
+  const dotted = await run((m) => ({ ...m, icon: './icon.png' }));
+  assert.deepEqual(dotted.report.diagnostics, []);
+  const app = await run(
+    (m) => ({ ...m, apps: ['./notion.app.json'] }),
+    async (dir) => writeFile(path.join(dir, 'notion.app.json'), `${JSON.stringify({ schemaVersion: 1, provider: 'notion' })}\n`),
+  );
+  assert.deepEqual(app.report.diagnostics, []);
 });
