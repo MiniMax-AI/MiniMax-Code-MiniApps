@@ -87,7 +87,7 @@
       .app {
         container-type: inline-size;
         container-name: app;
-        max-width: var(--app-width, 1440px);
+        max-width: 1440px;
         margin: 0 auto 0 0;
         padding: 20px 24px 32px;
       }
@@ -259,15 +259,7 @@
         grid-template-columns: minmax(0, 1fr);
         gap: 16px;
         align-items: start;
-        max-height: var(--board-max-h, none);
-        overflow-y: auto;
         overflow-x: hidden;
-      }
-      .top-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 16px;
-        align-items: stretch;
       }
       .card {
         background: var(--mcode-surface);
@@ -278,6 +270,28 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+        position: relative;
+      }
+      /* 手动指定尺寸的卡片：宽、高各自独立，其他卡片让出空间 */
+      .card.is-sized-w {
+        width: var(--cw);
+        justify-self: start;
+      }
+      .card.is-sized-h {
+        height: var(--ch);
+        align-self: start;
+      }
+      .card.is-sized-h .stock-list,
+      .card.is-sized-h .news-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .card.is-sized-h .weather-body {
+        overflow-y: auto;
+      }
+      .card.is-sized-h .weather-inner > * {
+        flex: 0 0 auto;
       }
       .card-head {
         display: flex;
@@ -902,91 +916,42 @@
         color: #ffffff;
       }
 
-      /* ---------- 尺寸面板 ---------- */
-      .size-panel {
+      /* ---------- 卡片尺寸手柄 ---------- */
+      .card-grip {
         position: absolute;
-        top: calc(100% + 8px);
-        right: 0;
-        z-index: 25;
-        width: 260px;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid var(--mcode-border);
-        background: var(--mcode-surface);
-        box-shadow: var(--mcode-shadow);
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .size-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .size-row label {
-        font-size: 12px;
-        color: var(--mcode-text-muted);
-        width: 32px;
-        flex: none;
-      }
-      .size-row input[type='range'] {
-        flex: 1;
-        min-width: 0;
-        height: 20px;
-        accent-color: var(--mcode-accent);
-        cursor: pointer;
-      }
-      .size-value {
-        width: 52px;
-        flex: none;
-        text-align: right;
-        font-size: 11.5px;
-        color: var(--mcode-text);
-        font-variant-numeric: tabular-nums;
-      }
-      .size-reset {
-        align-self: stretch;
-      }
-
-      /* ---------- 尺寸手柄 ---------- */
-      .resize-grip {
-        position: fixed;
-        right: max(18px, calc(100% - var(--app-width, 100%)));
-        bottom: 10px;
-        width: 30px;
-        height: 30px;
+        right: 5px;
+        bottom: 5px;
+        width: 22px;
+        height: 22px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 9px;
-        border: 1px solid var(--mcode-border-strong);
+        border-radius: 7px;
+        border: 1px solid var(--mcode-border);
         background: var(--mcode-surface);
-        color: var(--mcode-text-muted);
-        box-shadow: var(--mcode-shadow);
+        color: var(--mcode-text-subtle);
         cursor: nwse-resize;
-        z-index: 30;
+        padding: 0;
+        z-index: 3;
+        opacity: 0.45;
         user-select: none;
         touch-action: none;
-        padding: 0;
-        transition: color 150ms ease-out, border-color 150ms ease-out;
+        transition: opacity 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
       }
-      .resize-grip:hover {
+      .card:hover .card-grip,
+      .card-grip:focus-visible,
+      .card-grip.is-active {
+        opacity: 1;
         color: var(--mcode-accent);
         border-color: var(--mcode-accent);
       }
-      .resize-grip.is-active {
-        color: var(--mcode-accent);
-        border-color: var(--mcode-accent);
-      }
-      .resize-grip svg {
-        width: 16px;
-        height: 16px;
+      .card-grip svg {
+        width: 13px;
+        height: 13px;
         pointer-events: none;
       }
       .resize-badge {
         position: fixed;
-        right: max(18px, calc(100% - var(--app-width, 100%)));
-        bottom: 46px;
         padding: 4px 9px;
         border-radius: 8px;
         background: var(--mcode-primary-action-bg);
@@ -994,23 +959,28 @@
         font-size: 11.5px;
         font-variant-numeric: tabular-nums;
         box-shadow: var(--mcode-shadow);
-        z-index: 30;
+        z-index: 40;
         pointer-events: none;
         white-space: nowrap;
       }
 
       /* ---------- 响应式（按容器宽度自适应，不依赖视口宽度） ---------- */
-      @container app (min-width: 560px) {
-        .top-grid {
-          grid-template-columns: clamp(184px, 30%, 268px) minmax(0, 1fr);
+      @container app (min-width: 560px) and (max-width: 899px) {
+        .board {
+          grid-template-columns: var(--col-weather, clamp(184px, 30%, 268px)) var(--col-stocks, minmax(0, 1fr));
+          align-items: stretch;
+        }
+        .news-card {
+          grid-column: 1 / -1;
         }
       }
       @container app (min-width: 900px) {
         .board {
-          grid-template-columns: minmax(210px, 0.55fr) minmax(320px, 1.25fr) minmax(280px, 1.5fr);
+          grid-template-columns: var(--col-weather, minmax(210px, 0.55fr)) var(--col-stocks, minmax(320px, 1.25fr)) var(--col-news, minmax(280px, 1.5fr));
+          align-items: start;
         }
-        .top-grid {
-          display: contents;
+        .news-card {
+          grid-column: auto;
         }
       }
       @container app (max-width: 559px) {
@@ -1041,15 +1011,20 @@
       @supports not (container-type: inline-size) {
         @media (min-width: 900px) {
           .board {
-            grid-template-columns: minmax(210px, 0.55fr) minmax(320px, 1.25fr) minmax(280px, 1.5fr);
+            grid-template-columns: var(--col-weather, minmax(210px, 0.55fr)) var(--col-stocks, minmax(320px, 1.25fr)) var(--col-news, minmax(280px, 1.5fr));
+            align-items: start;
           }
-          .top-grid {
-            display: contents;
+          .news-card {
+            grid-column: auto;
           }
         }
-        @media (min-width: 560px) {
-          .top-grid {
-            grid-template-columns: clamp(184px, 30%, 268px) minmax(0, 1fr);
+        @media (min-width: 560px) and (max-width: 899px) {
+          .board {
+            grid-template-columns: var(--col-weather, clamp(184px, 30%, 268px)) var(--col-stocks, minmax(0, 1fr));
+            align-items: stretch;
+          }
+          .news-card {
+            grid-column: 1 / -1;
           }
         }
         @media (max-width: 559px) {
@@ -1096,27 +1071,9 @@
               <path d="M20 4v4.5h-4.5" />
             </svg>
           </button>
-          <button class="icon-btn" id="size-btn" type="button" aria-label="看板尺寸" title="看板尺寸">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M14 4h6v6" />
-              <path d="M20 4l-7.5 7.5" />
-              <path d="M10 20H4v-6" />
-              <path d="M4 20l7.5-7.5" />
-            </svg>
+          <button class="btn" id="reset-sizes" type="button" hidden title="把所有子看板恢复自适应尺寸">
+            重置尺寸
           </button>
-          <div class="size-panel" id="size-panel" hidden>
-            <div class="size-row">
-              <label for="size-width">宽度</label>
-              <input type="range" id="size-width" min="340" max="1440" step="10" aria-label="看板宽度" />
-              <span class="size-value" id="size-width-value">自动</span>
-            </div>
-            <div class="size-row">
-              <label for="size-height">高度</label>
-              <input type="range" id="size-height" min="240" max="1200" step="10" aria-label="看板高度上限" />
-              <span class="size-value" id="size-height-value">自动</span>
-            </div>
-            <button class="btn size-reset" id="size-reset" type="button">恢复自适应</button>
-          </div>
           <button class="icon-btn" id="theme-btn" type="button" aria-label="切换深浅主题" title="切换深浅主题">
             <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
@@ -1126,56 +1083,70 @@
       </header>
 
       <main class="board">
-        <section class="top-grid">
-          <article class="card weather-card" aria-labelledby="weather-title">
-            <div class="card-head">
-              <h2 class="card-title" id="weather-title">实时天气</h2>
+        <article class="card weather-card" data-card="weather" data-title="实时天气" aria-labelledby="weather-title">
+          <div class="card-head">
+            <h2 class="card-title" id="weather-title">实时天气</h2>
+          </div>
+          <form class="city-form" id="city-form">
+            <input type="text" id="city-input" placeholder="城市，如 南京" aria-label="城市名称" autocomplete="off" />
+            <div class="city-form-row">
+              <button class="btn" type="submit">查询</button>
+              <button class="btn" type="button" id="city-switch" aria-label="切换到下一个同名城市">切换</button>
             </div>
-            <form class="city-form" id="city-form">
-              <input type="text" id="city-input" placeholder="城市，如 南京" aria-label="城市名称" autocomplete="off" />
-              <div class="city-form-row">
-                <button class="btn" type="submit">查询</button>
-                <button class="btn" type="button" id="city-switch" aria-label="切换到下一个同名城市">切换</button>
-              </div>
-            </form>
-            <div class="weather-body" id="weather-body" aria-live="polite">
-              <div class="weather-inner" id="weather-inner">
-                <p class="list-empty">正在获取天气…</p>
-              </div>
+          </form>
+          <div class="weather-body" id="weather-body" aria-live="polite">
+            <div class="weather-inner" id="weather-inner">
+              <p class="list-empty">正在获取天气…</p>
             </div>
-          </article>
+          </div>
+          <button class="card-grip" type="button" aria-label="拖动调整「实时天气」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+        </article>
 
-          <article class="card stocks-card" aria-labelledby="stocks-title">
-            <div class="card-head">
-              <h2 class="card-title" id="stocks-title">自选股</h2>
-              <span class="card-meta" id="stocks-updated">更新 --:--</span>
+        <article class="card stocks-card" data-card="stocks" data-title="自选股" aria-labelledby="stocks-title">
+          <div class="card-head">
+            <h2 class="card-title" id="stocks-title">自选股</h2>
+            <span class="card-meta" id="stocks-updated">更新 --:--</span>
+          </div>
+          <form class="stocks-form" id="stock-form">
+            <div class="stocks-row">
+              <input type="text" id="stock-input" placeholder="股票代码或品种" aria-label="股票代码或品种" autocomplete="off" />
+              <button class="btn btn-primary" type="submit">添加</button>
             </div>
-            <form class="stocks-form" id="stock-form">
-              <div class="stocks-row">
-                <input type="text" id="stock-input" placeholder="股票代码或品种" aria-label="股票代码或品种" autocomplete="off" />
-                <button class="btn btn-primary" type="submit">添加</button>
-              </div>
-              <div class="stocks-row stocks-options">
-                <label class="switch">
-                  <input type="checkbox" id="quote-auto" checked />
-                  <span class="switch-track"></span>
-                  <span>行情自动刷新</span>
-                </label>
-                <select id="quote-interval" aria-label="行情刷新间隔">
-                  <option value="15">15 秒</option>
-                  <option value="30" selected>30 秒</option>
-                  <option value="60">1 分钟</option>
-                  <option value="300">5 分钟</option>
-                </select>
-              </div>
-            </form>
-            <ul class="stock-list" id="stock-list"></ul>
-            <div class="stocks-summary" id="stocks-summary"></div>
-            <p class="hint">支持 A 股代码与黄金、原油等国际品种，非交易时段为最近成交价。</p>
-          </article>
-        </section>
+            <div class="stocks-row stocks-options">
+              <label class="switch">
+                <input type="checkbox" id="quote-auto" checked />
+                <span class="switch-track"></span>
+                <span>行情自动刷新</span>
+              </label>
+              <select id="quote-interval" aria-label="行情刷新间隔">
+                <option value="15">15 秒</option>
+                <option value="30" selected>30 秒</option>
+                <option value="60">1 分钟</option>
+                <option value="300">5 分钟</option>
+              </select>
+            </div>
+          </form>
+          <ul class="stock-list" id="stock-list"></ul>
+          <div class="stocks-summary" id="stocks-summary"></div>
+          <p class="hint">支持 A 股代码与黄金、原油等国际品种，非交易时段为最近成交价。</p>
+          <button class="card-grip" type="button" aria-label="拖动调整「自选股」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+        </article>
 
-        <article class="card news-card" aria-labelledby="news-title">
+        <article class="card news-card" data-card="news" data-title="新闻" aria-labelledby="news-title">
           <div class="news-head">
             <h2 class="card-title" id="news-title">新闻</h2>
             <div class="news-status">
@@ -1185,27 +1156,20 @@
           </div>
           <div class="news-tabs" role="tablist" aria-label="新闻栏目" id="news-tabs"></div>
           <ul class="news-list" id="news-list" role="tabpanel" aria-labelledby="tab-headlines" style="margin-top: 10px"></ul>
+          <button class="card-grip" type="button" aria-label="拖动调整「新闻」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
         </article>
       </main>
       </div>
     </div>
 
     <div class="resize-badge" id="resize-badge" hidden></div>
-
-    <button
-      class="resize-grip"
-      id="resize-grip"
-      type="button"
-      aria-label="拖动调整看板大小，单击或双击恢复自适应"
-      title="拖动调整看板大小，单击恢复自适应"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="M14 4h6v6" />
-        <path d="M20 4l-7.5 7.5" />
-        <path d="M10 20H4v-6" />
-        <path d="M4 20l7.5-7.5" />
-      </svg>
-    </button>
 
     <div class="toast" id="toast" role="status" hidden></div>
 
@@ -1309,6 +1273,8 @@
           citySwitch: document.getElementById('city-switch'),
           weatherCard: document.querySelector('.weather-card'),
           stocksCard: document.querySelector('.stocks-card'),
+          newsCard: document.querySelector('.news-card'),
+          board: document.querySelector('.board'),
           weatherBody: document.getElementById('weather-body'),
           weatherInner: document.getElementById('weather-inner'),
           weatherExtra: null,
@@ -1319,15 +1285,8 @@
           stockList: document.getElementById('stock-list'),
           stocksSummary: document.getElementById('stocks-summary'),
           stocksUpdated: document.getElementById('stocks-updated'),
-          resizeGrip: document.getElementById('resize-grip'),
           resizeBadge: document.getElementById('resize-badge'),
-          sizeBtn: document.getElementById('size-btn'),
-          sizePanel: document.getElementById('size-panel'),
-          sizeWidth: document.getElementById('size-width'),
-          sizeHeight: document.getElementById('size-height'),
-          sizeWidthValue: document.getElementById('size-width-value'),
-          sizeHeightValue: document.getElementById('size-height-value'),
-          sizeReset: document.getElementById('size-reset'),
+          resetSizes: document.getElementById('reset-sizes'),
           newsTabs: document.getElementById('news-tabs'),
           newsList: document.getElementById('news-list'),
           newsUpdated: document.getElementById('news-updated'),
@@ -1593,8 +1552,19 @@
         }
 
         /**
+         * 自选股卡的目标高度：手动指定时用指定值，否则用内容自然高度。
+         */
+        function stocksTargetHeight() {
+          var card = el.stocksCard;
+          if (!card) return 0;
+          if (cardSizes.stocks.h) return cardSizes.stocks.h;
+          return naturalHeight(card);
+        }
+
+        /**
          * 天气卡与自选股卡并排时高度对齐：先按自选股卡的高度挑出
          * 能放下的逐时预报档位，再由两卡共同决定这一行的最终高度。
+         * 手动指定了高度时以指定高度为准，逐时预报全部列出，卡片内部滚动。
          */
         function tuneWeatherCard() {
           var card = el.weatherCard;
@@ -1609,22 +1579,34 @@
           }
           extra.hidden = false;
 
-          var parent = card.parentElement;
-          var tracks = parent ? getComputedStyle(parent).gridTemplateColumns.split(' ').length : 1;
-          if (tracks <= 1) {
-            // 单栏堆叠：卡片高度由内容决定，逐时预报全部显示。
+          var manualH = cardSizes.weather.h || 0;
+          var sig =
+            card.clientWidth +
+            'x' +
+            card.clientHeight +
+            '#' +
+            (extra.getAttribute('data-level') || '0') +
+            '#' +
+            manualH;
+          if (sig === weatherTuneSig) return;
+
+          // 手动指定高度：高度固定，逐时预报全部列出，超出部分在卡内滚动。
+          if (manualH) {
             setHourlyLevel(max);
-            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max;
+            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max + '#' + manualH;
             return;
           }
 
-          var sig =
-            card.clientWidth + 'x' + card.clientHeight + '#' + (extra.getAttribute('data-level') || '0');
-          if (sig === weatherTuneSig) return;
-          weatherTuneSig = sig;
+          // 只有与自选股卡并排时才需要对齐高度，其余排布由内容决定。
+          if (layoutColumns() !== 2) {
+            setHourlyLevel(max);
+            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max + '#0';
+            return;
+          }
 
+          weatherTuneSig = sig;
           var chrome = weatherChrome();
-          var target = naturalHeight(el.stocksCard);
+          var target = stocksTargetHeight();
           var level = 0;
           for (var k = max; k >= 0; k -= 1) {
             setHourlyLevel(k);
@@ -1634,7 +1616,7 @@
             }
           }
           setHourlyLevel(level);
-          weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + level;
+          weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + level + '#0';
         }
 
         /* ================= 天气 ================= */
@@ -2085,105 +2067,168 @@
             });
         }
 
-        /* ================= 看板尺寸 ================= */
-        var SIZE_KEY = 'weather-news-board:size:v1';
-        var sizeState = { width: null, height: null };
-        var saveTimer = 0;
+        /* ================= 卡片尺寸 ================= */
+        var SIZES_KEY = 'weather-news-board:sizes:v1';
+        var LEGACY_SIZE_KEY = 'weather-news-board:size:v1';
+        var CARD_KEYS = ['weather', 'stocks', 'news'];
+        /* 拖动尺寸时的边界 */
+        var MIN_CARD_W = 260;
+        var MIN_SIB_W = 240;
+        var MIN_CARD_H = 220;
+        var MAX_CARD_H = 1600;
+        var BOARD_GAP = 16;
 
-        function applySize() {
-          var root = document.documentElement;
-          if (sizeState.width) root.style.setProperty('--app-width', sizeState.width + 'px');
-          else root.style.removeProperty('--app-width');
-          if (sizeState.height) root.style.setProperty('--board-max-h', sizeState.height + 'px');
-          else root.style.removeProperty('--board-max-h');
+        var cardSizes = {
+          weather: { w: null, h: null },
+          stocks: { w: null, h: null },
+          news: { w: null, h: null },
+        };
+        var sizeSaveTimer = 0;
+
+        function cardElement(key) {
+          return document.querySelector('.card[data-card="' + key + '"]');
         }
 
-        function saveSize() {
+        function boardWidth() {
+          return el.board ? el.board.clientWidth : 0;
+        }
+
+        /* 当前排布下的列数：1 栏堆叠 / 2 栏 / 3 栏 */
+        function layoutColumns() {
+          var w = boardWidth();
+          if (w < 560) return 1;
+          if (w < 900) return 2;
+          return 3;
+        }
+
+        /* 2 栏排布下天气列的默认宽度，与 CSS 的 clamp(184px, 30%, 268px) 保持一致 */
+        function defaultWeatherTrack(w) {
+          return Math.min(268, Math.max(184, w * 0.3));
+        }
+
+        /**
+         * 某张卡片允许的最大宽度：给同一行的其他卡片留出可读空间，
+         * 避免把兄弟卡片挤成一条缝。
+         */
+        function maxCardWidth(key) {
+          var w = boardWidth();
+          if (!w) return MIN_CARD_W;
+          var cols = layoutColumns();
+          if (cols === 1) return w;
+          if (cols === 2) {
+            // 新闻卡横跨整行，其余两张并排
+            if (key === 'news') return w;
+            var other = key === 'weather' ? MIN_SIB_W : defaultWeatherTrack(w);
+            return Math.max(MIN_CARD_W, w - BOARD_GAP - other);
+          }
+          var others = 0;
+          if (key !== 'weather') others += 210;
+          if (key !== 'stocks') others += 320;
+          if (key !== 'news') others += 280;
+          return Math.max(MIN_CARD_W, w - BOARD_GAP * 2 - others);
+        }
+
+        function applyCardSizes() {
+          var board = el.board;
+          if (!board) return;
+          var customized = false;
+          CARD_KEYS.forEach(function (key) {
+            var card = cardElement(key);
+            var size = cardSizes[key];
+            if (!card) return;
+            if (size.w) {
+              card.style.setProperty('--cw', size.w + 'px');
+              card.classList.add('is-sized-w');
+              board.style.setProperty('--col-' + key, size.w + 'px');
+              customized = true;
+            } else {
+              card.style.removeProperty('--cw');
+              card.classList.remove('is-sized-w');
+              board.style.removeProperty('--col-' + key);
+            }
+            if (size.h) {
+              card.style.setProperty('--ch', size.h + 'px');
+              card.classList.add('is-sized-h');
+              customized = true;
+            } else {
+              card.style.removeProperty('--ch');
+              card.classList.remove('is-sized-h');
+            }
+          });
+          if (el.resetSizes) el.resetSizes.hidden = !customized;
+        }
+
+        function saveCardSizes() {
           try {
-            localStorage.setItem(
-              SIZE_KEY,
-              JSON.stringify({ width: sizeState.width, height: sizeState.height }),
-            );
+            localStorage.setItem(SIZES_KEY, JSON.stringify(cardSizes));
+            localStorage.removeItem(LEGACY_SIZE_KEY);
           } catch (error) {
             /* 忽略存储失败 */
           }
         }
 
-        function restoreSize() {
+        function restoreCardSizes() {
           try {
-            var raw = localStorage.getItem(SIZE_KEY);
+            var raw = localStorage.getItem(SIZES_KEY);
             if (raw) {
               var saved = JSON.parse(raw);
               if (saved && typeof saved === 'object') {
-                sizeState.width = typeof saved.width === 'number' ? saved.width : null;
-                sizeState.height = typeof saved.height === 'number' ? saved.height : null;
+                CARD_KEYS.forEach(function (key) {
+                  var item = saved[key];
+                  if (item && typeof item === 'object') {
+                    cardSizes[key].w = typeof item.w === 'number' ? item.w : null;
+                    cardSizes[key].h = typeof item.h === 'number' ? item.h : null;
+                  }
+                });
               }
             }
+            localStorage.removeItem(LEGACY_SIZE_KEY);
           } catch (error) {
             /* 忽略解析失败 */
           }
-          applySize();
+          applyCardSizes();
         }
 
-        function syncSizePanel() {
-          if (!el.sizePanel) return;
-          var maxWidth = document.documentElement.clientWidth;
-          var maxHeight = Math.max(320, window.innerHeight - 48);
-          el.sizeWidth.max = String(maxWidth);
-          el.sizeHeight.max = String(maxHeight);
-          var width = sizeState.width || maxWidth;
-          var height = sizeState.height || maxHeight;
-          el.sizeWidth.value = String(Math.min(maxWidth, Math.max(340, width)));
-          el.sizeHeight.value = String(Math.min(maxHeight, Math.max(240, height)));
-          el.sizeWidthValue.textContent = sizeState.width ? sizeState.width + ' px' : '自动';
-          el.sizeHeightValue.textContent = sizeState.height ? sizeState.height + ' px' : '自动';
+        /* 容器变窄后，之前记住的宽度可能放不下，这里夹紧 */
+        function clampCardSizes() {
+          var changed = false;
+          CARD_KEYS.forEach(function (key) {
+            var size = cardSizes[key];
+            if (!size.w) return;
+            var maxW = maxCardWidth(key);
+            var minW = Math.min(MIN_CARD_W, boardWidth());
+            if (size.w > maxW) {
+              size.w = Math.round(maxW);
+              changed = true;
+            }
+            if (size.w < minW) {
+              size.w = Math.round(minW);
+              changed = true;
+            }
+          });
+          if (changed) {
+            applyCardSizes();
+            saveCardSizes();
+          }
         }
 
-        function initSizePanel() {
-          var btn = el.sizeBtn;
-          var panel = el.sizePanel;
-          if (!btn || !panel) return;
-          btn.addEventListener('click', function (event) {
-            event.stopPropagation();
-            var willOpen = panel.hidden;
-            if (willOpen) syncSizePanel();
-            panel.hidden = !willOpen;
-          });
-          document.addEventListener('click', function (event) {
-            if (panel.hidden) return;
-            if (panel.contains(event.target) || btn.contains(event.target)) return;
-            panel.hidden = true;
-          });
-          el.sizeWidth.addEventListener('input', function () {
-            sizeState.width = Number(el.sizeWidth.value);
-            applySize();
-            el.sizeWidthValue.textContent = sizeState.width + ' px';
-            scheduleWeatherTune();
-          });
-          el.sizeHeight.addEventListener('input', function () {
-            sizeState.height = Number(el.sizeHeight.value);
-            applySize();
-            el.sizeHeightValue.textContent = sizeState.height + ' px';
-            scheduleWeatherTune();
-          });
-          el.sizeWidth.addEventListener('change', saveSize);
-          el.sizeHeight.addEventListener('change', saveSize);
-          el.sizeReset.addEventListener('click', function () {
-            sizeState.width = null;
-            sizeState.height = null;
-            applySize();
-            saveSize();
-            syncSizePanel();
-            scheduleWeatherTune();
-            showToast('看板尺寸已恢复自适应');
-          });
+        function resetCardSize(key) {
+          cardSizes[key].w = null;
+          cardSizes[key].h = null;
+          applyCardSizes();
+          saveCardSizes();
+          scheduleWeatherTune();
         }
 
-        function showSizeBadge(text) {
+        function showSizeBadge(text, x, y) {
           var badge = el.resizeBadge;
           if (!badge) return;
           badge.textContent = text;
           badge.hidden = false;
+          if (typeof x === 'number' && typeof y === 'number') {
+            badge.style.left = Math.max(4, Math.min(window.innerWidth - 120, x + 14)) + 'px';
+            badge.style.top = Math.max(4, Math.min(window.innerHeight - 32, y + 14)) + 'px';
+          }
         }
 
         function hideSizeBadge() {
@@ -2191,18 +2236,13 @@
           if (badge) badge.hidden = true;
         }
 
-        function initResizeGrip() {
-          var grip = el.resizeGrip;
-          if (!grip) return;
+        function bindCardGrip(grip) {
+          var card = grip.closest('.card');
+          if (!card) return;
+          var key = card.getAttribute('data-card');
+          var title = card.getAttribute('data-title') || '';
           var start = null;
           var moved = false;
-
-          function baseWidth() {
-            return sizeState.width || document.documentElement.clientWidth;
-          }
-          function baseHeight() {
-            return sizeState.height || Math.round(window.innerHeight * 0.78);
-          }
 
           function onMove(event) {
             if (!start) return;
@@ -2213,16 +2253,20 @@
               moved = true;
             }
             if (event.cancelable) event.preventDefault();
-            var maxWidth = document.documentElement.clientWidth;
-            var maxHeight = Math.max(320, window.innerHeight - 48);
-            sizeState.width = Math.round(Math.min(maxWidth, Math.max(340, start.width + dx)));
-            sizeState.height = Math.round(Math.min(maxHeight, Math.max(240, start.height + dy)));
-            applySize();
-            showSizeBadge(sizeState.width + ' × ' + sizeState.height);
-            if (!saveTimer) {
-              saveTimer = setTimeout(function () {
-                saveTimer = 0;
-                saveSize();
+            var maxW = maxCardWidth(key);
+            var minW = Math.min(MIN_CARD_W, boardWidth());
+            var w = Math.round(Math.min(maxW, Math.max(minW, event.clientX - start.left)));
+            var h = Math.round(
+              Math.min(MAX_CARD_H, Math.max(MIN_CARD_H, event.clientY - start.top)),
+            );
+            cardSizes[key].w = w;
+            cardSizes[key].h = h;
+            applyCardSizes();
+            showSizeBadge(w + ' × ' + h, event.clientX, event.clientY);
+            if (!sizeSaveTimer) {
+              sizeSaveTimer = setTimeout(function () {
+                sizeSaveTimer = 0;
+                saveCardSizes();
               }, 200);
             }
           }
@@ -2237,15 +2281,11 @@
             grip.classList.remove('is-active');
             hideSizeBadge();
             if (moved) {
-              saveSize();
+              saveCardSizes();
             } else {
-              // 没有移动视为单击：恢复自适应尺寸。
-              sizeState.width = null;
-              sizeState.height = null;
-              applySize();
-              saveSize();
-              showToast('看板尺寸已恢复自适应');
-              scheduleWeatherTune();
+              // 没有移动视为单击：这张卡片恢复自适应。
+              resetCardSize(key);
+              showToast('「' + title + '」已恢复自适应');
             }
             moved = false;
           }
@@ -2253,7 +2293,8 @@
           function onDown(event) {
             if (typeof event.button === 'number' && event.button !== 0) return;
             event.preventDefault();
-            start = { x: event.clientX, y: event.clientY, width: baseWidth(), height: baseHeight() };
+            var rect = card.getBoundingClientRect();
+            start = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
             moved = false;
             // 监听挂在 window 上：即使指针捕获在嵌入式面板里失效，
             // 移动事件依然会冒泡到页面，手柄仍能跟手。
@@ -2262,25 +2303,46 @@
             window.addEventListener('pointerup', onUp, true);
             window.addEventListener('mouseup', onUp, true);
             grip.classList.add('is-active');
-            showSizeBadge(start.width + ' × ' + start.height);
+            showSizeBadge(
+              Math.round(rect.width) + ' × ' + Math.round(rect.height),
+              event.clientX,
+              event.clientY,
+            );
           }
 
           grip.addEventListener('pointerdown', onDown);
           grip.addEventListener('mousedown', onDown);
           grip.addEventListener('pointerenter', function () {
-            if (!start) showSizeBadge('拖动调整 · 单击复位');
+            if (start) return;
+            var rect = card.getBoundingClientRect();
+            showSizeBadge(
+              title + ' ' + Math.round(rect.width) + ' × ' + Math.round(rect.height) + ' · 拖动调整',
+              rect.right - 110,
+              rect.bottom - 34,
+            );
           });
           grip.addEventListener('pointerleave', function () {
             if (!start) hideSizeBadge();
           });
-          grip.addEventListener('dblclick', function (event) {
-            event.preventDefault();
-            sizeState.width = null;
-            sizeState.height = null;
-            applySize();
-            saveSize();
-            scheduleWeatherTune();
-          });
+        }
+
+        function initCardGrips() {
+          var grips = document.querySelectorAll('.card-grip');
+          for (var i = 0; i < grips.length; i += 1) {
+            bindCardGrip(grips[i]);
+          }
+          if (el.resetSizes) {
+            el.resetSizes.addEventListener('click', function () {
+              CARD_KEYS.forEach(function (key) {
+                cardSizes[key].w = null;
+                cardSizes[key].h = null;
+              });
+              applyCardSizes();
+              saveCardSizes();
+              scheduleWeatherTune();
+              showToast('所有子看板已恢复自适应');
+            });
+          }
         }
 
         /* ================= 状态栏 ================= */
@@ -2431,14 +2493,14 @@
           if (el.weatherCard) weatherObserver.observe(el.weatherCard);
         }
         window.addEventListener('resize', function () {
+          clampCardSizes();
           layoutStockList();
           scheduleWeatherTune();
         });
 
         restoreViewState();
-        restoreSize();
-        initResizeGrip();
-        initSizePanel();
+        restoreCardSizes();
+        initCardGrips();
         applyTheme();
         renderTabs();
         syncControls();

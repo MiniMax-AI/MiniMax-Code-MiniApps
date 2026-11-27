@@ -17,12 +17,13 @@ same whether it is opened in a narrow side panel or on a wide screen. The watchl
 grid that reflows to the available width, so every entry stays on screen instead of pushing the rest
 below the fold.
 
-A size handle sits in the bottom-right corner, and a **size** button in the top bar opens a panel with
-width and height sliders: drag the handle to set the width and the height limit by hand (the current
-size is shown while dragging), or use the sliders if dragging is not convenient. The dashboard scrolls
-inside once the height limit is reached, and clicking the handle or the "reset" button in the panel
-restores the automatic size. When the weather card and the watchlist card sit side by side they keep
-the same height, and the space that frees up is filled row by row with the hourly forecast.
+Each card carries its own resize handle in its bottom-right corner. Drag it to set that one card's
+width and height: the weather card can be made narrow and short while the watchlist card stays wide,
+and every size is remembered separately. The current size is shown while dragging, the content
+scrolls inside a card whose height was set by hand, clicking a handle restores that single card to
+the automatic size, and a **reset** button in the top bar puts every card back. When the weather
+card and the watchlist card sit side by side and neither was sized by hand, they keep the same
+height and the space that frees up is filled row by row with the hourly forecast.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -51,10 +52,12 @@ rejected.
   card, that no width produces horizontal overflow, and that the watchlist packs into as many
   columns as the available width allows; measured a height difference of 0 px between the weather
   card and the watchlist card in the two-column layout, with the hourly forecast growing and
-  shrinking to the space that is actually free; dragged the size handle in the bottom-right corner
-  and confirmed that the dashboard width, its height limit, and the stored size all follow, and that
-  clicking the handle restores the automatic size; the width and height sliders in the top-bar size
-  panel and its reset button were each exercised; checked the dark theme; added and removed watchlist
+  shrinking to the space that is actually free; dragged the resize handle of each of the three cards
+  in turn and confirmed that the card took exactly the dragged width and height, that the other two
+  cards kept their own sizes, that a card with a hand-set height scrolls its content inside, and
+  that the sizes were stored per card; clicked one handle to reset that single card and used the
+  top-bar reset button to clear all three; reloaded the page and confirmed the per-card sizes came
+  back; checked the dark theme; added and removed watchlist
   entries; switched every news tab; confirmed that one auto-refresh cycle advances the quote
   timestamp and the price; reloaded the page and confirmed the watchlist, the selected tab, and the
   theme persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
@@ -71,8 +74,8 @@ rejected.
 - **Files written** — `watchlist.json` in the Host-provided `context.dataDir`, written atomically
   (temporary file plus rename). The directory location is opaque and chosen by the Host.
 - **Browser storage** — `localStorage` holds view preferences only: the selected news tab, the two
-  refresh intervals, the current city, the light/dark theme, and the dashboard width and height
-  limit that the size handle was dragged to. No market or article data is stored there.
+  refresh intervals, the current city, the light/dark theme, and the per-card width and height that
+  were dragged. No market or article data is stored there.
 - **Network hosts** (all read-only, outbound HTTPS from the Node service):
   `wttr.in`, `geocoding-api.open-meteo.com`, `www.chinanews.com.cn`, `www.ithome.com`,
   `sspai.com`, `www.yicai.com`, `www.toutiao.com`, `top.baidu.com`, `news-at.zhihu.com`,
