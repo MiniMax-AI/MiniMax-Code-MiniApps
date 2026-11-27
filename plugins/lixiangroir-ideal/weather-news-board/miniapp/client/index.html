@@ -100,6 +100,7 @@
         gap: 12px 16px;
         flex-wrap: wrap;
         margin-bottom: 16px;
+        position: relative;
       }
       .brand {
         display: flex;
@@ -901,39 +902,101 @@
         color: #ffffff;
       }
 
+      /* ---------- 尺寸面板 ---------- */
+      .size-panel {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        z-index: 25;
+        width: 260px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface);
+        box-shadow: var(--mcode-shadow);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .size-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .size-row label {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        width: 32px;
+        flex: none;
+      }
+      .size-row input[type='range'] {
+        flex: 1;
+        min-width: 0;
+        height: 20px;
+        accent-color: var(--mcode-accent);
+        cursor: pointer;
+      }
+      .size-value {
+        width: 52px;
+        flex: none;
+        text-align: right;
+        font-size: 11.5px;
+        color: var(--mcode-text);
+        font-variant-numeric: tabular-nums;
+      }
+      .size-reset {
+        align-self: stretch;
+      }
+
       /* ---------- 尺寸手柄 ---------- */
       .resize-grip {
         position: fixed;
         right: max(18px, calc(100% - var(--app-width, 100%)));
         bottom: 10px;
-        width: 26px;
-        height: 26px;
+        width: 30px;
+        height: 30px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 8px;
-        border: 1px solid var(--mcode-border);
+        border-radius: 9px;
+        border: 1px solid var(--mcode-border-strong);
         background: var(--mcode-surface);
-        color: var(--mcode-text-subtle);
+        color: var(--mcode-text-muted);
         box-shadow: var(--mcode-shadow);
         cursor: nwse-resize;
         z-index: 30;
         user-select: none;
         touch-action: none;
         padding: 0;
-        transition: color 150ms ease-out;
+        transition: color 150ms ease-out, border-color 150ms ease-out;
       }
       .resize-grip:hover {
         color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
       }
       .resize-grip.is-active {
         color: var(--mcode-accent);
         border-color: var(--mcode-accent);
       }
       .resize-grip svg {
-        width: 15px;
-        height: 15px;
+        width: 16px;
+        height: 16px;
         pointer-events: none;
+      }
+      .resize-badge {
+        position: fixed;
+        right: max(18px, calc(100% - var(--app-width, 100%)));
+        bottom: 46px;
+        padding: 4px 9px;
+        border-radius: 8px;
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        box-shadow: var(--mcode-shadow);
+        z-index: 30;
+        pointer-events: none;
+        white-space: nowrap;
       }
 
       /* ---------- 响应式（按容器宽度自适应，不依赖视口宽度） ---------- */
@@ -1033,6 +1096,27 @@
               <path d="M20 4v4.5h-4.5" />
             </svg>
           </button>
+          <button class="icon-btn" id="size-btn" type="button" aria-label="看板尺寸" title="看板尺寸">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+          <div class="size-panel" id="size-panel" hidden>
+            <div class="size-row">
+              <label for="size-width">宽度</label>
+              <input type="range" id="size-width" min="340" max="1440" step="10" aria-label="看板宽度" />
+              <span class="size-value" id="size-width-value">自动</span>
+            </div>
+            <div class="size-row">
+              <label for="size-height">高度</label>
+              <input type="range" id="size-height" min="240" max="1200" step="10" aria-label="看板高度上限" />
+              <span class="size-value" id="size-height-value">自动</span>
+            </div>
+            <button class="btn size-reset" id="size-reset" type="button">恢复自适应</button>
+          </div>
           <button class="icon-btn" id="theme-btn" type="button" aria-label="切换深浅主题" title="切换深浅主题">
             <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
@@ -1106,12 +1190,14 @@
       </div>
     </div>
 
+    <div class="resize-badge" id="resize-badge" hidden></div>
+
     <button
       class="resize-grip"
       id="resize-grip"
       type="button"
-      aria-label="拖动调整看板大小，双击复位"
-      title="拖动调整看板大小，双击复位"
+      aria-label="拖动调整看板大小，单击或双击恢复自适应"
+      title="拖动调整看板大小，单击恢复自适应"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M14 4h6v6" />
@@ -1234,6 +1320,14 @@
           stocksSummary: document.getElementById('stocks-summary'),
           stocksUpdated: document.getElementById('stocks-updated'),
           resizeGrip: document.getElementById('resize-grip'),
+          resizeBadge: document.getElementById('resize-badge'),
+          sizeBtn: document.getElementById('size-btn'),
+          sizePanel: document.getElementById('size-panel'),
+          sizeWidth: document.getElementById('size-width'),
+          sizeHeight: document.getElementById('size-height'),
+          sizeWidthValue: document.getElementById('size-width-value'),
+          sizeHeightValue: document.getElementById('size-height-value'),
+          sizeReset: document.getElementById('size-reset'),
           newsTabs: document.getElementById('news-tabs'),
           newsList: document.getElementById('news-list'),
           newsUpdated: document.getElementById('news-updated'),
@@ -2031,63 +2125,156 @@
           applySize();
         }
 
+        function syncSizePanel() {
+          if (!el.sizePanel) return;
+          var maxWidth = document.documentElement.clientWidth;
+          var maxHeight = Math.max(320, window.innerHeight - 48);
+          el.sizeWidth.max = String(maxWidth);
+          el.sizeHeight.max = String(maxHeight);
+          var width = sizeState.width || maxWidth;
+          var height = sizeState.height || maxHeight;
+          el.sizeWidth.value = String(Math.min(maxWidth, Math.max(340, width)));
+          el.sizeHeight.value = String(Math.min(maxHeight, Math.max(240, height)));
+          el.sizeWidthValue.textContent = sizeState.width ? sizeState.width + ' px' : '自动';
+          el.sizeHeightValue.textContent = sizeState.height ? sizeState.height + ' px' : '自动';
+        }
+
+        function initSizePanel() {
+          var btn = el.sizeBtn;
+          var panel = el.sizePanel;
+          if (!btn || !panel) return;
+          btn.addEventListener('click', function (event) {
+            event.stopPropagation();
+            var willOpen = panel.hidden;
+            if (willOpen) syncSizePanel();
+            panel.hidden = !willOpen;
+          });
+          document.addEventListener('click', function (event) {
+            if (panel.hidden) return;
+            if (panel.contains(event.target) || btn.contains(event.target)) return;
+            panel.hidden = true;
+          });
+          el.sizeWidth.addEventListener('input', function () {
+            sizeState.width = Number(el.sizeWidth.value);
+            applySize();
+            el.sizeWidthValue.textContent = sizeState.width + ' px';
+            scheduleWeatherTune();
+          });
+          el.sizeHeight.addEventListener('input', function () {
+            sizeState.height = Number(el.sizeHeight.value);
+            applySize();
+            el.sizeHeightValue.textContent = sizeState.height + ' px';
+            scheduleWeatherTune();
+          });
+          el.sizeWidth.addEventListener('change', saveSize);
+          el.sizeHeight.addEventListener('change', saveSize);
+          el.sizeReset.addEventListener('click', function () {
+            sizeState.width = null;
+            sizeState.height = null;
+            applySize();
+            saveSize();
+            syncSizePanel();
+            scheduleWeatherTune();
+            showToast('看板尺寸已恢复自适应');
+          });
+        }
+
+        function showSizeBadge(text) {
+          var badge = el.resizeBadge;
+          if (!badge) return;
+          badge.textContent = text;
+          badge.hidden = false;
+        }
+
+        function hideSizeBadge() {
+          var badge = el.resizeBadge;
+          if (badge) badge.hidden = true;
+        }
+
         function initResizeGrip() {
           var grip = el.resizeGrip;
           if (!grip) return;
           var start = null;
+          var moved = false;
 
-          grip.addEventListener('pointerdown', function (event) {
-            event.preventDefault();
-            start = {
-              x: event.clientX,
-              y: event.clientY,
-              width: sizeState.width || document.documentElement.clientWidth,
-              height: sizeState.height || Math.round(window.innerHeight * 0.78),
-            };
-            try {
-              grip.setPointerCapture(event.pointerId);
-            } catch (error) {
-              /* 忽略捕获失败 */
-            }
-            grip.classList.add('is-active');
-          });
+          function baseWidth() {
+            return sizeState.width || document.documentElement.clientWidth;
+          }
+          function baseHeight() {
+            return sizeState.height || Math.round(window.innerHeight * 0.78);
+          }
 
-          grip.addEventListener('pointermove', function (event) {
+          function onMove(event) {
             if (!start) return;
             var dx = event.clientX - start.x;
             var dy = event.clientY - start.y;
+            if (!moved) {
+              if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+              moved = true;
+            }
+            if (event.cancelable) event.preventDefault();
             var maxWidth = document.documentElement.clientWidth;
             var maxHeight = Math.max(320, window.innerHeight - 48);
             sizeState.width = Math.round(Math.min(maxWidth, Math.max(340, start.width + dx)));
             sizeState.height = Math.round(Math.min(maxHeight, Math.max(240, start.height + dy)));
             applySize();
+            showSizeBadge(sizeState.width + ' × ' + sizeState.height);
             if (!saveTimer) {
               saveTimer = setTimeout(function () {
                 saveTimer = 0;
                 saveSize();
               }, 200);
             }
-          });
-
-          function endDrag(event) {
-            if (!start) return;
-            start = null;
-            grip.classList.remove('is-active');
-            try {
-              grip.releasePointerCapture(event.pointerId);
-            } catch (error) {
-              /* 忽略释放失败 */
-            }
-            saveSize();
-            scheduleWeatherTune();
           }
 
-          grip.addEventListener('pointerup', endDrag);
-          grip.addEventListener('pointercancel', endDrag);
-          // 指针可能在手柄之外抬起，兜底在窗口层收尾并保存。
-          window.addEventListener('pointerup', endDrag);
-          window.addEventListener('pointercancel', endDrag);
-          grip.addEventListener('dblclick', function () {
+          function onUp() {
+            if (!start) return;
+            window.removeEventListener('pointermove', onMove, true);
+            window.removeEventListener('mousemove', onMove, true);
+            window.removeEventListener('pointerup', onUp, true);
+            window.removeEventListener('mouseup', onUp, true);
+            start = null;
+            grip.classList.remove('is-active');
+            hideSizeBadge();
+            if (moved) {
+              saveSize();
+            } else {
+              // 没有移动视为单击：恢复自适应尺寸。
+              sizeState.width = null;
+              sizeState.height = null;
+              applySize();
+              saveSize();
+              showToast('看板尺寸已恢复自适应');
+              scheduleWeatherTune();
+            }
+            moved = false;
+          }
+
+          function onDown(event) {
+            if (typeof event.button === 'number' && event.button !== 0) return;
+            event.preventDefault();
+            start = { x: event.clientX, y: event.clientY, width: baseWidth(), height: baseHeight() };
+            moved = false;
+            // 监听挂在 window 上：即使指针捕获在嵌入式面板里失效，
+            // 移动事件依然会冒泡到页面，手柄仍能跟手。
+            window.addEventListener('pointermove', onMove, true);
+            window.addEventListener('mousemove', onMove, true);
+            window.addEventListener('pointerup', onUp, true);
+            window.addEventListener('mouseup', onUp, true);
+            grip.classList.add('is-active');
+            showSizeBadge(start.width + ' × ' + start.height);
+          }
+
+          grip.addEventListener('pointerdown', onDown);
+          grip.addEventListener('mousedown', onDown);
+          grip.addEventListener('pointerenter', function () {
+            if (!start) showSizeBadge('拖动调整 · 单击复位');
+          });
+          grip.addEventListener('pointerleave', function () {
+            if (!start) hideSizeBadge();
+          });
+          grip.addEventListener('dblclick', function (event) {
+            event.preventDefault();
             sizeState.width = null;
             sizeState.height = null;
             applySize();
@@ -2251,6 +2438,7 @@
         restoreViewState();
         restoreSize();
         initResizeGrip();
+        initSizePanel();
         applyTheme();
         renderTabs();
         syncControls();

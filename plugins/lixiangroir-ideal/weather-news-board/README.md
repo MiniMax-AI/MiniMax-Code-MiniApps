@@ -17,10 +17,12 @@ same whether it is opened in a narrow side panel or on a wide screen. The watchl
 grid that reflows to the available width, so every entry stays on screen instead of pushing the rest
 below the fold.
 
-A size handle sits in the bottom-right corner: drag it to set the dashboard width and its height
-limit (the dashboard scrolls inside once the limit is reached), and double-click it to go back to the
-automatic size. When the weather card and the watchlist card sit side by side they keep the same
-height, and the space that frees up is filled row by row with the hourly forecast.
+A size handle sits in the bottom-right corner, and a **size** button in the top bar opens a panel with
+width and height sliders: drag the handle to set the width and the height limit by hand (the current
+size is shown while dragging), or use the sliders if dragging is not convenient. The dashboard scrolls
+inside once the height limit is reached, and clicking the handle or the "reset" button in the panel
+restores the automatic size. When the weather card and the watchlist card sit side by side they keep
+the same height, and the space that frees up is filled row by row with the hourly forecast.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -51,7 +53,8 @@ rejected.
   card and the watchlist card in the two-column layout, with the hourly forecast growing and
   shrinking to the space that is actually free; dragged the size handle in the bottom-right corner
   and confirmed that the dashboard width, its height limit, and the stored size all follow, and that
-  a double-click restores the automatic size; checked the dark theme; added and removed watchlist
+  clicking the handle restores the automatic size; the width and height sliders in the top-bar size
+  panel and its reset button were each exercised; checked the dark theme; added and removed watchlist
   entries; switched every news tab; confirmed that one auto-refresh cycle advances the quote
   timestamp and the price; reloaded the page and confirmed the watchlist, the selected tab, and the
   theme persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
