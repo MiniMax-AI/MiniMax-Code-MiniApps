@@ -62,14 +62,28 @@ def is_guide_path(path) -> bool:
 
 
 def install_guide_sample(reset: bool = False) -> dict:
-    """把示例装到 `~/.factscribe/samples/guide`。
+    """把示例装到 `~/.factscribe/samples/guide`（旧宿主形态的落点）。
 
     返回 `{"path": str, "created": bool, "reset": bool}`：
     `created` 表示「这一次调用真的写了目录」（新建或重置后重装），
     已存在且没要求重置时为 False（什么都没动）。
     """
+    return install_guide_sample_into(guide_target(), reset=reset)
+
+
+def install_guide_sample_into(target: Path | str, reset: bool = False) -> dict:
+    """把示例装到**指定目录**。
+
+    与 :func:`install_guide_sample` 的差别只有落点：那个固定落在
+    `~/.factscribe/samples/guide`（用户自己挑目录打开）；这个落在调用方
+    给的目录——段落级工作台把它装进工作根下面，装完示例就在项目列表里，
+    点开就能看。
+
+    规矩不变：只写这一个目录，用户的论文一个字都不动；已存在且没要求
+    reset 时原样返回，不覆盖用户在这份示例里改过的东西。
+    """
     source = guide_source()
-    target = guide_target()
+    target = Path(target)
     if not source.is_dir():
         raise SampleError("内置示例不在包里：%s" % source,
                           code="SAMPLE_MISSING", status=500)

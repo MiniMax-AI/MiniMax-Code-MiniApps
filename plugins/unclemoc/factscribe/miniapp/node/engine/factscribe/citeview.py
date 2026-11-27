@@ -31,9 +31,8 @@
 """
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .citations import parse_bib, valid_stable_id
 from .config import (ConfigError, _glob_paths, load_config, load_sections)
@@ -95,13 +94,63 @@ def _tex_sources(cfg) -> dict:
     return out
 
 
+def project_root(cfg) -> Path:
+    """项目根的**唯一口径**：`resolve()`（解析软链）。
+
+    为什么必须是 resolve()：同一个项目可能有两条路径——macOS 的
+    `/tmp` → `/private/tmp`、Windows 的映射盘/短路径。写侧
+    （`citeedit.py`）与产品路径（`serve.py` 建服时）都用 `resolve()`，
+    读侧再用 `normpath()` 就会对不上：`Path.relative_to()` 直接抛
+    `ValueError`，库层调用直接崩（不是 HTTP 路径，HTTP 那边被建服时的
+    resolve() 挡住了，所以只在直接调库时炸）。
+
+    口径统一到 resolve() 之后，读写两侧算出来的根是同一个，越界判定也
+    是同一套规则。
+    """
+    return Path(cfg.root).resolve()
+
+
+def inside_root(root: Path, rel: str) -> Path | None:
+    """相对路径 → 项目根内的绝对路径；越出项目根 → `None`。
+
+    判定规则（读侧 `_bib_paths` 与写侧 `_project_bib` 共用）：
+
+    * 绝对路径 → 越界；
+    * `..` 越过根 → 越界（`a/../b` 这种没越界的按词法折叠，不算越界）；
+    * 其余按词法拼到根下。
+
+    读侧遇到越界就丢掉这条 bib；写侧遇到越界就拒（`ConfigError`）。
+    **规则是同一个**，所以两侧对「哪些路径在项目内」的看法一致。
+    """
+    raw = str(rel or "").strip().replace("\\", "/")
+    if not raw:
+        return None
+    pure = PurePosixPath(raw)
+    if pure.is_absolute():
+        return None
+    parts: list[str] = []
+    for part in pure.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return None  # 越出项目根
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        return None
+    return root.joinpath(*parts)
+
+
 def _bib_paths(cfg, texs: dict) -> list:
     """bib 文件集合：配置里的 bib + 正文 `\\bibliography{}` 提到的。
 
-    路径一律按项目根解析；越界（`..`、绝对路径）与不存在的文件直接丢掉。
+    路径一律按**解析后的**项目根拼（口径见 `project_root()`）；越界
+    （`..`、绝对路径）与不存在的文件直接丢掉。
     返回 [(相对路径, 绝对路径), …]，按相对路径排序。
     """
-    root = Path(os.path.normpath(str(cfg.root)))
+    root = project_root(cfg)
     found: dict = {}
 
     def add(raw: str) -> None:
@@ -110,13 +159,19 @@ def _bib_paths(cfg, texs: dict) -> list:
             return
         if not rel.lower().endswith(".bib"):
             rel += ".bib"
-        path = Path(os.path.normpath(str(root / rel)))
+        path = inside_root(root, rel)
+        if path is None:
+            return  # 越出项目根：不许读
         try:
             key = path.relative_to(root).as_posix()
         except ValueError:
-            return  # 越出项目根：不许读
+            return
         if not path.is_file():
             return
+        try:
+            path.resolve().relative_to(root)
+        except (OSError, ValueError):
+            return  # 软链指向项目外：不许读（与写侧 _project_bib 同一口径）
         found[key] = path
 
     add(str(getattr(cfg, "bib", "") or ""))
@@ -207,7 +262,7 @@ def citations_data(project) -> dict:
     rows: list = []
     by_key: dict = {}
     files: list = []
-    root = Path(os.path.normpath(str(cfg.root)))
+    root = project_root(cfg)
     for rel, path in _bib_paths(cfg, texs):
         entries = parse_bib(path, root)
         keys = []

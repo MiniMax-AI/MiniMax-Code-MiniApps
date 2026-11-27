@@ -3080,7 +3080,8 @@ def analyze(cfg: Config, sections: list[tuple[str, str]], rules: dict,
             stage: str = STAGE_DRAFT,
             rule_report: dict | None = None
             ) -> StyleResult:
-    # 分析入口归一行尾（读盘侧按原样读，CRLF 不丢）：归一的是内存副本。
+    # 分析入口归一行尾（见 checks.run_packages 同款口径）：读盘侧按原样读，
+    # 分析层按行做事；归一的是内存副本，磁盘字节不动。
     sections = [(rel, to_lf(text)) for rel, text in sections]
     if before is not None:
         before = (before[0], [(rel, to_lf(text)) for rel, text in before[1]])

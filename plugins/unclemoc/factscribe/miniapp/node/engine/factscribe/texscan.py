@@ -6,7 +6,7 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 
-from .facts import THIN, _NUM_RE, canon_text, number_key
+from .facts import THIN, _NUM_RE, canon_text, normalize_fullwidth_dot, number_key
 from .texrules import strip_comments_and_verbatim
 from .textio import split_lines
 
@@ -622,6 +622,9 @@ def _extract_numbers(masked: str, original: str) -> list[dict]:
     offset = 0
     for ln, line in enumerate(split_lines(masked), 1):
         toks: list[dict] = []
+        # 全角小数点归一成半角（等长：列号、绝对偏移都不动）。全角写法
+        # ＝半角写法，一个数不许被切成两个。
+        line = normalize_fullwidth_dot(line)
         for m in _NUM_RE.finditer(line):
             raw, suffix, pct = m.group(1), m.group(2) or "", bool(m.group(3))
             item = {

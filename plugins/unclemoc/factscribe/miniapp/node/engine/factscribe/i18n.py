@@ -442,6 +442,22 @@ FINDING_MESSAGES: dict = {
         "zh": "\\input/\\include 目标 {ref} 含宏、#、嵌套花括号或为空（{src_rel}:{line}）——无法静态解析，审计覆盖不了这一段（R-05）",
         "en": "\\input/\\include target {ref} contains macros, #, nested braces, or is empty ({src_rel}:{line}) — it cannot be resolved statically, so the audit cannot cover this part (R-05)",
     },
+    "finding.FACT_FILE_OUTSIDE_PROJECT": {
+        "zh": "事实账文件 {rel} 是指向项目外的软链（真实目标 {target}）——账本不收它，这些事实没进审计（信任根被突破）",
+        "en": "ledger file {rel} is a symlink pointing outside the project (real target {target}) — the ledger does not accept it, so those facts never entered the audit (the trust root is broken)",
+    },
+    "finding.FACT_FILE_UNRESOLVED": {
+        "zh": "事实账文件 {rel} 的软链不可解（{why}）——账本不收它，这些事实没进审计",
+        "en": "the symlink of ledger file {rel} cannot be resolved ({why}) — the ledger does not accept it, so those facts never entered the audit",
+    },
+    "finding.INPUT_OUTSIDE_PROJECT": {
+        "zh": "\\input 目标 {ref} 越出项目根（{src_rel}:{line}）——闭包不收它，这一段可能整体没进审计（R-05）",
+        "en": "\\input target {ref} is outside the project root ({src_rel}:{line}) — the closure does not accept it, so this part may not have entered the audit at all (R-05)",
+    },
+    "finding.INPUT_OUTSIDE_PROJECT.start": {
+        "zh": "闭包起点 {src_rel} 是软链，越出项目根（目标 {ref}）——闭包不收它，这一段可能整体没进审计（R-05）",
+        "en": "closure start {src_rel} is a symlink pointing outside the project root (target {ref}) — the closure does not accept it, so this part may not have entered the audit at all (R-05)",
+    },
     "finding.INPUT_TARGET_MISSING": {
         "zh": "\\input 目标 {ref} 不存在（{src_rel}:{line}）——闭包展开失败，这一段可能整体没进审计（R-05）",
         "en": "\\input target {ref} does not exist ({src_rel}:{line}) — closure expansion failed, so this part may not have entered the audit at all (R-05)",

@@ -281,6 +281,28 @@ const I18N = {
     'confirm.ok': '确定', 'confirm.cancel': '取消',
     'more.rpNote': '导入进来的都在待核对区；转正走闸，不在面板里',
     'more.kbNote': '源文件只读；上传的资料才可删除',
+    /* 引用与图片：旧节级前端那两页搬过来的（第 ④ 步收口） */
+    'np.cite': '引用', 'np.citeAdd': '＋ 加一条', 'np.assets': '图片',
+    'more.citeNote': '删条目只动 bib；正文里的引用标记不跟着改',
+    'more.assetNote': '盘里的图片文件；点开看大图',
+    'cite.sum': '共 {total} 条：被引 {used}，没被引 {unused}',
+    'cite.st.ok': '可复核', 'cite.st.no_id': '缺标识',
+    'cite.st.bad_id': '标识不合法', 'cite.st.unused': '没被引到',
+    'cite.st.duplicate': 'key 重复',
+    'cite.addT': '加一条引用', 'cite.key': '引用 key',
+    'cite.title': '标题', 'cite.author': '作者', 'cite.year': '年份',
+    'cite.doi': 'DOI', 'cite.arxiv': 'arXiv', 'cite.add': '加进去',
+    'cite.needKey': 'key 必填', 'cite.addOk': '加好了：{key}',
+    'cite.addErr': '加不上：{e}',
+    'cite.delT': '删掉这条', 'cite.delTitle': '删掉这条引用？',
+    'cite.delBody': '只删 bib 里的这一条；正文里的引用标记还留着。',
+    'cite.delOk': '删掉了：{key}', 'cite.delErr': '删不掉：{e}',
+    'cite.loadErr': '读引用清单失败：{e}',
+    'asset.empty': '这个盘里没有图片文件。',
+    'asset.more': '只列了前 {n} 个（盘里还有别的）。',
+    'asset.loadErr': '读图片清单失败：{e}',
+    'tb.sample': '装个示例', 'tb.sampleOk': '示例装好了：{p}',
+    'tb.sampleErr': '装不上示例：{e}',
     'vn.venue': '目标刊物 / 会议', 'vn.venuePh': '例如：ACL 2026',
     'vn.deadline': '截稿日期', 'vn.save': '保存版式配置',
     'vn.lockTag': '语言盘锁定',
@@ -681,6 +703,28 @@ const I18N = {
     'confirm.ok': 'OK', 'confirm.cancel': 'Cancel',
     'more.rpNote': 'Imported reports sit in the pending-check zone; promoting them goes through the gate, not this panel.',
     'more.kbNote': 'Source files are read-only; only uploaded material can be deleted.',
+    /* Citations and images: carried over from the old section-level front end */
+    'np.cite': 'Citations', 'np.citeAdd': '+ Add one', 'np.assets': 'Images',
+    'more.citeNote': 'Deleting touches the bib only; citation marks in the text stay.',
+    'more.assetNote': 'Image files in this disk; click to open.',
+    'cite.sum': '{total} entries: {used} cited, {unused} uncited',
+    'cite.st.ok': 'Verifiable', 'cite.st.no_id': 'No stable id',
+    'cite.st.bad_id': 'Bad id', 'cite.st.unused': 'Not cited',
+    'cite.st.duplicate': 'Duplicate key',
+    'cite.addT': 'Add a citation', 'cite.key': 'Citation key',
+    'cite.title': 'Title', 'cite.author': 'Author', 'cite.year': 'Year',
+    'cite.doi': 'DOI', 'cite.arxiv': 'arXiv', 'cite.add': 'Add',
+    'cite.needKey': 'The key is required', 'cite.addOk': 'Added: {key}',
+    'cite.addErr': 'Could not add: {e}',
+    'cite.delT': 'Delete this entry', 'cite.delTitle': 'Delete this citation?',
+    'cite.delBody': 'Only this bib entry goes; citation marks in the text stay.',
+    'cite.delOk': 'Deleted: {key}', 'cite.delErr': 'Could not delete: {e}',
+    'cite.loadErr': 'Could not load the citation list: {e}',
+    'asset.empty': 'No image files in this disk.',
+    'asset.more': 'Only the first {n} are listed (there are more in the disk).',
+    'asset.loadErr': 'Could not load the image list: {e}',
+    'tb.sample': 'Install sample', 'tb.sampleOk': 'Sample installed: {p}',
+    'tb.sampleErr': 'Could not install the sample: {e}',
     'vn.venue': 'Target journal / conference', 'vn.venuePh': 'e.g. ACL 2026',
     'vn.deadline': 'Deadline', 'vn.save': 'Save venue config',
     'vn.lockTag': 'Language lock',
@@ -837,6 +881,8 @@ const state = {
   reports: { list: [], loading: false, error: '', detail: null }, // 段四：实验报告
   kb: { files: [], loading: false, error: '', current: '', detail: null },   // 段六：知识库
   venue: { data: null, loading: false, error: '', msg: '' },                // 段六：版式
+  cites: { data: null, loading: false, error: '' },   // 引用清单（旧节级前端那页搬过来的）
+  assets: { data: null, loading: false, error: '' },  // 盘里的图片清单（同上）
   wz: { step: 1, file: '', fileSize: 0, files: [], rows: [], failed: [], suggested: [], sha: '', busy: false, parseError: '' }, // 段四：导入向导
   af: null,            // 追加事实表单（两步：挑产物 → 说清这条数字 ＋ 落哪本账）
   renameTarget: null,   // 改章节名：正在改的那一节 {file, block, sha}
@@ -975,6 +1021,9 @@ function applyI18n() {
   renderReports();
   renderKb();
   renderVenue();
+  // 引用与图片的文案也跟语言走（面板里的字是 t() 现填的）。
+  renderCitations();
+  renderAssets();
   // v4：模型下拉里的文案（来源标注、思考等级）也要跟着语言重画。
   renderAiModelSelect();
   // v5：「这一轮是谁答的」徽标也跟着语言重画。
@@ -1542,6 +1591,11 @@ async function loadDisk() {
   await loadAbstract();
   // 段六：版式配置跟着当前盘走（截稿徽标立刻可显示）。
   loadVenue();
+  // 引用与图片也跟着当前盘走（旧节级前端那两页搬过来的）。
+  state.cites.data = null;
+  state.assets.data = null;
+  loadCitations();
+  loadAssets();
   // 段三：检查报告与机器视图跟着当前盘走（进哪篇管哪篇）。
   resetReportState();
   state.rerun = null;
@@ -4087,6 +4141,8 @@ function switchNavPane(name) {
     loadReports();
     loadKb();
     loadVenue();
+    loadCitations();
+    loadAssets();
   }
 }
 
@@ -4712,7 +4768,197 @@ function updateDeadlineBadge() {
   btn.classList.add('has-due');
 }
 
+/* ------------------------------------------------- 引用增删（旧节级前端那页搬过来的） */
+
+/* 引用与图片都跟着当前盘走（进哪篇管哪篇）。 */
+function diskCitePath(suffix) {
+  const project = state.project;
+  const disk = currentDisk();
+  if (!project || !disk) return null;
+  return `/api/disk/${encodeURIComponent(project.id)}/${encodeURIComponent(disk.id)}${suffix || ''}`;
+}
+
+function renderCitations() {
+  const list = $('#citeList');
+  const sum = $('#citeSum');
+  if (!list) return;
+  const data = state.cites.data;
+  if (!data) {
+    list.innerHTML = '';
+    if (sum) sum.textContent = state.cites.error || '';
+    return;
+  }
+  if (sum) {
+    sum.textContent = t('cite.sum', {
+      total: data.total || 0, used: data.used || 0, unused: data.unused || 0,
+    });
+  }
+  const entries = data.entries || [];
+  list.innerHTML = entries.map((row) => {
+    const status = String(row.status || 'ok');
+    const meta = [row.author, row.year, row.doi || row.arxiv].filter(Boolean).join(' · ');
+    return `<li class="cite-row s-${esc(status)}">
+      <div class="cite-line1">
+        <span class="cite-key">${esc(row.key || '')}</span>
+        <span class="cite-status">${esc(t('cite.st.' + status))}</span>
+        <button type="button" class="cite-del" data-key="${esc(row.key || '')}" title="${esc(t('cite.delT'))}">✕</button>
+      </div>
+      <div class="cite-title">${esc(row.title || '')}</div>
+      ${meta ? `<div class="cite-meta">${esc(meta)}</div>` : ''}
+    </li>`;
+  }).join('');
+}
+
+async function loadCitations() {
+  const url = diskCitePath('/citations');
+  if (!url) { state.cites.data = null; renderCitations(); return; }
+  state.cites.loading = true;
+  try {
+    const data = await getJSON(url);
+    state.cites.data = data;
+    state.cites.error = '';
+  } catch (err) {
+    state.cites.data = null;
+    state.cites.error = t('cite.loadErr', { e: (err && err.message) || String(err) });
+  } finally {
+    state.cites.loading = false;
+    renderCitations();
+  }
+}
+
+function openCiteForm() {
+  const modal = $('#modalCite');
+  if (!modal) return;
+  ['ctKey', 'ctTitle', 'ctAuthor', 'ctYear', 'ctDoi', 'ctArxiv'].forEach((id) => {
+    const el = $('#' + id);
+    if (el) el.value = '';
+  });
+  modal.hidden = false;
+}
+
+function closeCiteForm() {
+  const modal = $('#modalCite');
+  if (modal) modal.hidden = true;
+}
+
+async function addCitation() {
+  const url = diskCitePath('/citations/add');
+  if (!url) return;
+  const key = (($('#ctKey') || {}).value || '').trim();
+  if (!key) { toast(t('cite.needKey')); return; }
+  const body = {
+    key: key,
+    title: (($('#ctTitle') || {}).value || '').trim(),
+    author: (($('#ctAuthor') || {}).value || '').trim(),
+    year: (($('#ctYear') || {}).value || '').trim(),
+    doi: (($('#ctDoi') || {}).value || '').trim(),
+    arxiv: (($('#ctArxiv') || {}).value || '').trim(),
+  };
+  try {
+    await postJSON(url, body);
+    closeCiteForm();
+    toast(t('cite.addOk', { key: key }));
+    await loadCitations();
+  } catch (err) {
+    toast(t('cite.addErr', { e: (err && err.message) || String(err) }));
+  }
+}
+
+async function deleteCitation(key) {
+  const url = diskCitePath('/citations/delete');
+  if (!url || !key) return;
+  const ok = await askConfirm({
+    title: t('cite.delTitle'),
+    body: t('cite.delBody'),
+    okLabel: t('confirm.ok'),
+  });
+  if (!ok) return;
+  try {
+    await postJSON(url, { key: key });
+    toast(t('cite.delOk', { key: key }));
+    await loadCitations();
+  } catch (err) {
+    toast(t('cite.delErr', { e: (err && err.message) || String(err) }));
+  }
+}
+
 /* 首页预览：走现有的渲染 PDF 链路（真渲染，出预览）。 */
+/* ------------------------------------------------- 图片预览（旧节级前端那条只读通道搬过来的） */
+
+function assetUrl(rel) {
+  const base = diskCitePath('/asset');
+  if (!base) return '';
+  return base + '?path=' + encodeURIComponent(String(rel || ''));
+}
+
+function renderAssets() {
+  const grid = $('#assetGrid');
+  if (!grid) return;
+  const data = state.assets.data;
+  if (!data) {
+    grid.innerHTML = '';
+    return;
+  }
+  const items = data.assets || [];
+  if (!items.length) {
+    grid.innerHTML = '<p class="asset-empty">' + esc(t('asset.empty')) + '</p>';
+    return;
+  }
+  const cells = items.map((item) => {
+    const rel = String(item.path || '');
+    return '<button type="button" class="asset-cell" data-path="' + esc(rel) + '" title="' + esc(rel) + '">' +
+      '<img loading="lazy" src="' + esc(assetUrl(rel)) + '" alt="' + esc(item.name || '') + '">' +
+      '<span class="asset-name">' + esc(item.name || '') + '</span></button>';
+  }).join('');
+  const more = data.truncated
+    ? '<p class="asset-more">' + esc(t('asset.more', { n: items.length })) + '</p>'
+    : '';
+  grid.innerHTML = cells + more;
+}
+
+async function loadAssets() {
+  const url = diskCitePath('/assets');
+  if (!url) { state.assets.data = null; renderAssets(); return; }
+  state.assets.loading = true;
+  try {
+    const data = await getJSON(url);
+    state.assets.data = data;
+    state.assets.error = '';
+  } catch (err) {
+    state.assets.data = null;
+    state.assets.error = t('asset.loadErr', { e: (err && err.message) || String(err) });
+  } finally {
+    state.assets.loading = false;
+    renderAssets();
+  }
+}
+
+function openAsset(rel) {
+  const modal = $('#modalAsset');
+  const body = $('#asBody');
+  const title = $('#asTitle');
+  if (!modal || !body) return;
+  if (title) title.textContent = String(rel || '');
+  body.innerHTML = '<img class="asset-full" src="' + esc(assetUrl(rel)) + '" alt="' + esc(rel || '') + '">';
+  modal.hidden = false;
+}
+
+/* ------------------------------------------------- 内置示例（装到工作根下面） */
+
+async function installSample() {
+  const btn = $('#goSample');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await postJSON('/api/samples/guide', { reset: false });
+    toast(t('tb.sampleOk', { p: data.path || '' }));
+    await loadProjects();
+  } catch (err) {
+    toast(t('tb.sampleErr', { e: (err && err.message) || String(err) }));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ---------------------------------------------------------------- 段六：选刊指南 */
 
 const VENUE_GUIDE_KEYS = [
@@ -5532,6 +5778,24 @@ function bind() {
   // 段六：知识库上传
   $('#npKbUploadBtn').addEventListener('click', () => $('#npKbUpload').click());
   $('#npKbUpload').addEventListener('change', uploadKbFile);
+  // 引用增删（旧节级前端那页搬过来的）
+  $('#npCiteAddBtn').addEventListener('click', openCiteForm);
+  $('#ctCancel').addEventListener('click', closeCiteForm);
+  $('#ctOk').addEventListener('click', addCitation);
+  $('#citeList').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-key]');
+    if (!btn) return;
+    deleteCitation(btn.dataset.key);
+  });
+  // 图片预览
+  $('#assetGrid').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-path]');
+    if (!btn) return;
+    openAsset(btn.dataset.path);
+  });
+  $('#asClose').addEventListener('click', () => { $('#modalAsset').hidden = true; });
+  // 内置示例：装到工作根下面
+  $('#goSample').addEventListener('click', installSample);
   // 段六：版式（存配置 ＋ 首页预览 ＋ 选刊指南）
   $('#vnSave').addEventListener('click', saveVenueConfig);
   $('#npVenueGuideBtn').addEventListener('click', openVenueGuide);

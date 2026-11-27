@@ -19,7 +19,10 @@ from decimal import Decimal, InvalidOperation
 #   数字照抽，单位只作噪声（不参与数值换算）。长单位排在短单位前，避免
 #   "ms" 被 "m"、"tokens" 被 "tok" 抢先；量级 [kKMB] 排在单位之后，
 #   所以 "5MB" 是单位、"5M" 仍是量级。
-# - 百分号允许中间有空格（\% 掩码后就是 " %"），也接受 percent/pct 英文词
+# - 百分号允许中间有空格（\% 掩码后就是 " %"），也接受 percent/pct 英文词；
+#   全角 ％（U+FF05）＝半角 %：全角写法是同一种写法，不是另一种数。此前只认
+#   ASCII 的 "%"，于是 ５６．２５％ 被读成绝对值 56.25（而不是百分数 0.5625）
+#   ——会误判数字。与该文件对半角 % 的既有处理保持一致，不另立一套规则。
 # - 科学计数法整体成 token（3e-4 / 1.2E+05），不拆成 3 和 4
 # *** 匹配是 token 锚定的：不做子串匹配（红队 B1）***
 _UNIT_RE = (
@@ -31,11 +34,23 @@ _NUM_RE = re.compile(
     r"(?<![\w.])"
     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
     r"(" + _UNIT_RE + r"|[kKMB])?"
-    r"(\s*(?:%|percent\b|pct\b))?"
+    r"(\s*(?:%|\uff05|percent\b|pct\b))?"
     r"(?![\w])"
 )
 
 _MAGNITUDE = {"k": Decimal(1000), "m": Decimal(10 ** 6), "b": Decimal(10 ** 9)}
+
+# 全角小数点（U+FF0E FULLWIDTH FULL STOP）。既有口径：全角数字就是数字
+# （正则的 \d 在 Unicode 模式下已匹配 ０-９，Decimal 也能解析它们），唯独小数点
+# 此前只认 ASCII 的 "."，于是 ５６．２５ 被切成 ５６ 和 ２５ 两个数——一个数被
+# 拆成两个，既会误判红，也可能误绑到不相干的 fact 上。全角写法＝半角写法：
+# 这里把小数点归一成 "."（1:1 等长替换，列号与偏移不变）。
+_FULLWIDTH_DOT = "\uff0e"
+
+
+def normalize_fullwidth_dot(text: str) -> str:
+    """全角小数点 → ASCII 小数点（等长替换，位置不变）。"""
+    return str(text).replace(_FULLWIDTH_DOT, ".")
 
 _FRACTION_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)(?![\d.])")
 
@@ -80,7 +95,7 @@ def latex_display(text: str) -> str:
 
 def number_key(token: str, suffix: str | None = None, percent: bool = False) -> str:
     try:
-        d = Decimal(str(token).replace(",", ""))
+        d = Decimal(normalize_fullwidth_dot(str(token)).replace(",", ""))
     except InvalidOperation:
         return token
     if suffix:
@@ -96,7 +111,7 @@ def number_key(token: str, suffix: str | None = None, percent: bool = False) -> 
 def literal_tokens(value: str) -> list[tuple[str, str, bool]]:
     """value 里字面写出的数字 token：(raw, suffix, pct)。不做分数展开。"""
     out = []
-    for m in _NUM_RE.finditer(str(value or "")):
+    for m in _NUM_RE.finditer(normalize_fullwidth_dot(str(value or ""))):
         out.append((m.group(1), m.group(2) or "", bool(m.group(3))))
     return out
 
@@ -122,7 +137,7 @@ def fact_value_keys(value: str, include_quotient: bool = True) -> set[str]:
         if pct:
             keys.add(number_key(raw, suffix, False))
     if include_quotient:
-        for m in _FRACTION_RE.finditer(str(value or "")):
+        for m in _FRACTION_RE.finditer(normalize_fullwidth_dot(str(value or ""))):
             try:
                 num, den = Decimal(m.group(1)), Decimal(m.group(2))
             except InvalidOperation:
@@ -140,7 +155,7 @@ def canon_text(text: str) -> str | None:
     用于 `display` 严格等价判定（R-04）：`10/16` 与 `62.5%` 都是 0.625；
     `0.91` 与 `0.9` 永不相等（不再有 round_to 容差）。
     """
-    s = str(text or "").strip()
+    s = normalize_fullwidth_dot(str(text or "").strip())
     if not s:
         return None
     m = _FRACTION_RE.fullmatch(s)
@@ -160,7 +175,7 @@ def canon_text(text: str) -> str | None:
 
 def decimal_places(text: str) -> int:
     """`text` 里数字的小数位数（用于 round_to 机械校验）。"""
-    m = _NUM_RE.search(str(text or ""))
+    m = _NUM_RE.search(normalize_fullwidth_dot(str(text or "")))
     if not m:
         return 0
     raw = m.group(1).replace(",", "")

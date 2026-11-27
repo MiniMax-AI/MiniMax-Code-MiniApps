@@ -30,6 +30,7 @@ Windows 上默认文本模式两头都动手：
 """
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 from pathlib import Path
 
 __all__ = [
@@ -154,35 +155,65 @@ def dominant_newline(text: str, default: str = "\n") -> str:
 
 
 def restore_newlines(new_text: str, original: str,
-                     fallback: str = "\n") -> str:
-    """把新正文的行尾还原成**原文**的行尾。
+                     fallback: str | None = None) -> str:
+    r"""把 `new_text` 的行尾还原成 `original` 里各行**原有**的行尾。
 
-    浏览器交回来的正文恒是 LF——DOM 里没有 CRLF（contenteditable 的
-    textContent 一律给 LF）。若照单写回，CRLF 稿子存一次就变成 LF，或者
-    变成一半 CRLF 一半 LF 的混合稿子，违反「保存必须逐字保留正文内容」。
+    为什么需要它：编辑器交回来的正文恒是 LF——浏览器按 HTML 规范把
+    `<textarea>` 的 API value 与 contenteditable 的 textContent 一律归一
+    成 LF。若照单写回，CRLF 稿子存一次就变成 LF，或者变成一半 CRLF 一半
+    LF 的混合稿子，违反「保存必须逐字保留正文内容」。
 
-    规则（**逐行**对齐，不是整篇一刀切）：
+    口径（**只动行尾，不动一个字的内容**）：
 
-    * 新文的第 k 次断行 → 沿用原文第 k 次断行的行尾。原文是混合行尾时，
-      哪一行原本是 CRLF，改完还是 CRLF，一行不差；
-    * 原文的断行数不够（新文多出了行）→ 多出来的断行用 fallback
-      （调用方给的是**文件**的主导行尾），免得在 CRLF 稿子里补出 LF 行；
-    * 原文末尾没有行尾的，新文末尾也不补。
+    * `original` 是这一块**落盘原文**（按原样读，行尾原样）；
+    * `new_text` 是客户端交回的新正文；
+    * 与原文**逐行对得上**的行 → 用原文那一行的行尾（原文是混合行尾时，
+      哪一行原本是 CRLF，改完还是 CRLF，一行不差）；
+    * 内容改过时按**行内容**对齐（SequenceMatcher），把原文那一行的行尾
+      还给对应的新行；用户**新输入**的行 → 用 fallback（缺省是该块的主导
+      行尾 `dominant_newline(original)`）；
+    * 客户端自己明确给了 CRLF/CR 的行 → **原样保留**（那是调用方的显式
+      意图，这里一个字都不许改写）；
+    * 换行的**个数**只由客户端那份文本决定：还原只改风格，不改个数；
+    * 没有原文可依（`original` 为空——新建的块／草稿块）→ 全部用
+      fallback（调用方给的是**文件**的主导行尾）。
 
     original 是**这一块**的原文（不是整份文件）：块的行尾归这一块自己
     管，块外的行尾一个都不碰。
     """
-    orig_ends = [end for _, end in split_keepends(original)]
-    # 原文最后一段若没有行尾，它就不是一次「断行」，不算进断行表。
-    if orig_ends and orig_ends[-1] == "":
-        orig_ends = orig_ends[:-1]
+    old = split_keepends(original)
+    new = split_keepends(new_text)
+    if not new:
+        return new_text
     extra = fallback or dominant_newline(original)
+    old_content = [content for content, _ending in old]
+    new_content = [content for content, _ending in new]
+    inherited: dict[int, str] = {}
+    if old and old_content == new_content:
+        # 最常见的一档：内容一个字没改（浏览器归一了行尾而已）——逐行照旧。
+        for index, (_content, ending) in enumerate(old):
+            inherited[index] = ending
+    elif old:
+        # 内容改过：按行内容对齐，把原文那一行的行尾还给对应的新行。
+        matcher = SequenceMatcher(a=old_content, b=new_content, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for offset in range(j2 - j1):
+                    inherited[j1 + offset] = old[i1 + offset][1]
+            elif tag == "replace":
+                # 改写掉的行：按位置继承原文那一行的行尾；多出来的新行走主导行尾。
+                for offset in range(min(i2 - i1, j2 - j1)):
+                    inherited[j1 + offset] = old[i1 + offset][1]
     out: list[str] = []
-    for index, (line, end) in enumerate(split_keepends(to_lf(new_text))):
-        if end == "":
-            # 最后一段没有断行：原样留着（不补行尾）。
-            out.append(line)
+    for index, (content, ending) in enumerate(new):
+        if ending == "":
+            # 最后一行本来就没有行尾——没什么可还原的。
+            out.append(content)
             continue
-        out.append(line + (orig_ends[index]
-                           if index < len(orig_ends) else extra))
+        if ending != "\n":
+            # 客户端明确给了 CRLF/CR：那是调用方的显式意图，一个字符都不动。
+            out.append(content + ending)
+            continue
+        target = inherited.get(index) or extra
+        out.append(content + target)
     return "".join(out)

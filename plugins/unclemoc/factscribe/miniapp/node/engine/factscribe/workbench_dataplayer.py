@@ -8,18 +8,24 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import time
 from pathlib import Path, PurePosixPath
 
 from .audit import _aggregate_exit, run_audit, source_path
 from .brief import build_brief, payload as brief_payload
 from .config import (ConfigError, load_config, load_facts, load_sections)
 from .landing import resolve_landing
-from .textio import write_text_exact
+from .textio import read_text_exact, restore_newlines, write_text_exact
 from .evidence import (freeze_evidence, lock_check, log_state, read_lock,
                        unfreeze_evidence, unfrozen_info)
 from .i18n import issue_dict
 from .report import _config_block, _severity_of
 from .scaffold import add_fact
+from .workbench.projects import short_sha
+from .workbench.proposal import (STATUS_APPLIED, STATUS_STALE, ProposalError,
+                                 new_id, read_proposal, resolve_proposal,
+                                 write_proposal)
 
 
 def _config_bits(cfg) -> dict:
@@ -64,14 +70,14 @@ def project_data(project: Path | str, allow_write: bool = False,
             base = source_path(cfg, "").resolve()
             path = source_path(cfg, src).resolve()
             path.relative_to(base)
-            text = path.read_text(encoding="utf-8")
+            text = read_text_exact(path)
         except (OSError, ValueError, UnicodeDecodeError):
             text = ""
         source_rows[src] = {"id": src, "name": src, "text": text,
                             "sha256": fact.source_sha256}
     bib_path = cfg.root / cfg.bib
     try:
-        bib = bib_path.read_text(encoding="utf-8")
+        bib = read_text_exact(bib_path)
     except (OSError, UnicodeDecodeError):
         bib = ""
     return {
@@ -79,7 +85,10 @@ def project_data(project: Path | str, allow_write: bool = False,
         "build_allowed": bool(allow_build),
         "project": cfg.name or cfg.title,
         "root": str(cfg.root),
-        "sections": [{"file": rel, "text": text} for rel, text in sections],
+        # sha：这一节的指纹（sha256 hex 前 16 位）——客户端保存时带回来当
+        # expect_sha，指纹闸据此拒写「在别处被改过」的节。
+        "sections": [{"file": rel, "text": text, "sha": short_sha(text)}
+                     for rel, text in sections],
         "facts": [{
             "id": f.id, "claim": f.claim, "value": f.value,
             "source": f.source, "sourceSha256": f.source_sha256,
@@ -123,8 +132,21 @@ def audit_data(project: Path | str, lang: str = "zh") -> dict:
     }
 
 
+#: 指纹闸：客户端所基于的那一版正文与服务端现算的不一致 → 拒写（HTTP 409）。
+#: 段落级那条闸的同一个码（见 factscribe/workbench/write.py 的 BLOCK_STALE）。
+BLOCK_STALE_CODE = "BLOCK_STALE"
+
+
 def write_section_data(project: Path | str, file: str, text: str,
-                       allow_write: bool = False) -> dict:
+                       allow_write: bool = False,
+                       expect_sha: str = "") -> dict:
+    """写一节正文（节级兼容层的写入口）。
+
+    **指纹闸**（口径 3 补的那道）：客户端带 `expect_sha`（它所基于的那一版
+    正文的指纹）来，服务端现算的指纹对不上就拒写（`BLOCK_STALE`）——这节
+    在别处（另一个窗口／外部编辑器）已被改过，照单写回会覆盖别人的字。
+    不带 `expect_sha` 就走老路（裸覆盖），与段落级同一条闸的语义。
+    """
     _require_write(allow_write)
     cfg = load_config(Path(project))
     rel = str(file or "").strip()
@@ -147,11 +169,28 @@ def write_section_data(project: Path | str, file: str, text: str,
     if not rel.endswith(".tex"):
         raise ConfigError("只允许写 .tex 章节：%s" % rel)
     tmp = target.with_name(target.name + ".tmp")
+    # 落盘原文：这一节当前在盘上的字节（行尾原样）。
+    try:
+        original = read_text_exact(target)
+    except (OSError, UnicodeDecodeError):
+        original = ""
+    # 指纹闸：对不上就拒写（409），不许覆盖别人的字。
+    expect = str(expect_sha or "").strip()
+    if expect and expect != short_sha(original):
+        raise ConfigError("这一节在别处已被改动，请重新编辑。",
+                          code=BLOCK_STALE_CODE)
+    # 行尾还原：浏览器的 <textarea> 交回的正文恒是 LF（HTML 规范把 textarea
+    # 的 API value 归一为 LF），直接逐字写回会把 CRLF 稿整篇压成 LF——
+    # 内容一个字没动，行尾却全被换掉了。这里按**落盘原文**逐行还原行尾，
+    # 正文内容（数字、\fact{}/\cite{} 保护面、token）一个字都不改。
     # newline=""：不翻译换行。正文里的 '\r\n' 原样落盘——
     # Windows 上默认文本模式会把它写成 '\r\r\n'（内容损坏）。
-    write_text_exact(tmp, text)
+    final = restore_newlines(text, original) if original else text
+    write_text_exact(tmp, final)
     os.replace(tmp, target)
-    return {"file": rel, "bytes": len(text.encode("utf-8"))}
+    # bytes 报的是**真正落盘**的那份（还原行尾后），不是客户端交来的那份。
+    return {"file": rel, "bytes": len(final.encode("utf-8")),
+            "sha": short_sha(final)}
 
 
 # ============================================================ 章节增删改
@@ -253,7 +292,7 @@ def _scan_project_tex(cfg) -> list[tuple[str, str]]:
             continue
         seen.add(rel)
         try:
-            out.append((rel, (cfg.root / rel).read_text(encoding="utf-8")))
+            out.append((rel, read_text_exact(cfg.root / rel)))
         except (OSError, UnicodeDecodeError):
             pass
     return out
@@ -332,7 +371,16 @@ def rename_section_data(project: Path | str, from_file: str, to_file: str,
 
 def delete_section_data(project: Path | str, file: str, force: bool = False,
                         allow_write: bool = False) -> dict:
-    """删一节：正文还在引用它就 409 拦下来；force 才真删。"""
+    """删一节：正文还在引用它就 409 拦下来；force 才继续。
+
+    **删＝挪 attic（可逆），不真删**（口径 8：与段落级的删节语义统一）。
+    原文件挪到项目根下的 `attic/`（保持相对路径），人后悔了搬回去就恢复；
+    放 attic 而不是 `sections/attic/` 是因为闭包按 `sections/**/*.tex`
+    扫——搁在 sections 里等于没删（那一节照样进审计）。
+
+    409 提醒照旧：正文还引用它就报 `SECTION_REFERENCED`（附引用位置），
+    `force:true` 才继续。
+    """
     _require_write(allow_write)
     cfg = load_config(Path(project))
     rel = _section_rel(file)
@@ -345,8 +393,100 @@ def delete_section_data(project: Path | str, file: str, force: bool = False,
         raise SectionError("正文还在引用它：%s" % where,
                            code="SECTION_REFERENCED", status=409,
                            references=refs)
-    target.unlink()
-    return {"file": rel, "references": refs, "forced": bool(force)}
+    attic = cfg.root / "attic" / rel
+    attic.parent.mkdir(parents=True, exist_ok=True)
+    if attic.exists():
+        attic.unlink()
+    shutil.move(str(target), str(attic))
+    return {"file": rel, "references": refs, "forced": bool(force),
+            "attic": attic.relative_to(cfg.root).as_posix()}
+
+
+#: 节级改稿提议单的类型（正文改稿；与段落级的 block_edit 同一形状）。
+KIND_SECTION_WRITE = "section_write"
+
+
+def propose_section_data(project: Path | str, file: str, text: str,
+                         expect_sha: str = "", source: str = "",
+                         rationale: str = "") -> dict:
+    """算一张**节级**改稿提议单（**不碰正文**）。
+
+    口径 7：AI 的采纳写回统一走提议单＋指纹闸——AI 候选先落成一张待人确认
+    的单子，人点了确认才写回；提议之后正文被别处改过，指纹对不上就拒写。
+
+    形状与段落级的提议单一致：kind / before_sha / before_text / after_text /
+    warnings（落盘层一字不改，只多给 message/params 那套展示原料之外的东西）。
+    """
+    cfg = load_config(Path(project))
+    rel = _section_rel(file)
+    target = _section_path(cfg, rel)
+    if not target.is_file():
+        raise SectionError("文件不存在：%s" % rel, code="SECTION_MISSING")
+    original = read_text_exact(target)
+    expect = str(expect_sha or "").strip()
+    if expect and expect != short_sha(original):
+        raise ConfigError("这一节在别处已被改动，请重新编辑。",
+                          code=BLOCK_STALE_CODE)
+    after = restore_newlines(text, original)
+    return {"kind": KIND_SECTION_WRITE,
+            "file": rel,
+            "before_sha": short_sha(original),
+            "before_text": original,
+            "proposed_text": text,
+            "after_text": after,
+            "warnings": [],
+            "source": str(source or ""),
+            "rationale": str(rationale or "")}
+
+
+def create_section_proposal(project: Path | str, file: str, text: str,
+                            expect_sha: str = "", source: str = "",
+                            rationale: str = "", state: str = "") -> dict:
+    """建一张节级改稿提议单（**不碰正文**）——状态落在提议单目录里。"""
+    calc = propose_section_data(project, file, text, expect_sha=expect_sha,
+                                source=source, rationale=rationale)
+    record = {"version": 1,
+              "id": new_id(),
+              "project": str(Path(project)),
+              "disk": "",
+              "status": "pending",
+              "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    record.update(calc)
+    write_proposal(state, record)
+    return record
+
+
+def apply_section_proposal(project: Path | str, pid: str,
+                            allow_write: bool = False,
+                            state: str = "") -> dict:
+    """人确认之后才写回（口径 7 的写回口）。
+
+    指纹闸：提议记下的 before_sha 与盘上现算的不一致 ⇒ 别人在提议之后改过
+    这一节 ⇒ 拒写（BLOCK_STALE），并把这张单标成 stale。
+    """
+    _require_write(allow_write)
+    record = read_proposal(state, pid)
+    if str(record.get("kind") or "") != KIND_SECTION_WRITE:
+        raise ProposalError("这张提议单不是节级改稿单。",
+                            code="PROPOSAL_KIND_INVALID", status=400)
+    if str(record.get("status") or "") != "pending":
+        raise ProposalError("这张提议单已经处理过了（%s）。"
+                            % record.get("status"),
+                            code="PROPOSAL_ALREADY_RESOLVED", status=409)
+    rel = str(record.get("file") or "")
+    try:
+        result = write_section_data(project, rel,
+                                     str(record.get("proposed_text") or ""),
+                                     True,
+                                     str(record.get("before_sha") or ""))
+    except ConfigError as exc:
+        if getattr(exc, "code", "") == BLOCK_STALE_CODE:
+            resolve_proposal(state, pid, STATUS_STALE)
+        raise
+    resolve_proposal(state, pid, STATUS_APPLIED)
+    result = dict(result)
+    result["proposal"] = pid
+    return result
 
 
 def add_fact_data(project: Path | str, body: dict,

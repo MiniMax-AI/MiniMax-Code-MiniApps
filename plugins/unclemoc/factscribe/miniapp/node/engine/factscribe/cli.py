@@ -28,6 +28,7 @@ from .buildpdf import _is_font_error, auto_build
 from .config import (Config, ConfigError, load_config, load_facts,
                      load_sections)
 from .console import safe_stdio
+from .safepath import WriteRefused, guard_facts_write, guard_project_write
 from .constants import (EXIT_CONFIG, EXIT_INTERNAL, EXIT_OK, EXIT_RED,
                         EXIT_YELLOW, VERSION)
 from .doctor import collect as collect_doctor
@@ -55,6 +56,8 @@ from .report import (PREAMBLE_TEXT, ReportError, _artifact_path, _config_block,
 from .review import payload as review_payload
 from .review import render_human as render_review
 from .review import run_review
+from .safepath import (WriteRefused, guard_facts_write,
+                       guard_project_write)
 from .scaffold import add_fact, init_project
 from .serve import LOOPBACK_HOSTS, create_server
 from .style import (DISCLAIMER, STAGE_DRAFT, STAGE_VALUES, analyze,
@@ -187,11 +190,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--allow-build", dest="allow_build", action="store_true",
                     help="允许 POST /api/build 编译 PDF；会执行 project.build")
     sp.add_argument("--ui", action="store_true",
-                    help="同时在这个端口提供本地工作台页面（GET /）")
+                    help="同时在这个端口提供页面（GET /）：旧节级网页前端已按第 ④ 步"
+                         "废弃，这条闸留给集成件自带的页面（如 legal 集成件）；"
+                         "产品前端是段落级工作台 factscribe workbench")
     sp.add_argument("--dev", action="store_true",
                     help="开发模式：页面把 MiniApp 专属区（AI、启动）也显示出来，只做界面预览")
     sp.add_argument("--no-token", dest="no_token", action="store_true",
-                    help="不要求 token（只允许本监听地址的同源请求；个人机器可用）")
+                    help="不要求 token（只靠同源检查：带 Origin 的请求必须是本监听"
+                         "地址，否则 403 CROSS_ORIGIN；不带 Origin 的请求一律放行"
+                         "——命令行与 MiniApp 代理走这条；个人机器可用）")
     sp.add_argument("--no-open", dest="no_open", action="store_true",
                     help="网页模式不自动打开浏览器")
     sp.add_argument("--json", action="store_true",
@@ -251,34 +258,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="项目目录（默认当前目录）")
     sp.add_argument("--allow-write", dest="allow_write", action="store_true",
                     help="开放 write_section / add_fact（默认只读）")
-
-    sp = sub.add_parser(
-        "web",
-        help="本地工作台页面：serve + 三栏编辑界面（只绑回环）",
-        description="等同 serve --ui：起本地 HTTP 服务，并在 GET / 提供"
-                    "左章节 / 中正文 / 右证据与审计的页面。默认只读；"
-                    "--allow-write 才开放改章节、追加事实与证据冻结。")
-    sp.add_argument("project", nargs="?", default=None,
-                    help="项目目录（省略＝只起服务，在页面里选论文项目）")
-    sp.add_argument("--host", default="127.0.0.1",
-                    choices=sorted(LOOPBACK_HOSTS),
-                    help="监听地址（只允许回环；默认 127.0.0.1）")
-    sp.add_argument("--port", type=int, default=0,
-                    help="端口（默认 0＝让系统分配）")
-    sp.add_argument("--token", default=None,
-                    help="固定 token（默认每次随机生成）")
-    sp.add_argument("--allow-write", dest="allow_write", action="store_true",
-                    help="打开写接口（章节/事实/证据）")
-    sp.add_argument("--allow-build", dest="allow_build", action="store_true",
-                    help="允许编译 PDF（会执行 project.build）")
-    sp.add_argument("--dev", action="store_true",
-                    help="开发模式：页面把 MiniApp 专属区（AI、启动）也显示出来")
-    sp.add_argument("--no-token", dest="no_token", action="store_true",
-                    help="不要求 token（只允许本监听地址的同源请求）")
-    sp.add_argument("--no-open", dest="no_open", action="store_true",
-                    help="不自动打开浏览器")
-    sp.add_argument("--json", action="store_true",
-                    help="启动行只出 JSON（服务仍阻塞）")
 
     for name, help_text in (
         ("check", "校验事实账：id/sha256/人签清单/expr 算术/冲突"),
@@ -792,16 +771,20 @@ def cmd_serve(args) -> int:
     url = "http://%s:%d" % (host, port)
     dev = bool(getattr(args, "dev", False))
     ui_url = ""
+    legal_url = ""
     if getattr(args, "ui", False):
         query = ("token=" + token if token else "")
         if dev:
             query = (query + "&" if query else "") + "dev=1"
         ui_url = url + "/" + ("?" + query if query else "")
+        # 法律侧工作台页面（法律集成件自带的前端；只读档案）。
+        legal_url = url + "/legal" + ("?" + query if query else "")
     command = "web" if getattr(args, "web", False) else "serve"
     if args.json:
         print(json.dumps({
             "event": "listening", "ok": True, "command": command,
             "url": url, "ui": ui_url or None,
+            "legal_ui": legal_url or None,
             "token": token,
             "token_required": not no_token,
             "project": str(server.project) if server.project else None,
@@ -816,6 +799,11 @@ def cmd_serve(args) -> int:
         print("URL：%s" % url)
         if ui_url:
             print("页面：%s" % ui_url)
+            print("  （旧的节级网页前端已按第 ④ 步废弃；产品前端是段落级工作台："
+                  "factscribe workbench --root <目录>。--ui 这条闸留给集成件"
+                  "自带的页面。）")
+        if legal_url:
+            print("法律侧页面：%s" % legal_url)
         if token:
             print("Token：%s" % token)
         mode = "可写（--allow-write）" if args.allow_write else "只读"
@@ -841,13 +829,6 @@ def cmd_serve(args) -> int:
     finally:
         server.server_close()
     return EXIT_OK
-
-
-def cmd_web(args) -> int:
-    """本地工作台页面：serve + UI。"""
-    args.ui = True
-    args.web = True
-    return cmd_serve(args)
 
 
 def cmd_workbench(args) -> int:
@@ -1263,6 +1244,18 @@ def cmd_fact_import(args) -> int:
     if target.parent.resolve() != facts_dir.resolve():
         return _report_fail(args, command, EXIT_CONFIG, rel_report, "FACTS_PATH_INVALID",
                             "只许写 facts/ 一级，不许写子目录")
+    # 写侧信任根闸：账本的真实目标越出项目根就拒写——不落盘、不留半截文件。
+    # 与读侧同一对码（FACT_FILE_OUTSIDE_PROJECT / FACT_FILE_UNRESOLVED，
+    # red / exit 5），severity 与 exit 一律不动。
+    try:
+        target_rel = target.relative_to(cfg.root).as_posix()
+    except ValueError:
+        target_rel = target.name
+    try:
+        guard_facts_write(cfg.root, target, rel=target_rel)
+    except WriteRefused as exc:
+        return _report_fail(args, command, exc.exit_code, rel_report,
+                            exc.code, str(exc))
     header = ("# managed by factscribe fact import; report=%s digest=%s"
               % (rel_report, semantic_digest(report)))
     body = [header, ""]
@@ -1677,6 +1670,9 @@ def cmd_matrix(args) -> int:
     sections = load_sections(cfg)
     text, rows = render_matrix(cfg, facts, sections)
     out = Path(args.out) if getattr(args, "out", None) else cfg.root / "audit" / "matrix.md"
+    if not getattr(args, "out", None):
+        # 写侧落点闸：默认落点（项目内 audit/）必须留在项目根内。
+        guard_project_write(cfg.root, out, what="矩阵产物", rel="audit/matrix.md")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     human = "== factscribe matrix ==\n写盘：%s\n行数：%d（每行一条 fact）\n%s" % (
@@ -1692,6 +1688,9 @@ def cmd_matrix(args) -> int:
 def cmd_preamble(args) -> int:
     cfg = load_config(Path(args.project))
     out = Path(args.out) if getattr(args, "out", None) else cfg.root / "audit" / "preamble.tex"
+    if not getattr(args, "out", None):
+        # 写侧落点闸：默认落点（项目内 audit/）必须留在项目根内。
+        guard_project_write(cfg.root, out, what="前言产物", rel="audit/preamble.tex")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(PREAMBLE_TEXT, encoding="utf-8")
     human = "== factscribe preamble ==\n写盘：%s\n%s" % (out, PREAMBLE_TEXT)
@@ -2282,7 +2281,6 @@ def main(argv=None) -> int:
                 "doctor": cmd_doctor,
                 "serve": cmd_serve,
                 "workbench": cmd_workbench,
-                "web": cmd_web,
                 "mcp": cmd_mcp,
                 "report": cmd_report,
                 "verify-pdf": cmd_verify_pdf, "style": cmd_style,
@@ -2297,8 +2295,11 @@ def main(argv=None) -> int:
         return handlers[args.command](args)
     except ConfigError as exc:
         code = getattr(exc, "code", "CONFIG_INVALID")
+        # 写盘被拒的码自带退出码（事实账越界＝信任链失败 exit 5）；
+        # 其它配置/用法错仍是 exit 2。severity 与 exit 都按码走，不改既有码。
+        exit_code = getattr(exc, "exit_code", EXIT_CONFIG)
         if getattr(args, "json", False):
-            payload = _payload(args.command, "error", EXIT_CONFIG,
+            payload = _payload(args.command, "error", exit_code,
                                message=str(exc))
             payload["code"] = code
             # §8：CONFIG 类码也必须出现在 findings/issues 里，判卷器不用
@@ -2308,8 +2309,10 @@ def main(argv=None) -> int:
             payload["issues"] = [finding]
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
-            print("factscribe: 配置/用法错：%s" % exc, file=sys.stderr)
-        return EXIT_CONFIG
+            label = ("配置/用法错" if exit_code == EXIT_CONFIG
+                     else "信任链失败")
+            print("factscribe: %s：%s" % (label, exc), file=sys.stderr)
+        return exit_code
     except Exception as exc:  # noqa: BLE001 - 内部错误必须与「有违例」分开
         if getattr(args, "json", False):
             print(json.dumps(_payload(args.command, "error", EXIT_INTERNAL,

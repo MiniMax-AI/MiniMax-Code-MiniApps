@@ -49,6 +49,7 @@ from pathlib import Path
 from .citations import parse_bib
 from .config import ConfigError, load_config, load_toml
 from .constants import EXIT_OK, EXIT_RED, EXIT_YELLOW, VERSION
+from .safepath import guard_project_write
 from .scaffold import toml_array, toml_string
 
 # --------------------------------------------------------------------------
@@ -876,6 +877,8 @@ def search(query: str, project=".", source: str = "crossref",
     stamp = _now_stamp()
     stem = "%s-%s-%s-%s" % (stamp, source, _slugify(query), digest[:8])
     cdir = Path(cfg.root) / CANDIDATES_REL
+    # 写侧落点闸：候选落盘目录必须留在项目根内（软链绕出去就拒写，不落盘）。
+    guard_project_write(cfg.root, cdir, what="候选落盘目录", rel=CANDIDATES_REL)
     suffix = ".raw.json" if source == "crossref" else ".raw.xml"
     raw_path = cdir / (stem + suffix)
     envelope_path = cdir / (stem + ".candidates.json")
@@ -952,6 +955,8 @@ def _append_ref(root, fields: dict) -> Path:
     `root` 是项目根（不是 Config）——登记表固定在 `<root>/refs/todo.toml`。
     """
     path = Path(root) / TODO_REL
+    # 写侧落点闸：登记表必须留在项目根内（软链绕出去就拒写，不落盘）。
+    guard_project_write(Path(root), path, what="待补文献登记表", rel=TODO_REL)
     if path.is_file():
         existing = path.read_bytes()
     else:

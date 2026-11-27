@@ -38,6 +38,7 @@ from pathlib import Path
 from .config import (Config, ConfigError, facts_digest, find_config_file,
                      load_config, load_facts, load_toml)
 from .facts import canon_text, latex_display
+from .safepath import guard_project_write
 from .scaffold import toml_string
 
 # --------------------------------------------------------------------------
@@ -889,6 +890,10 @@ def generate(root: Path) -> GenResult:
         artifacts.append(art)
 
     gen_dir = cfg.root / GEN_DIR
+    # 写侧落点闸：图表产物与绑定表必须落在项目根内（软链绕出去就拒写，不落盘）。
+    guard_project_write(cfg.root, gen_dir, what="图表产物目录", rel=GEN_DIR)
+    guard_project_write(cfg.root, cfg.root / BIND_INDEX, what="图表绑定表",
+                        rel=BIND_INDEX)
     for art in artifacts:
         spec = art.spec
         bind_path = gen_dir / ("%s.bind.toml" % spec.name)

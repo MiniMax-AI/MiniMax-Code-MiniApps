@@ -65,7 +65,11 @@
           <h1 data-i18n="pg.title">论文项目</h1>
           <p class="pv-sub" data-i18n="pg.sub">打开一篇论文继续写，或新建一个项目。</p>
         </div>
-        <button type="button" class="tb-btn pv-new" id="goNew" data-i18n="tb.new">＋ 新建</button>
+        <div class="pv-head-btns">
+          <!-- 内置示例：装到工作根下面，装完就在下面这份列表里（点开就能看）。 -->
+          <button type="button" class="btn-ghost pv-sample" id="goSample" data-i18n="tb.sample">装个示例</button>
+          <button type="button" class="tb-btn pv-new" id="goNew" data-i18n="tb.new">＋ 新建</button>
+        </div>
       </div>
       <div class="pv-search">
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
@@ -282,6 +286,26 @@
             <div class="vn-sec-h" data-i18n="vn.templates">模板库</div>
             <div class="vn-tpl" id="vnTemplates"></div>
           </div>
+        </div>
+
+        <!-- 引用：从旧节级前端那页搬过来（增删都写 bib）。 -->
+        <div class="np-sec" id="secCite">
+          <div class="np-pane-h">
+            <span data-i18n="np.cite">引用</span>
+            <button type="button" class="np-mini" id="npCiteAddBtn" data-i18n="np.citeAdd">＋ 加一条</button>
+          </div>
+          <p class="np-note" data-i18n="more.citeNote">删条目只动 bib；正文里的引用标记不跟着改</p>
+          <div class="cite-sum" id="citeSum"></div>
+          <ul class="cite-list" id="citeList"></ul>
+        </div>
+
+        <!-- 图片：盘里的图，点开看大图（旧节级前端那条只读通道）。 -->
+        <div class="np-sec" id="secAssets">
+          <div class="np-pane-h">
+            <span data-i18n="np.assets">图片</span>
+          </div>
+          <p class="np-note" data-i18n="more.assetNote">盘里的图片文件；点开看大图</p>
+          <div class="asset-grid" id="assetGrid"></div>
         </div>
       </section>
     </div><!-- /np-body -->
@@ -714,6 +738,40 @@
     <div class="modal-acts">
       <button type="button" class="btn-ghost" id="cfCancel" data-i18n="confirm.cancel">取消</button>
       <button type="button" class="btn-danger" id="cfOk" data-i18n="confirm.ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 引用增删：加一条（写进 bib 末尾） -->
+<div class="modal" id="modalCite" hidden>
+  <div class="modal-card">
+    <div class="modal-t" data-i18n="cite.addT">加一条引用</div>
+    <label class="modal-l" data-i18n="cite.key">引用 key</label>
+    <input type="text" id="ctKey" autocomplete="off">
+    <label class="modal-l" data-i18n="cite.title">标题</label>
+    <input type="text" id="ctTitle" autocomplete="off">
+    <label class="modal-l" data-i18n="cite.author">作者</label>
+    <input type="text" id="ctAuthor" autocomplete="off">
+    <label class="modal-l" data-i18n="cite.year">年份</label>
+    <input type="text" id="ctYear" autocomplete="off">
+    <label class="modal-l" data-i18n="cite.doi">DOI</label>
+    <input type="text" id="ctDoi" autocomplete="off">
+    <label class="modal-l" data-i18n="cite.arxiv">arXiv</label>
+    <input type="text" id="ctArxiv" autocomplete="off">
+    <div class="modal-acts">
+      <button type="button" class="btn-primary" id="ctOk" data-i18n="cite.add">加进去</button>
+      <button type="button" class="btn-ghost" id="ctCancel" data-i18n="pf.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 图片预览 -->
+<div class="modal" id="modalAsset" hidden>
+  <div class="modal-card modal-wide">
+    <div class="modal-t" id="asTitle">—</div>
+    <div class="modal-body asset-view" id="asBody"></div>
+    <div class="modal-acts">
+      <button type="button" class="btn-ghost" id="asClose" data-i18n="rp.close">关闭</button>
     </div>
   </div>
 </div>

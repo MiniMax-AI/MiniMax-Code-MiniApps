@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import fonts as fontcache
 from .constants import EXIT_CONFIG, EXIT_INTERNAL, EXIT_MISSING, EXIT_OK
+from .safepath import guard_project_write
 from .textio import read_text_exact, write_text_exact
 
 TIMEOUT_SECONDS = 600
@@ -160,6 +161,19 @@ def _is_font_error(output: str) -> bool:
     return any(marker in lowered for marker in FONT_ERROR_MARKERS)
 
 
+def _write_font_patch(root: Path, root_tex: str, target: Path,
+                        patched: str) -> None:
+    """把字体补丁写进构建副本：落点不许落在项目外。
+
+    入口文件（`root_tex`）若是软链指到项目外，构建目录里的副本原样保留这条
+    软链（`copytree(symlinks=True)`），补丁就会跟着软链写到项目外去——
+    这种情况拒绝写，不落盘。
+    """
+    guard_project_write(root, root / root_tex, what="构建补丁", rel=root_tex)
+    # newline=""：临时副本与源文件逐字节对应（不引入 CRLF 翻译）。
+    write_text_exact(target, patched)
+
+
 def auto_build(root: Path, output: str = "main.pdf",
                engine: str = "tectonic", cjk_font: str | None = None,
                keep_temp: bool = False,
@@ -239,8 +253,9 @@ def auto_build(root: Path, output: str = "main.pdf",
                 info["font_source"] = "system"
                 info["cjk_font"] = str(font)
                 mode = "temp-cjk-font"
-            # newline=""：临时副本与源文件逐字节对应（不引入 CRLF 翻译）。
-            write_text_exact(target, patched)
+            # 写侧落点闸：入口文件若是软链指到项目外，构建目录里的副本原样
+            # 保留这条软链，打字体补丁就写到项目外去了——不许（拒绝，不写）。
+            _write_font_patch(root, root_tex, target, patched)
             rc, out = _run_engine(exe, work, tex.name)
             info["attempts"].append({
                 "attempt": 2, "mode": mode, "returncode": rc,

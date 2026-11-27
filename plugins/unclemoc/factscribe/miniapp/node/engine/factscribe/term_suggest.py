@@ -24,6 +24,7 @@ from .style import _source_view
 from .textio import dominant_newline, read_text_exact, to_lf, write_text_exact
 from .terms import (load_glossary, key_of, normalize_surface,
                     parse_glossary)
+from .textio import dominant_newline, read_text_exact, to_lf, write_text_exact
 
 # --------------------------------------------------------------------------
 # 语料收集
@@ -485,7 +486,7 @@ _CANDIDATE_COLUMNS = ("surface", "lang", "count", "sections",
 def _read_candidates(path: Path) -> list[dict]:
     if not path.is_file():
         raise ConfigError("候选文件不存在：%s" % path)
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines()
+    lines = [line for line in read_text_exact(path).splitlines()
              if line.strip() and not line.lstrip().startswith("#")]
     if not lines:
         raise ConfigError("候选文件为空：%s" % path)

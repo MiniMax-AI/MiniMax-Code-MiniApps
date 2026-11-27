@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 基准：段落级 miniapp 前端（factscribe/workbench/static/）。本页面由 /legal 与 /legal/
+     两个 URL 共用，所以静态件一律相对引用；<base href="."> 修的是无尾斜杠时相对路径被
+     解析成 /legal.css（⇒ 401 ⇒ 脚本不执行 ⇒ 页面零渲染）这个阻断缺陷。 -->
+<base href=".">
+<title>FactScribe 法律侧工作台 · FR 判例样板页</title>
+<link rel="stylesheet" href="legal.css">
+</head>
+<body>
+
+<!-- ================= 顶栏（miniapp 左栏头部那套工具条的形态） ================= -->
+<header class="topbar">
+  <div class="inner">
+    <div class="brand">
+      <span class="name">FactScribe</span>
+      <span class="sub" data-i18n="brand.sub">法律侧工作台 · FR 判例样板页</span>
+    </div>
+    <span class="nodebadge"><span class="dot"></span>Node 外壳 · 只读档</span>
+    <span class="pill ro" data-i18n="tb.readonly">法律闸暂无写路径</span>
+    <div class="spacer"></div>
+    <div class="lang-seg" id="langSeg" role="group" aria-label="interface language">
+      <button type="button" data-lang="zh" class="on">中</button>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+    <div class="tokenbox">
+      <input id="token-input" type="password" autocomplete="off" placeholder="粘贴 Bearer token">
+      <button class="tbtn" id="btn-token" type="button" title="token 只放在内存里，不写 localStorage、不落盘" data-i18n="tb.connect">连接</button>
+    </div>
+    <button class="tbtn" id="btn-refresh" type="button" data-i18n="tb.refresh">刷新读数</button>
+    <button class="tbtn" id="btn-rerun" type="button" disabled
+      title="法律闸无写路径；核验在命令行跑 python3 -m factscribe_legal api findings"
+      data-i18n="tb.rerun">重新核验</button>
+  </div>
+</header>
+
+<!-- ================= 域级锁状态条（miniapp 体检卡 .rcard 的读数形态） ================= -->
+<div class="lockbar">
+  <div class="lockbox legal">
+    <div class="lockhead">
+      <span class="tag" data-i18n="lock.legal.tag">法律域锁</span>
+      <span class="sub" data-i18n="lock.legal.desc">域级证据锁 · 四键闭集</span>
+      <span class="badge dash" id="lock-frozen">未取到</span>
+      <span class="badge dash" id="lock-matches">未取到</span>
+    </div>
+    <div class="keyrow" id="legal-keys"></div>
+    <div class="locknote" id="legal-lock-note"></div>
+  </div>
+  <div class="lockbox paper">
+    <div class="lockhead">
+      <span class="tag" data-i18n="lock.paper.tag">论文锁</span>
+      <span class="sub" data-i18n="lock.paper.desc">论文侧证据锁 · 另一把锁（不是上面这把）</span>
+    </div>
+    <div class="keyrow" id="paper-keys"></div>
+    <div class="locknote" id="paper-lock-note"></div>
+  </div>
+</div>
+
+<div class="statusstrip" id="iface-status">
+  <span class="stitle" data-i18n="status.title">接口状态</span>
+  <span class="statusitem wait"><span class="sdot"></span><span class="sname">—</span><span class="smsg"></span></span>
+</div>
+
+<!-- ================= 三栏（miniapp .shell / .rail / .doc / .colright） ================= -->
+<div class="layout">
+  <nav class="sidebar">
+    <div class="filtergroup">
+      <div class="sec-label" data-i18n="rail.country">国家 / 法域</div>
+      <div class="chips" id="f-country"></div>
+    </div>
+    <div class="filtergroup">
+      <div class="sec-label" data-i18n="rail.domain">域（对应闸）</div>
+      <div class="chips" id="f-domain"></div>
+    </div>
+    <div class="filtergroup">
+      <div class="sec-label" data-i18n="rail.kind">件型</div>
+      <div class="chips" id="f-kind"></div>
+    </div>
+    <div class="filtergroup">
+      <div class="sec-label" data-i18n="rail.state">时效状态</div>
+      <div class="chips" id="f-state"></div>
+    </div>
+    <div class="sec-label"><span data-i18n="rail.corpus">语料（依据）</span> · <span id="c-count" class="mono"></span></div>
+    <div class="corpuslist" id="corpuslist"></div>
+    <div class="sidenote" id="sidenote"></div>
+    <div class="sec-label" style="margin-top:14px"><span data-i18n="rail.tl">时效状态分布</span> · <span id="tl-total" class="mono"></span></div>
+    <div id="tl-list"></div>
+  </nav>
+
+  <main class="main">
+    <section class="col col-mid">
+      <div class="panel">
+        <header>
+          <h2 data-i18n="main.detail">件详情</h2>
+          <span class="hint" id="detail-hint"></span>
+          <div class="spacer"></div>
+          <span id="detail-src"></span>
+        </header>
+        <div class="body" id="detail"></div>
+      </div>
+
+      <div class="panel">
+        <header>
+          <h2 data-i18n="main.receipts">事实账 · 逐条收据</h2>
+          <span class="hint" data-i18n="main.receipts.hint">列＝契约 fields 顺序：id｜sha16｜span｜face｜how；点行展开</span>
+          <div class="spacer"></div>
+          <span class="hint" id="receipt-hint"></span>
+        </header>
+        <div class="body" id="receipts"></div>
+      </div>
+    </section>
+
+    <aside class="col col-right">
+      <div class="kpirow" id="kpis"></div>
+
+      <div class="panel">
+        <header>
+          <h2 data-i18n="right.issues">问题区</h2>
+          <span class="hint" data-i18n="right.issues.hint">红牌 / 黄牌 · 码用 codes 通道的中文短名</span>
+          <div class="spacer"></div>
+          <span class="hint" id="issues-hint"></span>
+        </header>
+        <div class="tabrow">
+          <button class="tab" data-tab="issues" aria-selected="true" data-i18n="tab.issues">问题清单</button>
+          <button class="tab" data-tab="codes" aria-selected="false" data-i18n="tab.codes">判定码表</button>
+        </div>
+        <div class="body" id="issues"></div>
+        <div class="body" id="codes-right" hidden></div>
+      </div>
+
+      <div class="panel">
+        <header>
+          <h2 data-i18n="right.doc">文书段落区（落点）</h2>
+          <span class="hint" data-i18n="right.doc.hint">带引证标记的段落 · 点标记 ⇄ 点收据 双向高亮</span>
+        </header>
+        <div class="body" id="doc"></div>
+      </div>
+
+      <div class="panel">
+        <header>
+          <h2 data-i18n="right.prov">条 → 事实反查</h2>
+          <span class="hint" data-i18n="right.prov.hint">GET /api/legal/provision/{num}/facts · 条号由你给，本页不预置</span>
+        </header>
+        <div class="body">
+          <div class="pform">
+            <div><label for="prov-num">num（条号）</label><input id="prov-num" type="text" autocomplete="off"></div>
+            <div class="btnrow" style="align-items:flex-end">
+              <button class="tbtn" id="btn-prov" type="button" data-i18n="right.prov.go">反查</button>
+              <button class="tbtn" id="btn-prov-fill" type="button" data-i18n="right.prov.fill">用选中件的 id</button>
+            </div>
+          </div>
+          <div id="prov-results" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <header>
+          <h2 data-i18n="right.prop">待批提案</h2>
+          <span class="hint" data-i18n="right.prop.hint">建单 · 采纳只登记意图，不写盘</span>
+        </header>
+        <div class="body" id="proposals"></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="nav-splitter" id="nav-splitter" title="拖动可改右栏宽度（miniapp 同款：宽度是本机界面偏好）"></div>
+
+<footer class="foot">
+  <div class="box">
+    <h3 data-i18n="foot.cli">法律侧 CLI 子命令（来自 GET /api/legal/cli）</h3>
+    <div id="cli-list"></div>
+  </div>
+  <div class="box" style="margin-top:12px">
+    <h3 data-i18n="foot.unmounted">未挂载的接口（页面不调、不假装有）</h3>
+    <ul>
+      <li><span class="mono">POST /api/legal/verify</span> —— 没挂。顶栏「重新核验」按钮已禁用；核验在命令行跑 <span class="mono">python3 -m factscribe_legal api findings</span>。</li>
+      <li><span class="mono">POST /api/legal/facts</span> —— 没挂。页面上不出现「采纳并写回事实账」这类真写盘按钮。</li>
+      <li><span class="mono">POST /api/legal/ledger/dup-ok</span> —— 没挂。</li>
+    </ul>
+    <h3 style="margin-top:10px" data-i18n="foot.consume">本页怎么消费接口</h3>
+    <ul>
+      <li>只读通道：<span class="mono">GET /api/legal/summary｜findings｜receipts｜corpus｜codes｜timeliness｜proposals｜document｜cli</span>；单件详情 <span class="mono">GET /api/legal/corpus/{id}</span>；论文锁 <span class="mono">GET /api/evidence</span>。</li>
+      <li>写动作只有两个：<span class="mono">POST /api/legal/proposals</span>（建单，不写盘）与 <span class="mono">POST /api/legal/proposals/{id}/adopt</span>（采纳写回＝只登记意图）。指纹闸 409 原样显示后端错误文案。</li>
+      <li>任何通道取不到，页面就显示「未取到」并附后端原文（<span class="mono">error.message</span>），不静默、不编造件数与码数。</li>
+    </ul>
+  </div>
+</footer>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="legal.js"></script>
+</body>
+</html>
