@@ -21,6 +21,8 @@ import hashlib
 import time
 from pathlib import Path, PurePosixPath
 
+from ..textio import read_text_exact
+
 #: 项目级工作台配置文件名（与 `ai.py` 同源：`[ai]` 节就在这个文件里）。
 CONFIG_NAME = "workbench.toml"
 
@@ -256,7 +258,7 @@ def preview(disk_path: str | Path, rel: str) -> dict:
     if suffix not in TEXT_SUFFIXES:
         raise KnowledgeError("这个后缀不认：%s" % suffix, "KNOWLEDGE_SUFFIX_INVALID")
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        text = read_text_exact(target, errors="replace")
     except OSError as exc:
         raise KnowledgeError("读不了这个文件：%s" % exc, "KNOWLEDGE_READ_FAILED") from exc
     truncated = len(text) > PREVIEW_CHARS
@@ -345,7 +347,7 @@ def context_text(disk_path: str | Path, limit: int = CONTEXT_CHARS) -> str:
             continue
         try:
             target = _safe_project_file(disk, row["path"])
-            text = target.read_text(encoding="utf-8", errors="replace")
+            text = read_text_exact(target, errors="replace")
         except (KnowledgeError, OSError):
             continue
         text = text.strip()

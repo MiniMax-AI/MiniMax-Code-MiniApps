@@ -37,6 +37,7 @@ from pathlib import Path
 
 from .citations import parse_bib, valid_stable_id
 from .config import (ConfigError, _glob_paths, load_config, load_sections)
+from .textio import read_text_exact
 from .texscan import scan_tex
 
 # 正文里点名的 bib：`\bibliography{a,b}`（逗号分隔，通常不带 .bib）。
@@ -52,9 +53,13 @@ STATUS_DUPLICATE = "duplicate"
 
 
 def _read(path: Path) -> str:
-    """读文本；读不动就当空文件（只读页面不该因为一个坏文件整页报错）。"""
+    """读文本；读不动就当空文件（只读页面不该因为一个坏文件整页报错）。
+
+    按原样读（不做通用换行翻译）：正文里的 '\r\n' 原样保留，别在读盘
+    这一步就把用户的行尾换掉。
+    """
     try:
-        return path.read_text(encoding="utf-8")
+        return read_text_exact(path)
     except (OSError, UnicodeDecodeError):
         return ""
 

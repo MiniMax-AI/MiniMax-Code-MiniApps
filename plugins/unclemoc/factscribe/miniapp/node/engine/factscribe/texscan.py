@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from .facts import THIN, _NUM_RE, canon_text, number_key
 from .texrules import strip_comments_and_verbatim
+from .textio import split_lines
 
 # --------------------------------------------------------------------------
 # LaTeX 扫描：注释、命令名、结构参数、\fact{} 绑定
@@ -616,10 +617,10 @@ def structural_whitelist(sections: list[tuple[str, str]],
 
 
 def _extract_numbers(masked: str, original: str) -> list[dict]:
-    orig_lines = original.split("\n")
+    orig_lines = split_lines(original)
     out = []
     offset = 0
-    for ln, line in enumerate(masked.split("\n"), 1):
+    for ln, line in enumerate(split_lines(masked), 1):
         toks: list[dict] = []
         for m in _NUM_RE.finditer(line):
             raw, suffix, pct = m.group(1), m.group(2) or "", bool(m.group(3))

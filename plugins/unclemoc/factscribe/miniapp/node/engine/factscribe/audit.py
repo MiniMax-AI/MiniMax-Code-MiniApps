@@ -25,6 +25,7 @@ from .i18n import finding_key
 from .texrules import (adjacency_hits, arith_hits, display_hits,
                        fsignore_quant_hits, numeric_macro_hits,
                        tabular_regions)
+from .textio import read_text_exact, split_lines, to_lf
 from .texscan import (_balanced, _blank, _extract_numbers,
                       _merge_number_units, has_auditable_content, scan_tex,
                       sentence_index, sentence_spans, structural_whitelist)
@@ -334,7 +335,7 @@ def _source_text_keys(text: str) -> set[str]:
 
 
 def _source_line(text: str, line: int) -> str:
-    lines = text.split("\n")
+    lines = split_lines(text)
     return lines[line - 1] if 1 <= line <= len(lines) else ""
 
 
@@ -558,7 +559,7 @@ def verify_sources(cfg: Config, facts: list[Fact]) -> tuple[list[Issue], list[Is
             continue
         try:
             digest = sha256_file(full)
-            texts[src] = full.read_text(encoding="utf-8")
+            texts[src] = to_lf(read_text_exact(full))
         except (OSError, UnicodeDecodeError) as exc:
             red.append(Issue("UNREADABLE_SOURCE", "fact %r 的 source 读不了：%s（%s）"
                              % (f.id, src, exc), location=loc, token=f.id, params={"fact": repr(f.id), "src": str(src), "detail": str(exc)}))
@@ -980,7 +981,7 @@ def _needs_scan(cfg: Config, rel: str) -> bool:
     「未扫描」是噪声。读不了的文件照旧报（fail-closed）。
     """
     try:
-        text = _read_text(cfg.root / rel, cfg.root)
+        text = to_lf(_read_text(cfg.root / rel, cfg.root))
     except ConfigError:
         return True
     return has_auditable_content(text)
@@ -988,6 +989,9 @@ def _needs_scan(cfg: Config, rel: str) -> bool:
 
 def run_audit(cfg: Config, facts: list[Fact], sections: list[tuple[str, str]],
               resolve: bool = False):
+    # 分析入口归一行尾：读盘侧按原样读（CRLF 不丢），分析层按行做事；
+    # 归一的是内存副本，磁盘字节不动。
+    sections = [(rel, to_lf(text)) for rel, text in sections]
     if not facts:
         raise ConfigError("facts 为空（%s 没匹配到任何 fact）——空账不算通过" % cfg.facts_glob)
     if not sections:
@@ -1354,7 +1358,8 @@ def run_audit(cfg: Config, facts: list[Fact], sections: list[tuple[str, str]],
         for key, line, col in scan.cites:
             used_keys[key] = used_keys.get(key, 0) + 1
             entry = bib_by_key.get(key)
-            line_text = text.split("\n")[line - 1].strip() if line - 1 < len(text.split("\n")) else ""
+            _lines = split_lines(text)
+            line_text = _lines[line - 1].strip() if line - 1 < len(_lines) else ""
             if entry is None:
                 red.append(Issue(
                     "MISSING_CITE", "引用了 bib 里不存在的 key %r" % key,
@@ -1510,7 +1515,7 @@ def run_audit(cfg: Config, facts: list[Fact], sections: list[tuple[str, str]],
             struct_root = cfg.root_tex
             if not struct_root and (cfg.root / "main.tex").is_file():
                 struct_root = "main.tex"
-                shell = (cfg.root / "main.tex").read_text(encoding="utf-8")
+                shell = to_lf(read_text_exact(cfg.root / "main.tex"))
                 if all(rel != "main.tex" for rel, _text in sections):
                     struct_sections = list(sections) + [("main.tex", shell)]
             structural = structural_whitelist(

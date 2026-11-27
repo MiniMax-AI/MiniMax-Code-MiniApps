@@ -21,6 +21,7 @@ from pathlib import Path
 from .config import Config, ConfigError, load_config, load_facts, load_toml
 from .constants import CONFIDENCE_OK
 from .facts import sha256_file
+from .textio import read_text_exact, to_lf
 
 LANGS = ("zh", "en")
 DEFAULT_TITLE = {"zh": "未命名论文", "en": "Untitled Paper"}
@@ -526,7 +527,7 @@ def check_value_in_source(root: Path, cfg: Config, source_rel: str,
 
     text = ""
     try:
-        text = Path(source_path).read_text(encoding="utf-8")
+        text = to_lf(read_text_exact(Path(source_path)))
     except UnicodeDecodeError:
         raise ConfigError(
             "产物 %s 不是 UTF-8 文本，没法核对 value——换一件文本产物，"

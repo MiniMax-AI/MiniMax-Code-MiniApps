@@ -40,6 +40,7 @@ from .livetext import _live_text
 from .segment import segment
 from .terms import Glossary, key_of, load_glossary
 from .texscan import sentence_spans
+from .textio import read_text_exact, to_lf
 
 DISCLAIMER = ("本工具不评估、也不试图规避任何 AI 检测器；它检测的是可机械判定的"
               "公式化写作特征。黄牌只是改写提示，不阻断、不改正文；证据钢印"
@@ -1498,7 +1499,7 @@ def _term_allowlist(rules: dict, project_root: Path,
         path = project_root / str(name)
         if not path.is_file():
             continue
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in read_text_exact(path).splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -3079,6 +3080,10 @@ def analyze(cfg: Config, sections: list[tuple[str, str]], rules: dict,
             stage: str = STAGE_DRAFT,
             rule_report: dict | None = None
             ) -> StyleResult:
+    # 分析入口归一行尾（读盘侧按原样读，CRLF 不丢）：归一的是内存副本。
+    sections = [(rel, to_lf(text)) for rel, text in sections]
+    if before is not None:
+        before = (before[0], [(rel, to_lf(text)) for rel, text in before[1]])
     thresholds = _thresholds(rules)
     limits = _limits(rules)
     min_units = limits["min_paragraph_units"]

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import ConfigError
+from .textio import read_text_exact
 from .texscan import _balanced
 
 # --------------------------------------------------------------------------
@@ -65,7 +66,7 @@ class BibEntry:
 
 def parse_bib(path: Path, root: Path) -> list[BibEntry]:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except OSError as exc:
         raise ConfigError("读不了参考文献 %s：%s" % (path, exc))
     rel = path.relative_to(root).as_posix()

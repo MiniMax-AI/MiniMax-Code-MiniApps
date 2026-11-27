@@ -35,6 +35,9 @@ from pathlib import Path
 
 from .. import i18n
 from ..config import ConfigError, load_config, load_facts
+from ..landing import resolve_landing
+from ..textio import (dominant_newline, read_text_exact, restore_newlines,
+                       split_keepends, to_lf)
 from .projects import (ABSTRACT_BLOCK_ID as _ABSTRACT_BLOCK_ID,
                        CONFIG_NAME, TOKEN_CLOSE, TOKEN_OPEN, TOKEN_RE,
                        abstract_env_span as _abstract_env_span,
@@ -749,9 +752,13 @@ def _safe_section_file(disk_root: Path, rel: str) -> Path:
                           code="SECTION_PATH_INVALID")
     root = disk_root.resolve()
     target = disk_root.joinpath(*[p for p in pure.parts if p not in ("", ".")])
+    # 落点先解析：解不出来（成环软链等）→ 判成不可解 → 拒写，不许裸崩成
+    # 「工具内部错误」（exit 4）。判据是语义，不是 errno 白名单（D1）。
+    resolved = resolve_landing(target, what="章节文件", name=rel,
+                               code="SECTION_PATH_INVALID")
     try:
-        inside = target.resolve().relative_to(root)
-    except (OSError, ValueError):
+        inside = resolved.relative_to(root)
+    except ValueError:
         raise ConfigError("章节文件越出项目根：%s" % rel,
                           code="SECTION_PATH_INVALID")
     if target.suffix.lower() != ".tex":
@@ -809,9 +816,13 @@ def _root_tex_file(disk_root: Path) -> tuple[str, Path]:
                           code="SECTION_PATH_INVALID")
     root = Path(disk_root).resolve()
     target = Path(disk_root).joinpath(*[p for p in pure.parts if p not in ("", ".")])
+    # 落点先解析：解不出来（成环软链等）→ 判成不可解 → 拒写，不许裸崩成
+    # 「工具内部错误」（exit 4）。判据是语义，不是 errno 白名单（D1）。
+    resolved = resolve_landing(target, what="根文件", name=rel,
+                               code="SECTION_PATH_INVALID")
     try:
-        inside = target.resolve().relative_to(root)
-    except (OSError, ValueError):
+        inside = resolved.relative_to(root)
+    except ValueError:
         raise ConfigError("根文件越出项目根：%s" % rel,
                           code="SECTION_PATH_INVALID")
     if target.suffix.lower() != ".tex":
@@ -871,9 +882,11 @@ def save_abstract(disk_root: Path, client_text: str,
     """
     block = abstract_block(disk_root)
     _check_expect_sha(block, expect_sha)
-    prose = _abstract_prose(client_text)
+    # 分析层统一 LF 口径（与 save_block 同一条）：客户端交回来的正文恒是
+    # LF，块原文可能是 CRLF。
+    prose = to_lf(_abstract_prose(client_text))
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     _check_token_count(segments, expect_tokens)
     new_raw, warnings = _rebuild(segments, prose, code=TOKEN_MISMATCH_CODE)
     if not _balanced_ok(new_raw):
@@ -883,10 +896,13 @@ def save_abstract(disk_root: Path, client_text: str,
     rel = block.file
     path = _writable_target(disk_root, rel)
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到摘要所在文件：%s（%s）" % (rel, exc),
                           code="SECTION_MISSING")
+    # 落盘层：摘要这一块原有的行尾还原回去（CRLF 稿子存一次仍是 CRLF）。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=dominant_newline(text))
     # 重新定位：文件可能被人外部改过（绕过服务端），按当前结构再算一次——
     # 写回落在**现在**的摘要块里，不会叠出第二层。
     span = _abstract_span(text)
@@ -902,12 +918,24 @@ def save_abstract(disk_root: Path, client_text: str,
             "backup": result["backup"], "warnings": _warn_texts(warnings)}
 
 
+def _file_newline(disk_root: Path, rel_file: str) -> str:
+    """这个文件的主导行尾（读不动就用 LF）。
+
+    新写进去的行按**文件**的行尾走：CRLF 的稿子里不补出 LF 行，免得同一
+    份稿子两种行尾混着。
+    """
+    try:
+        text = read_text_exact(_safe_section_file(disk_root, rel_file))
+    except (ConfigError, OSError, UnicodeDecodeError):
+        return "\n"
+    return dominant_newline(text)
+
 
 def find_block(disk_root: Path, rel_file: str, block_id: str) -> Block:
     """按 id 找到一段：返回它所在文件、偏移与原文。"""
     path = _safe_section_file(disk_root, rel_file)
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1092,8 +1120,8 @@ def _block_shape_guard(block: Block, text: str, disk_root: Path,
     own_labels = set(_SHAPE_LABEL_RE.findall(block.raw))
     if _SHAPE_LABEL_RE.search(text):
         try:
-            file_text = _writable_target(disk_root, block.file).read_text(
-                encoding="utf-8")
+            file_text = read_text_exact(
+                _writable_target(disk_root, block.file))
         except (ConfigError, OSError, UnicodeDecodeError):
             file_text = ""
         file_labels = set(_SHAPE_LABEL_RE.findall(file_text))
@@ -1129,12 +1157,16 @@ def save_block(disk_root: Path, rel_file: str, block_id: str,
     """
     block = find_block(disk_root, rel_file, block_id)
     _check_expect_sha(block, expect_sha)
-    shape_warnings = _block_shape_guard(block, client_text, disk_root,
+    # 分析层统一 LF 口径：客户端（浏览器 contenteditable）交回来的正文恒是
+    # LF，块原文可能是 CRLF。两边都归一到 LF 再做结构活（切保护面、锚点
+    # 回插、保护面比对），落盘时再把这一块原有的行尾还原回去。
+    text_in = to_lf(str(client_text or ""))
+    shape_warnings = _block_shape_guard(block, text_in, disk_root,
                                        code="EDIT_SHAPE_MISMATCH")
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     _check_token_count(segments, expect_tokens)
-    new_raw, warnings = _rebuild(segments, client_text,
+    new_raw, warnings = _rebuild(segments, text_in,
                                 code=TOKEN_MISMATCH_CODE)
     warnings = list(warnings) + shape_warnings
     if not _balanced_ok(new_raw):
@@ -1143,10 +1175,14 @@ def save_block(disk_root: Path, rel_file: str, block_id: str,
     _guard_surface_kept(segments, new_raw, bound_values, TOKEN_MISMATCH_CODE)
     path = _safe_section_file(disk_root, rel_file)
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
+    # 落盘层：把这一块**原有**的行尾还原到新正文上——CRLF 稿子存一次仍是
+    # CRLF，LF 稿子不会被改成 CRLF，混合稿子逐行照旧。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=dominant_newline(text))
     new_text = text[:block.start] + new_raw + text[block.end:]
     result = atomic_write(path, new_text, keep=BACKUP_KEEP)
     return {"ok": True, "file": rel_file, "block": block_id,
@@ -1169,14 +1205,15 @@ def propose_block_edit(disk_root: Path, rel_file: str, block_id: str,
     """
     block = find_block(disk_root, rel_file, block_id)
     _check_expect_sha(block, expect_sha)
-    text = client_text if isinstance(client_text, str) else ""
+    # 分析层统一 LF 口径（与 save_block 同一条）。
+    text = to_lf(client_text) if isinstance(client_text, str) else ""
     if not text.strip():
         raise ConfigError("提议内容是空的，没什么可改的。",
                           code="PROPOSAL_TEXT_EMPTY")
     shape_warnings = _block_shape_guard(block, text, disk_root,
                                        code=SHAPE_MISMATCH_CODE)
     bound_values = _bound_values(disk_root)
-    segments = scan(block.raw, bound_values)
+    segments = scan(to_lf(block.raw), bound_values)
     new_raw, warnings = _rebuild(segments, text,
                                 code="PROPOSAL_TOKEN_MISMATCH")
     warnings = list(warnings) + shape_warnings
@@ -1185,6 +1222,10 @@ def propose_block_edit(disk_root: Path, rel_file: str, block_id: str,
                           code="EDIT_UNBALANCED")
     _guard_surface_kept(segments, new_raw, bound_values,
                          "PROPOSAL_TOKEN_MISMATCH")
+    # 落盘层：与 save_block 同一套还原——差异卡上看到的落盘结果，就是
+    # 真写回时写进去的那一份（含行尾）。
+    new_raw = restore_newlines(new_raw, block.raw,
+                               fallback=_file_newline(disk_root, rel_file))
     return {"kind": "block_edit",
             "file": rel_file,
             "block": block_id,
@@ -1213,7 +1254,7 @@ def propose_ai_draft(disk_root: Path, rel_file: str, after_block_id: str,
         raise ConfigError("回复是空的，没什么可写进稿的。", code="DRAFT_EMPTY")
     path = _safe_section_file(disk_root, rel_file)
     try:
-        source_text = path.read_text(encoding="utf-8")
+        source_text = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1357,7 +1398,7 @@ def insert_ai_draft(disk_root: Path, rel_file: str, after_block_id: str,
     _check_expect_sha(block, expect_sha)
     path = _safe_section_file(disk_root, rel_file)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1383,7 +1424,7 @@ def delete_ai_draft(disk_root: Path, rel_file: str, block_id: str) -> dict:
                           code="DRAFT_NOT_AI")
     path = _safe_section_file(disk_root, rel_file)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1421,7 +1462,7 @@ def read_assembly(disk_root: Path, cfg=None) -> dict:
     if not path.is_file():
         return {"file": "", "entries": []}
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except (OSError, UnicodeDecodeError):
         return {"file": str(path), "entries": []}
     base = path.parent
@@ -1447,7 +1488,7 @@ def read_assembly(disk_root: Path, cfg=None) -> dict:
 def _section_meta(path: Path) -> tuple[str, str]:
     """章节文件的（一级标题, 短指纹）——目录显示与条目 43 的 sha 同源。"""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_text_exact(path)
     except (OSError, UnicodeDecodeError):
         return "", ""
     for block in render_tex(text, stem=path.stem):
@@ -1462,7 +1503,8 @@ def _rewrite_assembly(path: Path, entries: list[dict], text: str) -> str:
     槽位＝原来那些条目所在的行号（升序）；第 i 个新条目写进第 i 个槽位，
     这样调序只动装配行，不动文件里的其它内容。
     """
-    lines = text.splitlines()
+    rows = split_keepends(text)
+    lines = [content for content, _ in rows]
     slots = sorted(entry["line"] for entry in entries)
     for index, entry in enumerate(entries):
         if index >= len(slots):
@@ -1473,7 +1515,12 @@ def _rewrite_assembly(path: Path, entries: list[dict], text: str) -> str:
         original = lines[number]
         cmd = "\\input" if "\\input" in original else "\\include"
         lines[number] = "%s{%s}" % (cmd, entry["target"])
-    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    # 行尾跟装配文件自身走（CRLF 的装配不被顺手改成 LF）。
+    out = []
+    for index, content in enumerate(lines):
+        term = rows[index][1] if index < len(rows) else ""
+        out.append(content + term)
+    return "".join(out)
 
 
 def move_section(disk_root: Path, rel: str, direction: str) -> dict:
@@ -1495,7 +1542,7 @@ def move_section(disk_root: Path, rel: str, direction: str) -> dict:
     if other < 0 or other >= len(entries):
         return {"ok": True, "moved": False, "order": [e["rel"] for e in entries]}
     entries[index], entries[other] = entries[other], entries[index]
-    text = path.read_text(encoding="utf-8")
+    text = read_text_exact(path)
     new_text = _rewrite_assembly(path, entries, text)
     result = atomic_write(path, new_text, keep=BACKUP_KEEP)
     return {"ok": True, "moved": True, "order": [e["rel"] for e in entries],
@@ -1525,11 +1572,15 @@ def delete_section(disk_root: Path, rel: str) -> dict:
     if source.is_file():
         shutil.move(str(source), str(attic))
         moved = True
-    lines = path.read_text(encoding="utf-8").splitlines()
+    raw = read_text_exact(path)
+    rows = split_keepends(raw)
     dropped = entries.pop(index)
-    if 0 <= dropped["line"] < len(lines):
-        lines.pop(dropped["line"])
-    text = "\n".join(lines) + "\n"
+    if 0 <= dropped["line"] < len(rows):
+        rows.pop(dropped["line"])
+    # 行尾跟装配文件自身走：CRLF 的装配文件不被顺手改成 LF。
+    text = "".join(content + term for content, term in rows)
+    if not text.endswith(("\n", "\r")):
+        text += dominant_newline(raw)
     result = atomic_write(path, text, keep=BACKUP_KEEP)
     return {"ok": True, "removed": rel, "attic": str(attic),
             "moved": moved, "backup": result["backup"],
@@ -1558,14 +1609,16 @@ def create_section(disk_root: Path, title: str, slug: str = "",
     target = sections_dir / name
     if target.exists():
         raise ConfigError("这一节已经存在：%s" % name, code="SECTION_EXISTS")
-    content = "\\section{%s}\n\n" % clean_title
+    # 新建的一节用盘里占多数的行尾（CRLF 的盘不补出 LF 行）。
+    nl = _disk_newline(*sorted(sections_dir.glob("*.tex")))
+    content = "\\section{%s}%s%s" % (clean_title, nl, nl)
     atomic_write(target, content, backup=False)
     assembly = read_assembly(disk_root, cfg)
     path = Path(assembly["file"]) if assembly["file"] else None
     if path is None or not path.is_file():
         return {"ok": True, "file": str(target), "rel": target.name,
                 "assembled": False}
-    text = path.read_text(encoding="utf-8")
+    text = read_text_exact(path)
     line = "\\input{%s}" % target.relative_to(disk_root).as_posix()[:-len(".tex")]
     entries = assembly["entries"]
     position = len(entries)
@@ -1574,18 +1627,36 @@ def create_section(disk_root: Path, title: str, slug: str = "",
             if entry["rel"] == after:
                 position = index + 1
                 break
-    lines = text.splitlines()
+    rows = split_keepends(text)
+    lines = [content for content, _ in rows]
     insert_at = None
     if entries and position > 0:
         insert_at = entries[position - 1]["line"] + 1
     else:
         insert_at = _before_end_document(lines)
-    lines.insert(insert_at, line)
-    new_text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    # 新插入的一行用装配文件自己的行尾。
+    rows.insert(insert_at, (line, dominant_newline(text)))
+    new_text = "".join(content + term for content, term in rows)
     result = atomic_write(path, new_text, keep=BACKUP_KEEP)
     return {"ok": True, "file": str(target),
             "rel": target.relative_to(disk_root).as_posix(),
             "assembled": True, "backup": result["backup"]}
+
+
+def _disk_newline(*candidates) -> str:
+    """盘里占多数的行尾（找不到就用 LF）。
+
+    新建的文件按盘里已有的行尾来写——CRLF 的盘里不补出 LF 行，
+    免得同一盘里两种行尾混着。
+    """
+    for candidate in candidates:
+        try:
+            text = read_text_exact(candidate)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if text:
+            return dominant_newline(text)
+    return "\n"
 
 
 def _before_end_document(lines: list[str]) -> int:
@@ -1660,7 +1731,7 @@ def rename_section(disk_root: Path, rel_file: str, block_id: str, title: str,
                 "after": new_raw, "sha": _short_sha(new_raw)}
     path = _safe_section_file(disk_root, rel_file)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1702,7 +1773,7 @@ def set_disk_title(disk_root: Path, title: str, subtitle: str = "",
     open_at = raw.index("{")
     new_raw = raw[:open_at + 1] + body + raw[raw.rindex("}"):]
     try:
-        source = target.read_text(encoding="utf-8")
+        source = read_text_exact(target)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到入口文件：%s（%s）" % (target.name, exc),
                           code="SECTION_MISSING")
@@ -1829,7 +1900,7 @@ def insert_fact_binding(disk_root: Path, rel_file: str, block_id: str,
     new_raw = block.raw[:at] + insertion + block.raw[at:]
     path = _safe_section_file(disk_root, rel_file)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = read_text_exact(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("读不到章节文件：%s（%s）" % (rel_file, exc),
                           code="SECTION_MISSING")
@@ -1877,7 +1948,10 @@ def rewrite_table(path: Path, table: str, values: dict) -> None:
 
     `values` 的值是**排版好的 TOML 字面量**（字符串带引号）。
     """
-    lines = path.read_text(encoding="utf-8").splitlines()
+    raw = read_text_exact(path)
+    rows = split_keepends(raw)
+    lines = [content for content, _ in rows]
+    nl = dominant_newline(raw)
     start = None
     end = len(lines)
     for index, line in enumerate(lines):
@@ -1909,7 +1983,12 @@ def rewrite_table(path: Path, table: str, values: dict) -> None:
         for key, value in pending.items():
             section.append("%s = %s" % (key, value))
         lines[start:end] = section
-    atomic_write(path, "\n".join(lines).rstrip("\n") + "\n")
+    # 拼回：原行保留自己的行尾，新追加的行用文件自己的行尾
+    out = []
+    for index, content in enumerate(lines):
+        term = rows[index][1] if index < len(rows) else ""
+        out.append(content + (term or nl))
+    atomic_write(path, "".join(out).rstrip("\r\n") + nl)
 
 
 def workbench_config(disk_root: Path) -> dict:

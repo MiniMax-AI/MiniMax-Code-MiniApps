@@ -54,6 +54,7 @@ from dataclasses import field as dc_field
 from pathlib import Path
 
 from .config import ConfigError
+from .textio import read_text_exact, to_lf
 
 # --------------------------------------------------------------------------
 # 常量（口径与预注册阈值）
@@ -455,7 +456,7 @@ def _load_side(root: Path, exts: tuple, strip_comments: bool, sentences: bool):
     docs = []
     for path in collect_files(root, exts):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = to_lf(read_text_exact(path, errors="replace"))
         except OSError:
             continue
         if sentences:
