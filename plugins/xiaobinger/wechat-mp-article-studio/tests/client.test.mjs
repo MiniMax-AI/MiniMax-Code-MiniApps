@@ -21,8 +21,18 @@ const clientDir = join(here, '..', 'miniapp', 'client');
  *
  * @param {any} snapshot
  * @param {any} tools
+ * @param {any} [exportPayload]
  */
-function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
+function makeDom(
+  snapshot,
+  tools = { tools: [], partial: false, error: '' },
+  exportPayload = {
+    title: '标题',
+    digest: '摘要',
+    html: '<p>styled html</p>',
+    text: 'plain text\n\n![](C:\\assets\\one.jpg)',
+  },
+) {
   /** @type {Map<string, any>} */
   const elements = new Map();
   /** @type {Record<string, any>} */
@@ -67,6 +77,8 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
   const confirms = [];
   /** @type {{ path: string, method: string }[]} */
   const requests = [];
+  /** @type {string[]} */
+  const copied = [];
 
   const window = {
     addEventListener() {},
@@ -80,11 +92,13 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
   const context = {
     document,
     window,
-    navigator: { language: 'zh-CN' },
+    navigator: { language: 'zh-CN', clipboard: { writeText: async (/** @type {string} */ text) => { copied.push(String(text)); } } },
     console,
     fetch: async (/** @type {string} */ path, /** @type {any} */ options = {}) => {
       requests.push({ path: String(path), method: String(options.method || 'GET') });
-      const payload = String(path).startsWith('/api/tools') ? tools : snapshot;
+      let payload = snapshot;
+      if (String(path).startsWith('/api/tools')) payload = tools;
+      else if (String(path).startsWith('/api/export/')) payload = exportPayload;
       return { ok: true, status: 200, json: async () => payload };
     },
     setTimeout,
@@ -108,16 +122,17 @@ function makeDom(snapshot, tools = { tools: [], partial: false, error: '' }) {
   };
   context.globalThis = context;
 
-  return { context, elements, listeners, document, window, confirms, requests };
+  return { context, elements, listeners, document, window, confirms, requests, copied };
 }
 
 /**
  * @param {any} snapshot
  * @param {any} [tools]
+ * @param {any} [exportPayload]
  */
-async function bootClient(snapshot, tools) {
+async function bootClient(snapshot, tools, exportPayload) {
   const source = await readFile(join(clientDir, 'app.js'), 'utf8');
-  const dom = makeDom(snapshot, tools);
+  const dom = makeDom(snapshot, tools, exportPayload);
   vm.createContext(dom.context);
   vm.runInContext(source, dom.context, { filename: 'app.js' });
   // Let boot() finish its awaits.
@@ -153,6 +168,30 @@ function draftFixture(snapshot) {
         derived: { digest: '摘要', titleCandidates: ['测试文章'], outline: ['小节'], keyPoints: ['正文'] },
         plan: { cover: null, illustrations: [] },
         duplicate: { score: 0, verdict: '没有和往期文章重复', tone: 'ok', compared: [] },
+        plan: {
+          cover: {
+            id: 'cover',
+            role: '封面主图',
+            ratio: '47:20',
+            pixels: '900×383',
+            anchor: '文章首图（公众号列表与正文顶部）',
+            prompt: '封面提示词',
+            checklist: ['比例 47:20'],
+            status: 'pending',
+          },
+          illustrations: [
+            {
+              id: 'illustration-1',
+              role: '插图 1',
+              ratio: '16:9',
+              pixels: '1080×608',
+              anchor: '小节「小节」之后',
+              prompt: '插图提示词',
+              checklist: ['比例 16:9'],
+              status: 'pending',
+            },
+          ],
+        },
       },
     ],
   };
@@ -332,4 +371,40 @@ test('a manual publish never claims to have called an interface', async () => {
 
   assert.ok(dom.confirms.length, 'the manual publish asked for a confirmation');
   assert.doesNotMatch(dom.confirms[0], /freepublish/);
+});
+
+test('the copy button copies the plain body, not the styled html', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+  await clickAction(dom, { action: 'copy-export', id: 'draft-1' });
+
+  assert.equal(dom.copied.length, 1);
+  assert.equal(dom.copied[0], 'plain text\n\n![](C:\\assets\\one.jpg)');
+  assert.equal(dom.copied[0].includes('<p>'), false);
+});
+
+test('the preview still shows the styled html', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+  await clickAction(dom, { action: 'preview-export', id: 'draft-1' });
+
+  const frame = dom.elements.get('export-frame');
+  assert.match(frame.srcdoc, /<p>styled html<\/p>/);
+});
+
+test('every image slot can be re-rendered on its own', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+
+  const main = dom.elements.get('app-main');
+  assert.match(main.innerHTML, /data-action="render" data-slot="cover"/);
+});
+
+test('re-rendering one slot asks the server for that slot only', async () => {
+  const dom = await bootClient(interfaceFixture());
+  await clickAction(dom, { action: 'open-draft', id: 'draft-1' });
+  await clickAction(dom, { action: 'render', slot: 'cover', id: 'draft-1' });
+
+  const posted = dom.requests.find((request) => request.path.endsWith('/render') && request.method === 'POST');
+  assert.ok(posted, 'the slot is sent to the server');
 });

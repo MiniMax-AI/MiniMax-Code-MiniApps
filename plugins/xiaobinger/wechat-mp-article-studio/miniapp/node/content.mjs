@@ -9,8 +9,11 @@
  * as 规则提取 in the UI.
  */
 
+import { isInside, localImagePath } from './paths.mjs';
+
 /** @typedef {{ type: string, text: string, items: string[] }} Block */
 /** @typedef {{ id: string, role: string, ratio: string, pixels: string, anchor: string, prompt: string, checklist: string[], status: string }} PlanSlot */
+/** @typedef {{ illustrations?: Record<string, string>, cover?: string, assetsRoot?: string }} AssetPaths */
 
 export const COVER_RATIOS = {
   wide: { ratio: '47:20', pixels: '900×383', label: '2.35:1 主封面' },
@@ -489,6 +492,97 @@ export function toWeChatHtml(draft, style, assetData) {
 
   parts.push('</section>');
   return parts.join('');
+}
+
+/**
+ * The article body as plain text.
+ *
+ * Some interfaces take the body as text and expect the images to be named
+ * inside it — a line holding nothing but `![](/path/to.png)` inserts that
+ * image at that point. The styled HTML export cannot be used there: it is
+ * three orders of magnitude larger once the images are embedded, and an
+ * interface that receives the images separately expects a plain body.
+ *
+ * Only files inside `assetsRoot` are ever named. The illustrations are named
+ * by the caller, which builds their paths from records it validated; an image
+ * reference that is already in the body — a pasted `file:///...` line, say —
+ * is kept only when it resolves inside the same directory, and dropped
+ * otherwise. Without a root the body's own references cannot be checked, so
+ * none is kept and the body is just text.
+ *
+ * @param {any} draft
+ * @param {AssetPaths} [assetPaths]
+ * @returns {string}
+ */
+export function toPlainBody(draft, assetPaths = {}) {
+  const blocks = parseBlocks(String(draft.body ?? ''));
+  const paths = assetPaths?.illustrations || {};
+  const root = String(assetPaths?.assetsRoot || '');
+  /** An image this module puts in itself — already validated by the caller. */
+  const emit = (/** @type {string} */ value) => Boolean(value) && (!root || isInside(root, value));
+  /** An image reference found in the body — never assumed to be ours. */
+  const keep = (/** @type {string} */ value) => Boolean(root) && Boolean(value) && isInside(root, value);
+
+  /** @type {string[]} */
+  const lines = [];
+  let section = 0;
+
+  for (const block of blocks) {
+    if (block.type === 'h2') {
+      section += 1;
+      const heading = cleanLine(block.text, keep);
+      if (heading) lines.push(heading);
+      const path = paths[`illustration-${section}`];
+      if (path && emit(path)) lines.push(`![](${path})`);
+      continue;
+    }
+    if (block.type === 'li') {
+      for (const item of block.items) {
+        const line = cleanLine(item, keep);
+        if (line) lines.push(line);
+      }
+      continue;
+    }
+    const line = cleanLine(block.text, keep);
+    if (line) lines.push(line);
+  }
+
+  return lines.join('\n\n');
+}
+
+/** An image reference in the body, as the three forms the app writes or reads. */
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)]*?)\s*\)/g;
+const BRACKET_IMAGE = /\[\[\s*img:\s*([^\]]+?)\s*\]\]/gi;
+const HTML_IMAGE = /<img\b[^>]*>/gi;
+
+/**
+ * One body line, with emphasis removed and every image reference it carries
+ * either kept as it is or taken out.
+ *
+ * @param {string} text
+ * @param {(path: string) => boolean} keep
+ * @returns {string}
+ */
+function cleanLine(text, keep) {
+  return stripEmphasis(text)
+    .replace(MARKDOWN_IMAGE, (whole, target) => (keep(localImagePath(target)) ? whole : ''))
+    .replace(BRACKET_IMAGE, (whole, target) => (keep(localImagePath(target)) ? whole : ''))
+    .replace(HTML_IMAGE, (whole) => {
+      const match = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(whole);
+      const target = match ? (match[1] ?? match[2] ?? match[3] ?? '') : '';
+      return keep(localImagePath(target)) ? whole : '';
+    })
+    .trim();
+}
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+function stripEmphasis(text) {
+  return String(text ?? '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/^\s*[-*]\s+/, '');
 }
 
 /**

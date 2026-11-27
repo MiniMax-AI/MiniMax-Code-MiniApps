@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "wechat-mp-article-studio",
   "displayName": "公众号图文工作台",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "输入公众号文章主题与正文，产出封面与插图方案、查重结论、版本管理与可发布内容；发布前须确认账号授权、素材范围与发布接口。",
   "author": "xiaobinger",
   "icon": "icon.png",
