@@ -372,7 +372,7 @@ export class Team {
       notice: String(input.notice ?? '').trim().slice(0, 500),
       adminId,
       memberIds,
-      replyMode: input.replyMode === undefined ? 'admin' : replyModeOf(input.replyMode),
+      replyMode: input.replyMode == null ? 'admin' : replyModeOf(input.replyMode),
       pinned: false,
       createdAt: Date.now(),
       // F7 · the relay guardrails. The hop limit counts how many Bots may speak in one relay
@@ -419,7 +419,7 @@ export class Team {
     const draft = { ...group, memberIds: [...group.memberIds] };
     if (patch.name !== undefined) draft.name = this.validateName(patch.name, 'group', group.id);
     if (patch.notice !== undefined) draft.notice = String(patch.notice).trim().slice(0, 500);
-    if (patch.replyMode !== undefined) draft.replyMode = replyModeOf(patch.replyMode);
+    if (patch.replyMode != null) draft.replyMode = replyModeOf(patch.replyMode);
     if (patch.pinned !== undefined) draft.pinned = Boolean(patch.pinned);
     // The relay guardrails: absent leaves the group's own setting alone. 0 = no limit.
     if (patch.maxHops !== undefined) draft.maxHops = hopLimit({ maxHops: patch.maxHops });
@@ -593,8 +593,9 @@ export class Team {
     const list = this.store.state.schedules;
     const existing = input.id ? list.find((s) => s.id === input.id) : undefined;
     // No kind at all is the daily default. A kind that is not one of the three is refused:
-    // another kind would run at a time the user never asked for.
-    const kind = input.kind === undefined ? 'daily' : scheduleKindOf(input.kind);
+    // another kind would run at a time the user never asked for. A kind that is not there at
+    // all — left out, or sent as null — is the same thing as leaving it out.
+    const kind = input.kind == null ? 'daily' : scheduleKindOf(input.kind);
     const time = String(input.time ?? '09:00');
     if (kind === 'daily' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
       throw new EngineError('invalid', t('err.scheduleTime'));

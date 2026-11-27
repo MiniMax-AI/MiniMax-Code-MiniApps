@@ -155,6 +155,10 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - Asking to let a stuck chat go now shows on the page that it took: the message says the later messages may go on, and the button is gone. A message that arrives while that is being written goes out with it, instead of waiting for a second press of the button.
 - A job that was stopped and then killed by the process still leaves its turn in the usage ledger. The row is written under the job's own id, so a job that did finish is not counted twice.
 - Nothing else moves: a request with an unknown outcome is still never replayed on its own, and the order of the messages around it is unchanged.
+## 0.7.40 A value that is not there is left out, not refused
+
+- The reply mode of a group and the kind of a scheduled task are checked against the values the catalogue offers, so a value that is not one of them is refused instead of quietly becoming another one. A value that is not there at all was refused too, when it arrived as null: many models write an optional field they did not fill in as null, and the call failed with "reply_mode must be one of: admin, all".
+- A null is now read as what it is — a field that was left out — so the default applies, the same as when the field is absent. A value that is there but is not one of the allowed ones is still refused, and so is the text "null".
 
 ## 0.7.10 Optional group notes
 

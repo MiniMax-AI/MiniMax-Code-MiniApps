@@ -273,3 +273,32 @@ test('the refusals are written in the user\'s language', async (t) => {
     (error) => { assert.equal(error.code, 'invalid'); assert.match(error.message, /admin/); return true; },
   );
 });
+
+test('a value that is not there at all is left out, not refused', async (t) => {
+  const { team } = await teamFixture(t);
+  const bot = await writer(team);
+  // A model that leaves an optional field out often writes it as null. That is the same as
+  // leaving it out, so the default applies. A value that is there but wrong is still refused.
+  const group = await team.createGroup(undefined, { name: 'NullMode', members: [bot.id], replyMode: null });
+  assert.equal(group.replyMode, 'admin', 'the default applies to a reply mode sent as null');
+  const schedule = await team.saveSchedule({ botId: bot.id, prompt: 'Daily digest', kind: null });
+  assert.equal(schedule.kind, 'daily', 'the default applies to a kind sent as null');
+
+  // A value that is there but not one of the allowed ones is still refused.
+  await assert.rejects(
+    () => team.createGroup(undefined, { name: 'WrongMode', members: [bot.id], replyMode: 'everyone' }),
+    (error) => { assert.equal(error.code, 'invalid'); return true; },
+  );
+  await assert.rejects(
+    () => team.saveSchedule({ botId: bot.id, prompt: 'Report', kind: 'hourly' }),
+    (error) => { assert.equal(error.code, 'invalid'); return true; },
+  );
+});
+
+test('a reply mode sent as null leaves an existing group with the setting it had', async (t) => {
+  const { team } = await teamFixture(t);
+  const bot = await writer(team);
+  const group = await team.createGroup(undefined, { name: 'Crew', members: [bot.id], replyMode: 'all' });
+  const updated = await team.updateGroup(undefined, group.id, { replyMode: null });
+  assert.equal(updated.replyMode, 'all', 'the mode the group had is kept');
+});
