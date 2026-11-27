@@ -122,32 +122,68 @@ test('the card never resizes the window, and the fixed height always fits it', a
   }
 });
 
-function dragHarness(scale, overrides = {}) {
+function dragHarness(scale, screenMode = 'local') {
   const updates = [];
-  const app = { mode: 'window', workbenchOpen: true, pet: {}, winPos: { x: -100, y: 160 }, oneShotToken: 0, ...overrides };
+  const directions = [];
+  let nativeBounds = { x: -100, y: 160 };
+  let pending;
+  const app = { mode: 'window', workbenchOpen: true, pet: {}, winPos: nativeBounds, oneShotToken: 0 };
+  const state = () => ({ mode: 'window', window: nativeBounds });
   const context = vm.createContext({
-    app, prefs: { scale }, DRAG_THRESHOLD: 4,
-    els: { sprite: { setPointerCapture() {}, classList: { add() {} } } },
-    win: { update: async (patch) => updates.push({ ...patch }) },
+    app, prefs: { scale }, DRAG_THRESHOLD: 4, DIRECTION_HYSTERESIS: 12,
+    els: { sprite: { setPointerCapture() {}, hasPointerCapture: () => false, classList: { add() {}, remove() {} } } },
+    win: {
+      getState: async () => state(),
+      update: (patch) => {
+        assert.equal(pending, undefined, 'only one move reaches the Host at a time');
+        updates.push({ ...patch });
+        return new Promise((resolve, reject) => { pending = { patch, resolve, reject }; });
+      },
+    },
+    console: { warn() {}, debug() {} }, errCode: (error) => error.message, logError: () => () => {},
     callBridge: (run) => Promise.resolve(run()),
-    noteInteraction() {}, stopLook() {}, hideQuickbar() {}, refreshInteractivity() {}, updateDragDirection() {},
+    onWindowState: ({ window }) => { app.winPos = { x: window.x, y: window.y }; },
+    player: { play: async (direction) => { directions.push(direction); } },
+    noteInteraction() {}, stopLook() {}, hideQuickbar() {}, refreshInteractivity() {},
+    desiredAnimation: () => ({ state: 'idle' }), playOneShot() {}, openWorkbench() {},
   });
-  vm.runInContext(`${slice('const DESK_WIDTH', '// Saved positions')}\n${slice('function onSpritePointerDown(', 'function updateDragDirection(')}
-    globalThis.api = { onSpritePointerDown, onSpritePointerMove };`, context);
-  const pointer = { pointerId: 1, button: 0, screenX: 50, screenY: 70, preventDefault() {} };
-  context.api.onSpritePointerDown(pointer);
-  return { app, updates, move: (x, y) => context.api.onSpritePointerMove({ ...pointer, screenX: x, screenY: y }) };
+  vm.runInContext(`${slice('const DESK_WIDTH', '// Saved positions')}\n${slice('function onSpritePointerDown(', 'function cancelDrag(')}
+    globalThis.api = { onSpritePointerDown, onSpritePointerMove, finishDrag };`, context);
+  const pointer = (dx, dy) => {
+    const x = -50 + dx;
+    const y = 230 + dy;
+    const clientX = x - nativeBounds.x;
+    const clientY = y - nativeBounds.y;
+    return { pointerId: 1, button: 0, preventDefault() {}, clientX, clientY,
+      screenX: screenMode === 'local' ? clientX : x, screenY: screenMode === 'local' ? clientY : y };
+  };
+  context.api.onSpritePointerDown(pointer(0, 0));
+  const apply = () => { nativeBounds = { ...pending.patch }; };
+  async function settle(reject = false) {
+    const request = pending;
+    if (!reject) apply();
+    pending = undefined;
+    if (reject) request.reject(new Error('not_permitted'));
+    else request.resolve(state());
+    await app.dragMove;
+  }
+  return { app, updates, directions, apply, settle,
+    move: (dx, dy) => context.api.onSpritePointerMove(pointer(dx, dy)),
+    release: (dx, dy) => context.api.finishDrag(pointer(dx, dy), false) };
 }
 
-test('desktop drag gives the Host absolute position and the same size on every move', () => {
+test('desktop drag gives the Host absolute position and the same size on every move', async () => {
   // A position-only request was followed by growing native bounds on Windows. The page must
   // keep requesting the designed size, not feed back whatever bounds the Host last reported.
   for (const [scale, height] of [[0.5, 436], [0.75, 488], [1, 540]]) {
     const h = dragHarness(scale);
-    h.move(51, 71); // Below the click/drag threshold.
-    h.move(85, 88);
+    h.move(1, 1); // Below the click/drag threshold.
+    assert.deepEqual(h.updates, []);
+    h.move(35, 18);
+    await h.settle();
     h.app.winBounds = { width: 975, height: 1090 };
-    h.move(28, 60);
+    h.move(-22, -10);
+    await h.settle();
     assert.deepEqual(h.updates, [
       { x: -65, y: 178, width: 280, height },
       { x: -122, y: 150, width: 280, height },
@@ -159,6 +195,56 @@ test('desktop drag gives the Host absolute position and the same size on every m
 test('a drag cannot send its size while an intentional scale change owns the window', () => {
   const h = dragHarness(0.5);
   h.app.scaleChanging = true;
-  h.move(85, 88);
+  h.move(35, 18);
   assert.deepEqual(h.updates, []);
+});
+
+for (const screenMode of ['local', 'absolute']) {
+  test(`a held pointer does not resend the same position (${screenMode} screenX)`, async () => {
+    const h = dragHarness(0.75, screenMode);
+    h.move(30, 20);
+    await h.settle();
+    h.move(30, 20);
+    h.move(30, 20);
+    assert.deepEqual(h.updates, [{ x: -70, y: 180, width: 280, height: 488 }]);
+    assert.deepEqual(h.directions, ['running-right']);
+  });
+}
+
+for (const applied of [false, true]) {
+  const phase = applied ? 'after the Host moves but before its reply' : 'before the Host moves';
+  test(`a pointer move ${phase} is not replayed against a different origin`, async () => {
+    const h = dragHarness(0.75);
+    h.move(30, 0);
+    if (applied) h.apply();
+    h.move(60, 0);
+    await h.settle();
+    assert.deepEqual(h.updates.map(({ x }) => x), [-70]);
+    h.move(60, 0);
+    await h.settle();
+    assert.deepEqual(h.updates.map(({ x }) => x), [-70, -40]);
+  });
+
+  test(`releasing ${phase} keeps the last Host-confirmed target`, async () => {
+    const h = dragHarness(0.75);
+    h.move(30, 0);
+    if (applied) h.apply();
+    h.release(60, 0);
+    await h.settle();
+    assert.deepEqual(h.updates.map(({ x }) => x), [-70]);
+    assert.deepEqual(h.app.winPos, { x: -70, y: 160 });
+    assert.equal(h.app.drag, null);
+  });
+}
+
+test('a rejected move keeps the confirmed origin for the final release', async () => {
+  const h = dragHarness(0.75);
+  h.move(30, 0);
+  await h.settle();
+  h.move(60, 0);
+  await h.settle(true);
+  h.release(10, 0);
+  await h.settle();
+  assert.deepEqual(h.updates.map(({ x }) => x), [-70, -40, -90]);
+  assert.deepEqual(h.directions, ['running-right', 'running-left']);
 });
