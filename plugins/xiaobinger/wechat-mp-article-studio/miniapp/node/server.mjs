@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createStore } from './store.mjs';
 import { findStyle } from './styles.mjs';
-import { buildPlan, checkDuplicate, deriveContent, toStandaloneHtml, toWeChatHtml } from './content.mjs';
+import { buildPlan, checkDuplicate, deriveContent, toPlainBody, toStandaloneHtml, toWeChatHtml } from './content.mjs';
 import { renderImages } from './images.mjs';
 import { CHECK_KEYS, evaluateGates, interfaceReadiness, manualReadiness, publishViaInterface } from './publishing.mjs';
 import { createPolisher } from './polisher.mjs';
@@ -122,6 +122,29 @@ export async function start(context) {
       }
     }
     return map;
+  }
+
+  /**
+   * The local path of every rendered asset of one draft.
+   *
+   * An interface that uploads images takes file paths, not media ids, so the
+   * app has to be able to say where the rendered file is on this machine.
+   *
+   * @param {any} draft
+   * @returns {{ cover: string, illustrations: Record<string, string> }}
+   */
+  function collectAssetPaths(draft) {
+    const assets = draft.assets || {};
+    /** @type {Record<string, string>} */
+    const illustrations = {};
+    for (const [slotId, asset] of Object.entries(assets.illustrations || {})) {
+      if (!asset?.assetId) continue;
+      illustrations[slotId] = join(assetsDir, `${asset.assetId}${asset.ext || '.jpg'}`);
+    }
+    return {
+      cover: assets.cover?.assetId ? join(assetsDir, `${assets.cover.assetId}${assets.cover.ext || '.jpg'}`) : '',
+      illustrations,
+    };
   }
 
   /**
@@ -499,10 +522,11 @@ export async function start(context) {
         }
         const body = await readJson(request);
         const target = String(body.target ?? 'all');
+        const slot = String(body.slot ?? '');
         const style = findStyle(draft.styleId, store.styles());
         const plan = buildPlan(draft, style);
         try {
-          const result = await renderImages(context, draft, plan, assetsDir, { target });
+          const result = await renderImages(context, draft, plan, assetsDir, { target, slot });
           await store.mutate(() => {
             draft.assets = draft.assets || { cover: null, illustrations: {} };
             draft.assets.illustrations = draft.assets.illustrations || {};
@@ -643,9 +667,21 @@ export async function start(context) {
           }
           const assetData = await collectAssetData(draft);
           const style = findStyle(draft.styleId, store.styles());
+          const assetPaths = collectAssetPaths(draft);
+          // An interface that publishes a 公众号 article needs the cover; a
+          // draft without one is not published half-made.
+          if (!draft.assets?.cover) {
+            sendJson(response, 409, {
+              error: 'cover_not_rendered',
+              message: '这篇稿件还没有渲染封面图，未做任何发布动作，草稿保持不变。请先渲染封面再发布。',
+            });
+            return;
+          }
           const outcome = await publishViaInterface(context, checks, {
             ...draft,
             exportHtml: toWeChatHtml(draft, style, assetData),
+            plainBody: toPlainBody(draft, assetPaths),
+            assetPaths,
           });
           if (!outcome.ok) {
             sendJson(response, 409, { error: 'publish_failed', message: outcome.message });
@@ -795,6 +831,9 @@ export async function start(context) {
         const style = findStyle(draft.styleId, store.styles());
         const assetData = await collectAssetData(draft);
         const html = toWeChatHtml(draft, style, assetData);
+        // The plain body names every image by its local path, so it can be
+        // handed to an interface that uploads images, and pasted as text.
+        const text = toPlainBody(draft, collectAssetPaths(draft));
         if (url.searchParams.get('download') === '1') {
           const standalone = toStandaloneHtml(draft, style, assetData);
           response.writeHead(200, {
@@ -808,6 +847,7 @@ export async function start(context) {
           title: draft.title || draft.topic,
           digest: draft.derived?.digest || '',
           html,
+          text,
           fileName: safeFileName(draft),
           hasCover: Boolean(draft.assets?.cover),
           illustrationCount: Object.keys(draft.assets?.illustrations || {}).length,

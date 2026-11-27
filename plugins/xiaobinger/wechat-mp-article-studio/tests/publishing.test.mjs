@@ -548,3 +548,187 @@ test('a chosen interface that vanished from the inventory publishes nothing', as
   assert.deepEqual(calls, []);
   assert.match(outcome.message, /不可用/);
 });
+
+/* ------------------------------------------------------------------ *
+ * The arguments follow the interface that was detected, not one
+ * particular interface.
+ * ------------------------------------------------------------------ */
+
+/**
+ * An interface that builds the article itself: a title, a cover file and a
+ * body, and it may publish what it built.
+ *
+ * @param {Record<string, any>} [properties]
+ * @returns {any}
+ */
+function buildingInterface(properties = {}) {
+  return {
+    name: 'mcp__wechat__publish_material',
+    kind: 'mcp',
+    server: 'wechat',
+    tool: 'publish_material',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['tietu', 'article'] },
+        title: { type: 'string', minLength: 1, maxLength: 64 },
+        content: { type: 'string', maxLength: 20000, default: '' },
+        cover: { type: 'string', default: '' },
+        images: { type: 'array', maxItems: 20, default: [] },
+        digest: { type: 'string', maxLength: 500, default: '' },
+        action: { type: 'string', enum: ['draft', 'publish'], default: 'draft' },
+        confirm: { type: 'boolean', default: false },
+        wait_publish_s: { type: 'integer', minimum: 0, maximum: 900, default: 180 },
+        ...properties,
+      },
+      required: ['kind', 'title'],
+    },
+  };
+}
+
+/**
+ * @returns {any}
+ */
+function buildingDraft() {
+  return {
+    title: '标题',
+    exportHtml: `<section style="font-size:15px;"><p>正文</p></section>${'x'.repeat(40000)}`,
+    plainBody: '正文\n\n![](C:\\assets\\one.jpg)',
+    derived: { digest: '摘要' },
+    assets: { cover: { assetId: 'c-1' } },
+    assetPaths: {
+      cover: 'C:\\assets\\cover.jpg',
+      illustrations: { 'illustration-1': 'C:\\assets\\one.jpg' },
+    },
+  };
+}
+
+test('an interface that builds the article itself gets the plain body and the local files', () => {
+  const args = buildPublishArguments(buildingInterface(), buildingDraft());
+  assert.ok(args);
+  assert.equal(args.title, '标题');
+  assert.equal(args.digest, '摘要');
+  assert.equal(args.cover, 'C:\\assets\\cover.jpg');
+  assert.equal(args.kind, 'article');
+  assert.equal(args.action, 'publish');
+  assert.equal(args.confirm, true);
+  assert.equal(args.wait_publish_s, 180);
+  // The images are named inside the body, so they are not sent a second time.
+  assert.equal(args.images, undefined);
+});
+
+test('the body an interface receives never exceeds the limit the interface declares', () => {
+  const args = buildPublishArguments(buildingInterface(), buildingDraft());
+  assert.ok(args);
+  assert.equal(typeof args.content, 'string');
+  assert.ok(args.content.length <= 20000, `body was ${args.content.length} characters`);
+  // The styled HTML does not fit, so the plain body is used instead.
+  assert.equal(args.content, buildingDraft().plainBody);
+});
+
+test('another interface vocabulary is filled with its own argument names', () => {
+  const tool = {
+    name: 'mcp__other__post',
+    kind: 'mcp',
+    server: 'other',
+    tool: 'post',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        art_title: { type: 'string' },
+        article_content: { type: 'string' },
+        desc: { type: 'string' },
+        cover_image: { type: 'string' },
+        image_list: { type: 'array' },
+        message_type: { type: 'string', enum: ['article', 'note'] },
+        mode: { type: 'string', enum: ['publish', 'preview'] },
+        confirmed: { type: 'boolean' },
+        wait_seconds: { type: 'integer' },
+      },
+      required: ['art_title', 'article_content'],
+    },
+  };
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.deepEqual(Object.keys(args).sort(), [
+    'art_title',
+    'article_content',
+    'confirmed',
+    'cover_image',
+    'desc',
+    'message_type',
+    'mode',
+    'wait_seconds',
+  ]);
+  assert.equal(args.art_title, '标题');
+  assert.equal(args.desc, '摘要');
+  assert.equal(args.cover_image, 'C:\\assets\\cover.jpg');
+  assert.equal(args.message_type, 'article');
+  assert.equal(args.mode, 'publish');
+  assert.equal(args.confirmed, true);
+  assert.equal(args.wait_seconds, 180);
+});
+
+test('an interface that only takes a body still gets the styled HTML', () => {
+  const tool = {
+    name: 'mcp__wechat__publish_article',
+    kind: 'mcp',
+    server: 'wechat',
+    tool: 'publish_article',
+    inputSchema: {
+      type: 'object',
+      properties: { title: { type: 'string' }, content: { type: 'string' } },
+      required: ['title'],
+    },
+  };
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.equal(args.content, buildingDraft().exportHtml);
+});
+
+test('an interface that asks for something this draft cannot provide is not called', async () => {
+  /** @type {any[]} */
+  const calls = [];
+  // The interface can take a body, but it can only publish a draft that
+  // already exists in the console — this app has no such id.
+  const tool = {
+    name: 'mcp__wechat__publish_draft',
+    kind: 'mcp',
+    server: 'wechat',
+    tool: 'publish_draft',
+    inputSchema: {
+      type: 'object',
+      properties: { content: { type: 'string' }, appmsgid: { type: 'integer' }, confirm: { type: 'boolean' } },
+      required: ['content', 'appmsgid'],
+    },
+  };
+  const context = {
+    tool: {
+      list: async () => ({ tools: [tool], partial: false }),
+      call: async (/** @type {string} */ name, /** @type {any} */ args) => {
+        calls.push({ name, args });
+        return { invocationId: 'x', kind: 'mcp', isError: false, content: [] };
+      },
+    },
+  };
+
+  const checks = singleInterfaceGates();
+  checks.interface.detected = ['wechat / publish_draft'];
+  checks.interface.detectedNames = ['mcp__wechat__publish_draft'];
+  checks.interface.chosen = 'mcp__wechat__publish_draft';
+
+  const outcome = await publishViaInterface(context, checks, buildingDraft());
+  assert.equal(outcome.ok, false);
+  assert.deepEqual(calls, [], 'an interface that needs a draft id must not be called');
+  assert.match(outcome.message, /appmsgid/);
+});
+
+/**
+ * @returns {any}
+ */
+function singleInterfaceGates() {
+  const checks = gates('mcp__wechat__publish_material');
+  checks.interface.detected = ['wechat / publish_material'];
+  checks.interface.detectedNames = ['mcp__wechat__publish_material'];
+  return checks;
+}

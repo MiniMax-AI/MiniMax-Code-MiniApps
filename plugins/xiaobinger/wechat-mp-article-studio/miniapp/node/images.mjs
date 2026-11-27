@@ -291,14 +291,21 @@ export async function downloadAsset(url) {
  * @param {any} draft
  * @param {{ cover: any, illustrations: any[] }} plan
  * @param {string} assetsDir
- * @param {{ target?: string, signal?: AbortSignal }} [options]
+ * @param {{ target?: string, slot?: string, signal?: AbortSignal }} [options]
  * @returns {Promise<{ assets: Record<string, any>, failures: any[] }>}
  */
 export async function renderImages(context, draft, plan, assetsDir, options = {}) {
   const target = options.target || 'all';
   const slots = [];
-  if (target === 'cover' || target === 'all') slots.push(plan.cover);
-  if (target === 'illustrations' || target === 'all') slots.push(...plan.illustrations);
+  if (options.slot) {
+    // One slot on its own: a cover or a single illustration, re-rendered with
+    // the requirements that are current for this version.
+    const only = [plan.cover, ...(plan.illustrations || [])].find((item) => item && item.id === options.slot);
+    if (only) slots.push(only);
+  } else {
+    if (target === 'cover' || target === 'all') slots.push(plan.cover);
+    if (target === 'illustrations' || target === 'all') slots.push(...plan.illustrations);
+  }
   if (slots.length === 0) return { assets: {}, failures: [] };
 
   if (!context.tool) {

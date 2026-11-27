@@ -492,6 +492,54 @@ export function toWeChatHtml(draft, style, assetData) {
 }
 
 /**
+ * The article body as plain text.
+ *
+ * Some interfaces take the body as text and expect the images to be named
+ * inside it — a line holding nothing but `![](/path/to.png)` inserts that
+ * image at that point. The styled HTML export cannot be used there: it is
+ * three orders of magnitude larger once the images are embedded, and an
+ * interface that receives the images separately expects a plain body.
+ *
+ * @param {any} draft
+ * @param {{ illustrations?: Record<string, string> }} [assetPaths]
+ * @returns {string}
+ */
+export function toPlainBody(draft, assetPaths = {}) {
+  const blocks = parseBlocks(String(draft.body ?? ''));
+  const paths = assetPaths?.illustrations || {};
+  /** @type {string[]} */
+  const lines = [];
+  let section = 0;
+
+  for (const block of blocks) {
+    if (block.type === 'h2') {
+      section += 1;
+      lines.push(stripEmphasis(block.text));
+      const path = paths[`illustration-${section}`];
+      if (path) lines.push(`![](${path})`);
+      continue;
+    }
+    if (block.type === 'li') {
+      for (const item of block.items) lines.push(stripEmphasis(item));
+      continue;
+    }
+    lines.push(stripEmphasis(block.text));
+  }
+
+  return lines.join('\n\n');
+}
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+function stripEmphasis(text) {
+  return String(text ?? '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/^\s*[-*]\s+/, '');
+}
+
+/**
  * @param {any} draft
  * @param {any} style
  * @param {Map<string, { mime: string, dataUri: string }>} assetData

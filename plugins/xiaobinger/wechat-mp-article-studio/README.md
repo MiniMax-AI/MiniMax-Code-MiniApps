@@ -27,7 +27,12 @@ and a paste-ready WeChat Official Account (公众号) body.
   A tool only counts when its *identity* says so — see [How the publish gate decides](#how-the-publish-gate-decides).
 - **Publish-ready content** — the body becomes inline-styled HTML that 公众号 accepts (no class
   selectors, no `<style>` block), with the images embedded as data URIs. Preview it, copy it, or
-  download it as a standalone HTML file.
+  download it as a standalone HTML file. 「复制正文」 copies the plain body instead, with every
+  image named by its local path on a line of its own, which is what an interface that uploads
+  images expects.
+- **Re-render one image** — the cover and each illustration can be re-rendered on its own, with the
+  requirements that are current for this version. The prompt of every slot is shown before it is
+  generated.
 - **Agent polish (optional)** — hand the body to the Agent for rewriting. The result is saved as a
   new version and the original version is kept. A turn that asks a question is answered and then
   saved exactly like a turn that did not, and the page says so only when a version was really saved.
@@ -82,6 +87,18 @@ The gate never trusts a tool's prose and never trusts a cached answer.
 - **Only declared fields are sent.** The arguments are built from the target tool's own
   `inputSchema`. A tool that declares no field for the article body is not called at all, so the
   article is never handed to a tool that cannot receive it.
+- **The arguments follow the detected interface.** Each part of the article has a role — the title,
+  the digest, the body, the cover, the images, the kind of message, what to do with it — and every
+  role is known by a list of names. The first name *that interface itself declares* is the one that
+  is filled, so an interface that calls its cover `cover_image` is served exactly like one that
+  calls it `thumb_media_id`, and one that calls its body `article_content` like one that calls it
+  `content`. The value follows the schema too: the kind is the enum value that means an article,
+  the action is the enum value that means publish, and the body is the styled HTML unless the
+  interface takes the images separately or the HTML does not fit its declared limit — then it is
+  the plain body with the images named inside it.
+- **A missing argument stops the publish.** An interface that asks for something this draft cannot
+  provide — a draft id that only the console knows, for instance — is not called at all, and the
+  page says which argument was missing.
 - **The answer decides.** Success is read from what the interface returned, not from the absence of
   a transport error: an MCP result is a failure when `isError` is set or when its
   `structuredContent` or content blocks carry an error code, and a Connector result is a failure
@@ -100,18 +117,29 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   publish check against the live tool inventory, previewed the exported HTML (cover embedded as a
   base64 JPEG, inline styles only), and deleted drafts both singly and in bulk. The console showed
   no errors and the network log no failed request.
-- The publish gate was re-run against the live inventory of this machine (203 tools): all three
-  checks report 「未接入」 and both publish buttons stay disabled, with no console error.
+- The publish gate was re-run against the live inventory of this machine twice. With no 公众号
+  interface connected (203 tools) all three checks report 「未接入」 and both publish buttons stay
+  disabled, with no console error. With a 公众号 interface connected, all three are confirmed by
+  detection, the page lists the two publish interfaces it found and lets you pick one, and the
+  publish button stays disabled until you do.
 - The interface picker was exercised in the app's own Browser tab against a draft whose check record
   listed two publish interfaces: the picker is rendered, the publish button stays disabled until an
   interface is picked, the pick is sent to the server, and the confirmation dialog names the picked
   interface.
+- The arguments were built against the live schema of a connected 公众号 interface that publishes a
+  article from a title, a cover file and a body: the payload carries the title, the digest, the
+  cover as a local path, the plain body (1,137 characters, inside the 20,000 the interface
+  declares), the kind, the action and the confirmation — with no required argument missing and
+  nothing over a declared limit. The interface that can only publish an existing draft id is
+  refused instead of called.
+- 「复制正文」 was exercised in the app's own Browser tab: the clipboard holds the plain body with
+  the four illustrations named by their local paths, and 「预览」 still shows the styled HTML.
 - The damaged-state path was exercised on a throwaway data directory: the damaged file keeps its
   exact bytes under `state.corrupt-<stamp>.json`, the page shows the notice that names the copy,
   and a later write leaves that copy untouched.
-- This package's own tests: `node --test "tests/**/*.test.mjs"` — 62 checks covering the publish
+- This package's own tests: `node --test "tests/**/*.test.mjs"` — 76 checks covering the publish
   gate's matching, the interface answer, the durable state, the questionnaire flow, the download
-  allowlist, and the page.
+  allowlist, the plain body, and the page.
 - Not verified: the Agent polish turn and the interface publish path were implemented but never
   triggered, because this machine has no WeChat publish interface and the polish turn was not
   submitted.
@@ -148,8 +176,11 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   tool's own schema, so a renamed argument does not break the app. The app also calls
   `context.tool.list()` to read the inventory for the publish check, and calls the detected WeChat
   publish tool only when the publish gate confirms one exists and that tool declares a field for the
-  article body. Every call is judged by your own permission rules; if the tool list contains a
-  WeChat account, material, or publish interface, the publish check reports it as detected evidence.
+  article body. That call carries the rendered cover and the rendered illustrations as file paths
+  inside this plugin's own `dataDir`, and the body as text — no file outside the plugin's own
+  directory is ever named. Every call is judged by your own permission rules; if the tool list
+  contains a WeChat account, material, or publish interface, the publish check reports it as
+  detected evidence.
 - **Microphone, camera, notifications** — not used.
 - **Host navigation read** — not used. The page only follows the Host's light/dark theme, which
   needs no permission.

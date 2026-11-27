@@ -66,13 +66,47 @@ const DRAFT_CJK = ['草稿'];
 const UPLOAD_WORDS = ['upload'];
 const UPLOAD_PAYLOAD_WORDS = ['audio', 'file', 'image', 'media', 'pic', 'picture', 'video'];
 
-/** Argument names a 公众号 interface may use for each part of the article. */
-const TITLE_KEYS = ['art_title', 'article_title', 'title'];
-const DIGEST_KEYS = ['desc', 'description', 'digest', 'summary'];
-const CONTENT_KEYS = ['article_content', 'body', 'content', 'html'];
-const THUMB_KEYS = ['cover_media_id', 'media_id', 'thumb', 'thumb_media', 'thumb_media_id'];
-const AUTHOR_KEYS = ['author'];
-const LIST_KEYS = ['article_list', 'articles'];
+/**
+ * The roles a publish interface can fill, and the argument names each role
+ * is known by.
+ *
+ * Nothing here is tied to one interface: these are the spellings the role has
+ * across 公众号 publish interfaces, and the first name the *detected* tool
+ * itself declares is the one that gets filled. A tool that calls its cover
+ * `cover_image` is served exactly like one that calls it `thumb_media_id`.
+ */
+const ARGUMENT_ROLES = {
+  /** The article title. */
+  title: ['art_title', 'article_title', 'title'],
+  /** The short summary. */
+  digest: ['desc', 'description', 'digest', 'summary'],
+  /** The body. */
+  body: ['article_content', 'body', 'content', 'html'],
+  /** A 公众号 API style article list. */
+  list: ['article_list', 'articles'],
+  /** The cover, as a local file path. */
+  coverFile: ['cover', 'cover_path', 'cover_file', 'cover_image', 'thumb_path', 'image', 'img'],
+  /** The cover, as a media id of an already uploaded image. */
+  coverId: ['cover_media_id', 'media_id', 'thumb', 'thumb_media', 'thumb_media_id'],
+  /** Further images, as local file paths. */
+  images: ['images', 'image_list', 'photos', 'pictures', 'extra_images'],
+  /** The kind of message the interface builds. */
+  kind: ['kind', 'message_type', 'type'],
+  /** What the interface does with what it built. */
+  action: ['action', 'mode'],
+  /** The flag that lets an interface do something irreversible. */
+  confirm: ['confirm', 'confirmed'],
+  /** How long the interface may wait for the publish to land. */
+  wait: ['wait_seconds', 'wait_publish_seconds', 'wait_publish_s'],
+  /** The author of the article. */
+  author: ['author'],
+};
+
+/** The value a publish interface waits for a publish to land, in seconds. */
+const PUBLISH_WAIT_SECONDS = 180;
+
+/** How the app names an image inside a plain body. */
+export const IMAGE_MARKER = '![](';
 
 export const CHECK_KEYS = ['account', 'material', 'interface'];
 
@@ -366,6 +400,81 @@ function schemaProperties(tool) {
 }
 
 /**
+ * The value a tool's own schema allows for one argument.
+ *
+ * @param {any} tool
+ * @param {string} key
+ * @returns {any}
+ */
+function propertySpec(tool, key) {
+  const properties = tool?.inputSchema?.properties;
+  if (!properties || typeof properties !== 'object') return {};
+  const spec = properties[key];
+  return spec && typeof spec === 'object' ? spec : {};
+}
+
+/**
+ * The first candidate the tool's own enum allows.
+ *
+ * @param {any} tool
+ * @param {string} key
+ * @param {string[]} candidates
+ * @returns {string}
+ */
+function pickEnum(tool, key, candidates) {
+  const values = Array.isArray(propertySpec(tool, key).enum) ? propertySpec(tool, key).enum.map(String) : [];
+  for (const candidate of candidates) {
+    if (!values.length) return candidate;
+    if (values.includes(candidate)) return candidate;
+  }
+  return '';
+}
+
+/**
+ * The body the interface should receive.
+ *
+ * An interface that takes the images separately assembles the body itself,
+ * so it wants plain text with the images named inside it — the styled HTML
+ * is both wrong for it and three orders of magnitude too long. Every other
+ * interface gets the styled HTML, unless that does not fit either.
+ *
+ * @param {any} tool
+ * @param {string} key
+ * @param {string} html
+ * @param {string} plain
+ * @returns {{ value: string, plain: boolean }}
+ */
+function chooseBody(tool, key, html, plain) {
+  const declared = schemaProperties(tool) || new Set();
+  const takesImages = [...ARGUMENT_ROLES.coverFile, ...ARGUMENT_ROLES.images].some((name) =>
+    declared.has(name),
+  );
+  if (takesImages && plain) return { value: plain, plain: true };
+  const limit = propertySpec(tool, key).maxLength;
+  if (typeof limit === 'number' && html.length > limit && plain) return { value: plain, plain: true };
+  return { value: html || plain, plain: !html };
+}
+
+/**
+ * The kind of message the interface should build.
+ *
+ * The tool's own enum decides which word means "an article"; the app never
+ * assumes a vocabulary the tool does not declare.
+ *
+ * @param {any} tool
+ * @param {string} key
+ * @returns {string}
+ */
+function chooseKind(tool, key) {
+  const values = Array.isArray(propertySpec(tool, key).enum) ? propertySpec(tool, key).enum.map(String) : [];
+  if (!values.length) return 'article';
+  const article = values.find((value) => /article|news|graph|post/i.test(value));
+  if (article) return article;
+  const picture = values.find((value) => /tietu|image|picture|photo/i.test(value));
+  return picture || values[0];
+}
+
+/**
  * Build the publish arguments for one tool, using only the names that tool
  * declares. A tool that cannot carry the article body yields null, so the
  * article is never handed to a tool that cannot receive it.
@@ -379,41 +488,87 @@ export function buildPublishArguments(tool, draft) {
   if (!available) return null;
 
   const title = String(draft?.title || draft?.topic || '');
-  const content = String(draft?.exportHtml || '');
+  const html = String(draft?.exportHtml || '');
+  const plain = String(draft?.plainBody || '');
   const digest = String(draft?.derived?.digest || '');
-  const thumb = String(draft?.assets?.cover?.mediaId || '');
-  if (!content) return null;
+  const mediaId = String(draft?.assets?.cover?.mediaId || '');
+  const coverPath = String(draft?.assetPaths?.cover || '');
+  const imagePaths = Object.values(draft?.assetPaths?.illustrations || {});
 
-  /** @param {string[]} keys */
-  const pick = (keys) => keys.find((key) => available.has(key)) || '';
+  /** @param {keyof typeof ARGUMENT_ROLES} role */
+  const pick = (role) => ARGUMENT_ROLES[role].find((key) => available.has(key)) || '';
 
-  const contentKey = pick(CONTENT_KEYS);
-  const listKey = pick(LIST_KEYS);
-  if (!contentKey && !listKey) return null;
+  const bodyKey = pick('body');
+  const listKey = pick('list');
+  if (!bodyKey && !listKey) return null;
+  if (!html && !plain) return null;
 
   /** @type {Record<string, unknown>} */
   const args = {};
-  const titleKey = pick(TITLE_KEYS);
+  const titleKey = pick('title');
   if (titleKey) args[titleKey] = title;
-  const digestKey = pick(DIGEST_KEYS);
+  const digestKey = pick('digest');
   if (digestKey) args[digestKey] = digest;
-  const thumbKey = pick(THUMB_KEYS);
-  if (thumbKey) args[thumbKey] = thumb;
-  const authorKey = pick(AUTHOR_KEYS);
+
+  // A cover is sent as a local path when the interface takes a file, and as
+  // the media id when the interface takes an id.
+  const coverPathKey = pick('coverFile');
+  const coverIdKey = pick('coverId');
+  if (coverPathKey && coverPath) args[coverPathKey] = coverPath;
+  else if (coverIdKey && mediaId) args[coverIdKey] = mediaId;
+
+  const authorKey = pick('author');
   if (authorKey && draft?.author) args[authorKey] = String(draft.author);
-  if (contentKey) args[contentKey] = content;
+
+  let bodyIsPlain = false;
+  if (bodyKey) {
+    const body = chooseBody(tool, bodyKey, html, plain);
+    bodyIsPlain = body.plain;
+    args[bodyKey] = body.value;
+  }
   if (listKey) {
     args[listKey] = [
       {
         title,
-        content,
+        content: html || plain,
         digest,
-        thumb_media_id: thumb,
+        thumb_media_id: mediaId,
         ...(draft?.author ? { author: String(draft.author) } : {}),
       },
     ];
   }
+
+  // The images are named inside the plain body, so they are not sent twice.
+  const imageListKey = bodyIsPlain ? '' : pick('images');
+  if (imageListKey && imagePaths.length) args[imageListKey] = imagePaths;
+
+  // What the interface builds, and whether it may publish.
+  const kindKey = pick('kind');
+  if (kindKey) args[kindKey] = chooseKind(tool, kindKey);
+  const actionKey = pick('action');
+  if (actionKey) {
+    const action = pickEnum(tool, actionKey, ['publish', 'draft']);
+    if (action) args[actionKey] = action;
+  }
+  const confirmKey = pick('confirm');
+  if (confirmKey) args[confirmKey] = true;
+  const waitKey = pick('wait');
+  if (waitKey) args[waitKey] = PUBLISH_WAIT_SECONDS;
+
   return args;
+}
+
+/**
+ * The required arguments a tool asks for that this draft cannot provide.
+ *
+ * @param {any} tool
+ * @param {Record<string, unknown> | null} args
+ * @returns {string[]}
+ */
+export function missingRequiredArguments(tool, args) {
+  const required = Array.isArray(tool?.inputSchema?.required) ? tool.inputSchema.required.map(String) : [];
+  const provided = args && typeof args === 'object' ? args : {};
+  return required.filter((key) => !(key in provided));
 }
 
 /**
@@ -675,6 +830,18 @@ export async function publishViaInterface(context, checks, draft) {
       ok: false,
       message:
         '选定的发布接口没有声明可承载正文的参数，为避免把文章发给不合适的工具，未做任何发布动作，草稿保持不变。',
+      interfaceName: detected.label,
+    };
+  }
+
+  // A tool that asks for something this draft cannot provide is not called at
+  // all: publishing with a missing argument is the call the user would have
+  // to undo.
+  const missing = missingRequiredArguments(target, args);
+  if (missing.length) {
+    return {
+      ok: false,
+      message: `选定的发布接口要求参数 ${missing.join('、')}，这篇稿件无法提供，未做任何发布动作，草稿保持不变。`,
       interfaceName: detected.label,
     };
   }

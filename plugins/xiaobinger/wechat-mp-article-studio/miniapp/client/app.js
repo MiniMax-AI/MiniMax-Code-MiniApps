@@ -542,6 +542,9 @@ function renderDetail() {
         </div>
         <p class="section-desc" style="margin:0;">${esc(slot.anchor)}</p>
         <ul class="check-list">${(slot.checklist || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul>
+        <button class="btn btn--link" data-action="render" data-slot="${esc(slot.id)}" data-id="${esc(draft.id)}" type="button"${
+          state.busy ? ' disabled' : ''
+        }>${asset ? '按当前要求重渲这一张' : '按当前要求生成这一张'}</button>
         <details>
           <summary class="section-desc" style="cursor:pointer;">生成提示词</summary>
           <pre class="prompt-box">${esc(slot.prompt)}</pre>
@@ -754,7 +757,7 @@ function renderDetail() {
       <div class="card__header">
         <div>
           <h2 class="section-title">可发布内容</h2>
-          <p class="section-desc">已转换为公众号可直接粘贴的内联样式正文，图片已内嵌。</p>
+          <p class="section-desc">「复制正文」给出纯文本正文，插图以本地路径单独成行标注；「预览」与「下载 HTML」保留内联样式与内嵌图片。</p>
         </div>
         <div class="toolbar">
           <button class="btn" data-action="preview-export" data-id="${esc(draft.id)}" type="button">预览</button>
@@ -1028,6 +1031,7 @@ document.addEventListener('click', async (event) => {
       try {
         const result = await send(`/api/drafts/${encodeURIComponent(id)}/render`, 'POST', {
           target: actionEl.dataset.target || 'all',
+          slot: actionEl.dataset.slot || '',
         });
         await refresh();
         const failures = result.failures || [];
@@ -1126,9 +1130,11 @@ document.addEventListener('click', async (event) => {
     if (action === 'preview-export' || action === 'copy-export') {
       const data = await api(`/api/export/${encodeURIComponent(id)}`);
       if (action === 'copy-export') {
+        // The plain body names every image by its local path, so the copy can
+        // be pasted into a 公众号 console that uploads the images itself.
         try {
-          await navigator.clipboard.writeText(data.html);
-          toast('正文 HTML 已复制到剪贴板', 'ok');
+          await navigator.clipboard.writeText(data.text || '');
+          toast('正文已复制到剪贴板（图片以本地路径标注）', 'ok');
         } catch {
           toast('复制失败，请改用预览后手动选择', 'error');
         }
