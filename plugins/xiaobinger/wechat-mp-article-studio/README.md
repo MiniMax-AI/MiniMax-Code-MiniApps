@@ -96,6 +96,14 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   the action is the enum value that means publish, and the body is the styled HTML unless the
   interface takes the images separately or the HTML does not fit its declared limit — then it is
   the plain body with the images named inside it.
+- **A list argument is built item by item.** An interface may carry the article as a list of one
+  item instead of a top-level body. Each item is filled only from the names the item schema
+  declares (`title`, `article_content`, `thumb_media_id` …), and the item's body goes through the
+  same rule as a top-level one — its own `maxLength`, and plain text when the interface takes the
+  images separately. When an interface declares both a top-level body and a list, both get the same
+  chosen body. A list whose items name no field for the body is left unsent rather than filled with
+  a name the tool never declared, and an item that must carry a field this app cannot name stops
+  the publish.
 - **A missing argument stops the publish.** An interface that asks for something this draft cannot
   provide — a draft id that only the console knows, for instance — is not called at all, and the
   page says which argument was missing.
@@ -137,12 +145,13 @@ The gate never trusts a tool's prose and never trusts a cached answer.
 - The damaged-state path was exercised on a throwaway data directory: the damaged file keeps its
   exact bytes under `state.corrupt-<stamp>.json`, the page shows the notice that names the copy,
   and a later write leaves that copy untouched.
-- This package's own tests: `node --test "tests/**/*.test.mjs"` — 76 checks covering the publish
+- This package's own tests: `node --test "tests/**/*.test.mjs"` — 93 checks covering the publish
   gate's matching, the interface answer, the durable state, the questionnaire flow, the download
-  allowlist, the plain body, and the page.
-- Not verified: the Agent polish turn and the interface publish path were implemented but never
-  triggered, because this machine has no WeChat publish interface and the polish turn was not
-  submitted.
+  allowlist, the plain body, the asset-path containment, the list arguments, and the page.
+- Not verified: the publish call itself was never made, so no article was published from this app
+  and no result code was read back from a real publish. The Agent polish turn was triggered once in
+  the app's own Browser tab and its result was saved as a new version; the branch where the Agent
+  asks a question was not exercised, because that turn did not ask one.
 
 ## Data & access
 
@@ -153,6 +162,16 @@ The gate never trusts a tool's prose and never trusts a cached answer.
   kept as `state.backup.json`. A state file that cannot be read is moved aside under its own name
   instead of being overwritten, and the page is told about it. No Host or user files are read or
   written.
+- **Asset paths are contained** — a path handed to a publish interface is built only from an asset
+  record's id and extension, both checked: the id must be a plain name the renderer writes
+  (`randomUUID()`, no separator), the extension must be one of `.jpg`, `.jpeg`, `.png`, `.webp`, and
+  the resolved file must lie inside `dataDir/assets`. A record that names anything else — an id of
+  `../secret` or `../../outside` in a hand-edited state file, say — yields no path, and the publish
+  is refused with 「没有指向本应用的素材目录」 instead of being sent. An image reference that is
+  already inside the draft body (a pasted `![](file:///C:/…)` or `<img src=…>` line) is kept only
+  when it resolves inside `dataDir/assets` and dropped otherwise; `https:`, `data:` and relative
+  references are never turned into a path. So no path outside this plugin's own `dataDir` is ever
+  named to an interface, whatever the state file or the body contains.
 - **Network hosts** — the app makes no request of its own. It calls the Connector tools listed below
   and fetches the short-lived signed URL that `connector__matrix__get_asset_url` returns. That URL
   must be HTTPS and its host must be the pinned bucket

@@ -9,9 +9,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  bodyCarrier,
   buildPublishArguments,
   classify,
   interpretPublishResult,
+  missingRequiredArguments,
   publishViaInterface,
   tokenize,
 } from '../miniapp/node/publishing.mjs';
@@ -732,3 +734,152 @@ function singleInterfaceGates() {
   checks.interface.detectedNames = ['mcp__wechat__publish_material'];
   return checks;
 }
+
+/* ------------------------------------------------------------------ *
+ * List arguments
+ *
+ * An interface may carry the article as a list of one item instead of a
+ * top-level body. The item's body is chosen by the same rule as a
+ * top-level one, from the item's own schema.
+ * ------------------------------------------------------------------ */
+
+/**
+ * @param {Record<string, any>} properties
+ * @param {{ properties?: Record<string, any>, required?: string[] }} [items]
+ * @returns {any}
+ */
+function listInterface(properties = {}, items = {}) {
+  const itemSchema = { type: 'object', properties: items.properties || {} };
+  if (Array.isArray(items.required)) itemSchema.required = items.required;
+  return {
+    name: 'mcp__wechat__publish_article',
+    kind: 'mcp',
+    server: 'wechat',
+    tool: 'publish_article',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        article_list: { type: 'array', items: itemSchema },
+        ...properties,
+      },
+      required: ['article_list'],
+    },
+  };
+}
+
+test('a list item is handed the plain body when the styled HTML does not fit its own limit', () => {
+  const tool = listInterface({}, {
+    properties: {
+      title: { type: 'string' },
+      content: { type: 'string', maxLength: 20000 },
+      digest: { type: 'string' },
+      thumb_media_id: { type: 'string' },
+    },
+    required: ['title', 'content'],
+  });
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  const item = args.article_list[0];
+  assert.equal(item.content, buildingDraft().plainBody);
+  assert.ok(item.content.length <= 20000, `list item body was ${item.content.length} characters`);
+  assert.equal(item.thumb_media_id, undefined, 'a media id this draft does not have was invented');
+});
+
+test('a list item is handed the plain body when the interface takes the images separately', () => {
+  // No limit on the item body at all: the images being sent as files is what
+  // decides, exactly as it does for a top-level body.
+  const tool = listInterface(
+    { cover: { type: 'string' }, images: { type: 'array' } },
+    { properties: { title: { type: 'string' }, content: { type: 'string' } } },
+  );
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.equal(args.article_list[0].content, buildingDraft().plainBody);
+  assert.equal(args.cover, 'C:\\assets\\cover.jpg');
+  assert.equal(args.images, undefined, 'the images are named in the body already');
+});
+
+test('both a top-level body and a list go through the same body rule', () => {
+  const tool = listInterface(
+    { content: { type: 'string', maxLength: 20000 } },
+    { properties: { title: { type: 'string' }, content: { type: 'string', maxLength: 20000 } } },
+  );
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.equal(args.content, buildingDraft().plainBody);
+  assert.equal(args.article_list[0].content, buildingDraft().plainBody);
+  assert.equal(args.content.includes('style='), false);
+});
+
+test('a list item uses the names its own item schema declares', () => {
+  const tool = listInterface({}, {
+    properties: {
+      art_title: { type: 'string' },
+      article_content: { type: 'string' },
+      desc: { type: 'string' },
+    },
+  });
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.deepEqual(Object.keys(args.article_list[0]).sort(), ['art_title', 'article_content', 'desc']);
+  assert.equal(args.article_list[0].art_title, '标题');
+  assert.equal(args.article_list[0].article_content, buildingDraft().exportHtml);
+});
+
+test('a list whose items name no body field is never filled with a guessed name', () => {
+  const tool = listInterface({}, { properties: { title: { type: 'string' } } });
+  assert.equal(buildPublishArguments(tool, buildingDraft()), null);
+  assert.match(bodyCarrier(tool).message, /article_list/);
+});
+
+test('a list item that must carry a field this draft cannot name is not called', async () => {
+  const tool = listInterface({}, {
+    properties: { title: { type: 'string' }, content: { type: 'string' } },
+    required: ['title', 'content', 'thumb_media_id'],
+  });
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.deepEqual(missingRequiredArguments(tool, args), ['article_list[].thumb_media_id']);
+
+  /** @type {any[]} */
+  const calls = [];
+  const context = {
+    tool: {
+      list: async () => ({ tools: [tool], partial: false }),
+      call: async (/** @type {string} */ name, /** @type {any} */ callArgs) => {
+        calls.push({ name, args: callArgs });
+        return { invocationId: 'x', kind: 'mcp', isError: false, content: [] };
+      },
+    },
+  };
+  const checks = gates('mcp__wechat__publish_article');
+  checks.interface.detected = ['wechat / publish_article'];
+  checks.interface.detectedNames = ['mcp__wechat__publish_article'];
+
+  const outcome = await publishViaInterface(context, checks, buildingDraft());
+  assert.equal(outcome.ok, false);
+  assert.deepEqual(calls, []);
+  assert.match(outcome.message, /article_list\[\]\.thumb_media_id/);
+});
+
+test('a draft-only interface gets its own draft word, and only declared flags are sent', () => {
+  const tool = {
+    name: 'mcp__wechat__publish_article',
+    kind: 'mcp',
+    server: 'wechat',
+    tool: 'publish_article',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        content: { type: 'string', maxLength: 40000 },
+        action: { type: 'string', enum: ['draft', 'scheduled'] },
+      },
+      required: ['title'],
+    },
+  };
+  const args = buildPublishArguments(tool, buildingDraft());
+  assert.ok(args);
+  assert.equal(args.action, 'draft');
+  assert.equal('confirm' in args, false, 'a flag the interface does not declare was invented');
+});

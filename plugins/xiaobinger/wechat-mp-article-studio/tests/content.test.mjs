@@ -75,3 +75,57 @@ test('a body without illustrations has no markers', () => {
 test('the plain body of an empty draft is empty', () => {
   assert.equal(toPlainBody({ body: '' }, {}), '');
 });
+
+test('an image reference in the body is kept only when it is inside the assets directory', () => {
+  const root = 'C:\\plugin\\data\\assets';
+  const withImages = {
+    title: '标题',
+    body: [
+      '正常一段。',
+      '',
+      '![](C:\\plugin\\data\\assets\\6f1c.jpg)',
+      '',
+      '![](file:///C:/Windows/win.ini)',
+      '',
+      '![](https://example.com/x.png)',
+      '',
+      '<img src="file:///D:/secret.png" />',
+      '',
+      '继续。',
+      '',
+      '[[img:C:\\Windows\\win.ini]]',
+      '',
+      '结尾。',
+    ].join('\n'),
+  };
+
+  const text = toPlainBody(withImages, { assetsRoot: root, illustrations: {} });
+  assert.match(text, /正常一段/);
+  assert.match(text, /!\[\]\(C:\\plugin\\data\\assets\\6f1c\.jpg\)/);
+  assert.equal(text.includes('win.ini'), false, 'a path outside the assets directory was named');
+  assert.equal(text.includes('example.com'), false);
+  assert.equal(text.includes('secret.png'), false);
+  assert.match(text, /继续/);
+  assert.match(text, /结尾/);
+});
+
+test('without a known assets directory no image reference from the body survives', () => {
+  const draftWithImage = { body: '一段。\n\n![](file:///C:/Windows/win.ini)\n\n又一段。' };
+  const text = toPlainBody(draftWithImage, {});
+  assert.equal(text.includes('win.ini'), false);
+  assert.equal(text.includes('![]('), false);
+  assert.match(text, /一段/);
+  assert.match(text, /又一段/);
+});
+
+test('an illustration path outside the assets directory is not named either', () => {
+  const text = toPlainBody(draft, {
+    assetsRoot: 'C:\\plugin\\data\\assets',
+    illustrations: {
+      'illustration-1': 'C:\\Windows\\win.ini',
+      'illustration-2': 'C:\\plugin\\data\\assets\\two.jpg',
+    },
+  });
+  assert.equal(text.includes('win.ini'), false);
+  assert.match(text, /!\[\]\(C:\\plugin\\data\\assets\\two\.jpg\)/);
+});

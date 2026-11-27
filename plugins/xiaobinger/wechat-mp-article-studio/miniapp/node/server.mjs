@@ -19,6 +19,7 @@ import { buildPlan, checkDuplicate, deriveContent, toPlainBody, toStandaloneHtml
 import { renderImages } from './images.mjs';
 import { CHECK_KEYS, evaluateGates, interfaceReadiness, manualReadiness, publishViaInterface } from './publishing.mjs';
 import { createPolisher } from './polisher.mjs';
+import { collectAssetPaths } from './paths.mjs';
 
 const STATUS_LABELS = {
   draft: '草稿',
@@ -122,29 +123,6 @@ export async function start(context) {
       }
     }
     return map;
-  }
-
-  /**
-   * The local path of every rendered asset of one draft.
-   *
-   * An interface that uploads images takes file paths, not media ids, so the
-   * app has to be able to say where the rendered file is on this machine.
-   *
-   * @param {any} draft
-   * @returns {{ cover: string, illustrations: Record<string, string> }}
-   */
-  function collectAssetPaths(draft) {
-    const assets = draft.assets || {};
-    /** @type {Record<string, string>} */
-    const illustrations = {};
-    for (const [slotId, asset] of Object.entries(assets.illustrations || {})) {
-      if (!asset?.assetId) continue;
-      illustrations[slotId] = join(assetsDir, `${asset.assetId}${asset.ext || '.jpg'}`);
-    }
-    return {
-      cover: assets.cover?.assetId ? join(assetsDir, `${assets.cover.assetId}${assets.cover.ext || '.jpg'}`) : '',
-      illustrations,
-    };
   }
 
   /**
@@ -667,7 +645,17 @@ export async function start(context) {
           }
           const assetData = await collectAssetData(draft);
           const style = findStyle(draft.styleId, store.styles());
-          const assetPaths = collectAssetPaths(draft);
+          const assetPaths = collectAssetPaths(assetsDir, draft);
+          // Every path handed to an interface has to be a file this app wrote
+          // under `assets/`. A record that names anything else — a state file
+          // edited by hand, say — stops the publish instead of being sent.
+          if (assetPaths.rejected.length) {
+            sendJson(response, 409, {
+              error: 'asset_path_outside_assets',
+              message: `这篇稿件有 ${assetPaths.rejected.length} 个图片记录没有指向本应用的素材目录（${assetPaths.rejected.join('、')}），未做任何发布动作，草稿保持不变。请重新渲染这些图片。`,
+            });
+            return;
+          }
           // An interface that publishes a 公众号 article needs the cover; a
           // draft without one is not published half-made.
           if (!draft.assets?.cover) {
@@ -680,7 +668,7 @@ export async function start(context) {
           const outcome = await publishViaInterface(context, checks, {
             ...draft,
             exportHtml: toWeChatHtml(draft, style, assetData),
-            plainBody: toPlainBody(draft, assetPaths),
+            plainBody: toPlainBody(draft, { ...assetPaths, assetsRoot: assetsDir }),
             assetPaths,
           });
           if (!outcome.ok) {
@@ -833,7 +821,8 @@ export async function start(context) {
         const html = toWeChatHtml(draft, style, assetData);
         // The plain body names every image by its local path, so it can be
         // handed to an interface that uploads images, and pasted as text.
-        const text = toPlainBody(draft, collectAssetPaths(draft));
+        const assetPaths = collectAssetPaths(assetsDir, draft);
+        const text = toPlainBody(draft, { ...assetPaths, assetsRoot: assetsDir });
         if (url.searchParams.get('download') === '1') {
           const standalone = toStandaloneHtml(draft, style, assetData);
           response.writeHead(200, {
