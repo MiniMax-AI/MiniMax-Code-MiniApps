@@ -138,16 +138,28 @@ function pickTag(body, tag) {
 }
 
 /**
+ * 只保留 https 链接。上游返回的地址可能带 http 或其他协议，
+ * 这里统一过滤，避免把不安全或不可用的链接交给页面。
+ * @param {unknown} value
+ * @returns {string}
+ */
+function safeHttps(value) {
+  const text = String(value ?? '').trim();
+  return /^https:\/\//i.test(text) ? text : '';
+}
+
+/**
  * @param {string} body
  * @returns {string}
  */
 function pickLink(body) {
   const text = pickTag(body, 'link');
-  if (/^https?:\/\//i.test(text)) return text;
+  const link = safeHttps(text);
+  if (link) return link;
   const href = body.match(/<link[^>]*\bhref=["']([^"']+)["'][^>]*>/i);
-  if (href) return href[1];
+  if (href) return safeHttps(href[1]);
   const guid = pickTag(body, 'guid');
-  return /^https?:\/\//i.test(guid) ? guid : '';
+  return safeHttps(guid);
 }
 
 /**
@@ -474,12 +486,14 @@ async function fetchYicai(cid) {
   const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
   return list
     .map((item) => {
-      const link = String(item.ShareUrl ?? '');
+      const link = safeHttps(String(item.ShareUrl ?? ''));
       const relative = String(item.url ?? '');
+      const url = link
+        || (relative.startsWith('/') ? `https://www.yicai.com${relative}` : safeHttps(relative));
       return {
         title: cleanText(String(item.NewsTitle ?? ''), 90),
         description: cleanText(String(item.NewsNotes ?? ''), 110),
-        url: link || (relative ? `https://www.yicai.com${relative}` : ''),
+        url,
         source: '第一财经',
         publishedAt: toIso(String(item.pubDate ?? '')),
         publishedLabel: String(item.pubDate ?? ''),
@@ -502,7 +516,9 @@ async function fetchHotBoard() {
         rank: index + 1,
         title: cleanText(String(item.Title ?? ''), 80),
         score: Number(item.HotValue) || 0,
-        url: item.ClusterIdStr ? `https://www.toutiao.com/trending/${String(item.ClusterIdStr)}/` : String(item.Url ?? ''),
+        url: item.ClusterIdStr
+          ? `https://www.toutiao.com/trending/${String(item.ClusterIdStr)}/`
+          : safeHttps(item.Url),
         category: String(item.InterestCategory ?? ''),
       }))
       .filter((item) => item.title);
@@ -519,7 +535,7 @@ async function fetchHotBoard() {
         rank: index + 1,
         title: cleanText(String(item.query ?? item.word ?? ''), 80),
         score: Number(item.hotScore) || 0,
-        url: String(item.rawUrl ?? item.url ?? ''),
+        url: safeHttps(item.rawUrl ?? item.url),
         category: String(item.hotTag ?? ''),
       }))
       .filter((item) => item.title);
@@ -546,7 +562,7 @@ async function fetchZhihuStories() {
     items.push({
       title: cleanText(String(story.title ?? ''), 90),
       description: cleanText(String(story.hint ?? ''), 110),
-      url: String(story.url ?? ''),
+      url: safeHttps(story.url),
       source: '知乎日报',
       publishedAt: null,
     });
@@ -557,12 +573,13 @@ async function fetchZhihuStories() {
 
 /**
  * @param {string} key
+ * @param {boolean} refresh
  */
-async function loadNews(key) {
+async function loadNews(key, refresh) {
   const definition = NEWS_DEFINITIONS[key];
   if (!definition) throw new Error('unknown_source');
   const cached = contentCache.get(`news:${key}`);
-  if (cached && Date.now() - cached.at < CONTENT_TTL) return cached.value;
+  if (!refresh && cached && Date.now() - cached.at < CONTENT_TTL) return cached.value;
 
   /** @type {{sourceName:string, items:any[], status:string, updatedAt?:string}} */
   let result;
@@ -681,6 +698,8 @@ const COMMODITY_SPECS = {
 
 /**
  * 6 位数字 → 市场前缀。
+ * 按代码段判定：沪市 60/68/90（股票、B 股）与 50/51/56/58（基金），
+ * 深市 00/30/20（股票、B 股）与 15/16/18（基金），北交所 43/83/87/88。
  * @param {string} digits
  * @returns {string}
  */
@@ -689,6 +708,8 @@ function marketOf(digits) {
   if (head === '6' || head === '9') return 'sh';
   if (head === '0' || head === '2' || head === '3') return 'sz';
   if (head === '4' || head === '8') return 'bj';
+  if (head === '1') return 'sz';
+  if (head === '5') return 'sh';
   return 'sh';
 }
 
@@ -1179,7 +1200,7 @@ async function handleRequest(context, watchlist, request, response) {
 
     if (NEWS_DEFINITIONS[source]) {
       try {
-        const data = await loadNews(source);
+        const data = await loadNews(source, refresh);
         sendJson(response, 200, { ok: true, source, updatedAt: data.updatedAt, data });
       } catch (error) {
         context.logger.warn('miniapp.news.failed', { source });

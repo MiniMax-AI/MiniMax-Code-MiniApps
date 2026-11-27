@@ -10,7 +10,9 @@ switchable news columns in one dashboard page.
   oil, Bitcoin futures, SGE gold 9999). Prices refresh on their own interval, separately from the
   weather and news interval, and the card ends with a count of the rising, falling and unchanged
   entries.
-- **新闻** — six tabs: 要闻, 时政, 科技, 财经, 热榜 (Toutiao hot board) and 知乎日报.
+- **新闻** — six tabs: 要闻, 时政, 科技, 财经, 热榜 (Toutiao hot board) and 知乎日报. The refresh
+  button in the top bar re-fetches the selected column right away, skipping the 60-second server
+  cache.
 
 The whole page reacts to the width of its container rather than to the window size, so it looks the
 same whether it is opened in a narrow side panel or on a wide screen. The watchlist is laid out as a
@@ -23,7 +25,10 @@ and every size is remembered separately. The current size is shown while draggin
 scrolls inside a card whose height was set by hand, clicking a handle restores that single card to
 the automatic size, and a **reset** button in the top bar puts every card back. When the weather
 card and the watchlist card sit side by side and neither was sized by hand, they keep the same
-height and the space that frees up is filled row by row with the hourly forecast.
+height and the space that frees up is filled row by row with the hourly forecast. The three-column
+layout applies the same rule explicitly, and there the two cards end up exactly as tall as the
+taller of the two. Sizes restored from the browser storage are clamped to the current container, so
+a size saved on a wide screen can never squash a card on a narrow one.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -52,15 +57,22 @@ rejected.
   card, that no width produces horizontal overflow, and that the watchlist packs into as many
   columns as the available width allows; measured a height difference of 0 px between the weather
   card and the watchlist card in the two-column layout, with the hourly forecast growing and
-  shrinking to the space that is actually free; dragged the resize handle of each of the three cards
+  shrinking to the space that is actually free; confirmed the same 0 px difference in the
+  three-column layout at 1100 px, where all six hourly steps stay visible; loaded a page with an
+  out-of-range saved size and confirmed the card was clamped back into the container (5000 x 8 came
+  back as 495 x 220) instead of rendering as an extremely wide, flat card; dragged the resize
+  handle of each of the three cards
   in turn and confirmed that the card took exactly the dragged width and height, that the other two
   cards kept their own sizes, that a card with a hand-set height scrolls its content inside, and
   that the sizes were stored per card; clicked one handle to reset that single card and used the
   top-bar reset button to clear all three; reloaded the page and confirmed the per-card sizes came
   back; checked the dark theme; added and removed watchlist
   entries; switched every news tab; confirmed that one auto-refresh cycle advances the quote
-  timestamp and the price; reloaded the page and confirmed the watchlist, the selected tab, and the
-  theme persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
+  timestamp and the price; confirmed that two news requests without the refresh flag return the
+  same timestamp while the same request with it returns a new one; read back all six news columns
+  and the quote list and confirmed every returned link starts with https; reloaded the page and
+  confirmed the watchlist, the selected tab, and the theme persisted. Console showed 0 errors and 0
+  warnings; the network showed no failed requests.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the
   fallback branches never ran in the live app.

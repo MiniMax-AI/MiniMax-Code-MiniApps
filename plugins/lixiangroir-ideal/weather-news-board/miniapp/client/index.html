@@ -290,9 +290,6 @@
       .card.is-sized-h .weather-body {
         overflow-y: auto;
       }
-      .card.is-sized-h .weather-inner > * {
-        flex: 0 0 auto;
-      }
       .card-head {
         display: flex;
         align-items: center;
@@ -339,6 +336,7 @@
         flex: 1;
         min-height: 0;
         display: flex;
+        overflow-y: auto;
       }
       .weather-inner {
         flex: 1;
@@ -347,6 +345,10 @@
         flex-direction: column;
         gap: 12px;
         justify-content: space-between;
+      }
+      /* 内容不被压缩：放不下时由 weather-body 内部滚动 */
+      .weather-inner > * {
+        flex: 0 0 auto;
       }
       .weather-hourly {
         display: flex;
@@ -1490,20 +1492,22 @@
           extra.setAttribute('data-level', String(level));
         }
 
-        /* 卡片内容自然高度（不受拉伸影响） */
+        /**
+         * 卡片内容自然高度（不受拉伸影响）。
+         * 这里临时解除行内高度与对齐方式再量，而不是把子元素外边距加起来：
+         * margin-top:auto（例如把提示文字贴底）在计算样式里会变成一个
+         * 很大的已解析数值，累加进去会让高度越滚越大。
+         */
         function naturalHeight(card) {
           if (!card) return 0;
-          var cs = getComputedStyle(card);
-          var total = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-          for (var i = 0; i < card.children.length; i += 1) {
-            var child = card.children[i];
-            var ccs = getComputedStyle(child);
-            total +=
-              child.offsetHeight +
-              (parseFloat(ccs.marginTop) || 0) +
-              (parseFloat(ccs.marginBottom) || 0);
-          }
-          return total;
+          var prevHeight = card.style.height;
+          var prevAlign = card.style.alignSelf;
+          card.style.height = 'auto';
+          card.style.alignSelf = 'start';
+          var height = card.clientHeight;
+          card.style.height = prevHeight;
+          card.style.alignSelf = prevAlign;
+          return height;
         }
 
         /* 天气主体内容的自然高度 */
@@ -1562,6 +1566,33 @@
         }
 
         /**
+         * 三栏排布时 grid 不会拉伸卡片，这里显式让天气卡与自选股卡保持等高：
+         * 以两张卡自然高度的较大值为准，多出来的空间由逐时预报填满。
+         * 两栏时由 grid 的 stretch 完成，用户手动指定过高度时以用户为准。
+         */
+        function alignWeatherHeight() {
+          var card = el.weatherCard;
+          var stocks = el.stocksCard;
+          if (!card || !stocks) return;
+          if (layoutColumns() < 3) {
+            clearAlignedHeights();
+            return;
+          }
+          var target = Math.max(naturalHeight(card), naturalHeight(stocks));
+          if (target <= 0) {
+            clearAlignedHeights();
+            return;
+          }
+          card.style.height = target + 'px';
+          stocks.style.height = target + 'px';
+        }
+
+        function clearAlignedHeights() {
+          if (el.weatherCard) el.weatherCard.style.removeProperty('height');
+          if (el.stocksCard) el.stocksCard.style.removeProperty('height');
+        }
+
+        /**
          * 天气卡与自选股卡并排时高度对齐：先按自选股卡的高度挑出
          * 能放下的逐时预报档位，再由两卡共同决定这一行的最终高度。
          * 手动指定了高度时以指定高度为准，逐时预报全部列出，卡片内部滚动。
@@ -1580,6 +1611,11 @@
           extra.hidden = false;
 
           var manualH = cardSizes.weather.h || 0;
+          // 自选股卡的高度也要进签名：它加载完成后天气卡需要重新对齐。
+          var stocksH = el.stocksCard
+            ? Math.round(el.stocksCard.getBoundingClientRect().height)
+            : 0;
+          var cols = layoutColumns();
           var sig =
             card.clientWidth +
             'x' +
@@ -1587,36 +1623,53 @@
             '#' +
             (extra.getAttribute('data-level') || '0') +
             '#' +
-            manualH;
+            manualH +
+            '#' +
+            cols +
+            '#' +
+            stocksH;
           if (sig === weatherTuneSig) return;
 
-          // 手动指定高度：高度固定，逐时预报全部列出，超出部分在卡内滚动。
-          if (manualH) {
+          // 用户手动指定过任一张卡片的高度：以用户为准，逐时预报全部列出。
+          if (manualH || cardSizes.stocks.h) {
             setHourlyLevel(max);
-            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max + '#' + manualH;
+            clearAlignedHeights();
+            weatherTuneSig =
+              card.clientWidth + 'x' + card.clientHeight + '#' + max + '#' + manualH + '#' + cols + '#' + stocksH;
             return;
           }
 
-          // 只有与自选股卡并排时才需要对齐高度，其余排布由内容决定。
-          if (layoutColumns() !== 2) {
+          // 单栏堆叠：两张卡各占一行，高度由内容决定。
+          if (cols < 2) {
             setHourlyLevel(max);
-            weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + max + '#0';
+            clearAlignedHeights();
+            weatherTuneSig =
+              card.clientWidth + 'x' + card.clientHeight + '#' + max + '#0#' + cols + '#' + stocksH;
             return;
           }
 
           weatherTuneSig = sig;
-          var chrome = weatherChrome();
-          var target = stocksTargetHeight();
-          var level = 0;
-          for (var k = max; k >= 0; k -= 1) {
-            setHourlyLevel(k);
-            if (!target || chrome + weatherContentHeight() <= target) {
-              level = k;
-              break;
+          var level = max;
+          if (cols === 2) {
+            // 两栏：挑出放得下的逐时预报档位，多出来的空间由它填满。
+            var chrome = weatherChrome();
+            var target = stocksTargetHeight();
+            level = 0;
+            for (var k = max; k >= 0; k -= 1) {
+              setHourlyLevel(k);
+              if (!target || chrome + weatherContentHeight() <= target) {
+                level = k;
+                break;
+              }
             }
+            // 一行都放不下时也留一行，逐时预报不会整个消失；
+            // 卡片会随之比自选股卡高一点，grid 会把两卡拉齐。
+            if (level === 0 && max > 0) level = 1;
           }
           setHourlyLevel(level);
-          weatherTuneSig = card.clientWidth + 'x' + card.clientHeight + '#' + level + '#0';
+          alignWeatherHeight();
+          weatherTuneSig =
+            card.clientWidth + 'x' + card.clientHeight + '#' + level + '#0#' + cols + '#' + stocksH;
         }
 
         /* ================= 天气 ================= */
@@ -2154,6 +2207,9 @@
               card.style.removeProperty('--ch');
               card.classList.remove('is-sized-h');
             }
+            // 等高对齐用的行内高度由 alignWeatherHeight 统一管理，
+            // 这里先清掉，免得盖住用户自己指定的高度。
+            if (key === 'weather' || key === 'stocks') card.style.removeProperty('height');
           });
           if (el.resetSizes) el.resetSizes.hidden = !customized;
         }
@@ -2187,23 +2243,36 @@
             /* 忽略解析失败 */
           }
           applyCardSizes();
+          /* 读取时的尺寸同样要夹紧，避免旧数据把卡片压扁或撑爆 */
+          clampCardSizes();
         }
 
-        /* 容器变窄后，之前记住的宽度可能放不下，这里夹紧 */
+        /* 容器变窄后，之前记住的尺寸可能放不下，这里夹紧宽与高 */
         function clampCardSizes() {
           var changed = false;
           CARD_KEYS.forEach(function (key) {
             var size = cardSizes[key];
-            if (!size.w) return;
-            var maxW = maxCardWidth(key);
-            var minW = Math.min(MIN_CARD_W, boardWidth());
-            if (size.w > maxW) {
-              size.w = Math.round(maxW);
-              changed = true;
+            if (size.w) {
+              var maxW = maxCardWidth(key);
+              var minW = Math.min(MIN_CARD_W, boardWidth());
+              if (size.w > maxW) {
+                size.w = Math.round(maxW);
+                changed = true;
+              }
+              if (size.w < minW) {
+                size.w = Math.round(minW);
+                changed = true;
+              }
             }
-            if (size.w < minW) {
-              size.w = Math.round(minW);
-              changed = true;
+            if (size.h) {
+              if (size.h > MAX_CARD_H) {
+                size.h = MAX_CARD_H;
+                changed = true;
+              }
+              if (size.h < MIN_CARD_H) {
+                size.h = MIN_CARD_H;
+                changed = true;
+              }
             }
           });
           if (changed) {
@@ -2491,6 +2560,11 @@
             scheduleWeatherTune();
           });
           if (el.weatherCard) weatherObserver.observe(el.weatherCard);
+          // 自选股卡高度变化时，天气卡的对齐要重新算一次。
+          var stocksObserver = new ResizeObserver(function () {
+            scheduleWeatherTune();
+          });
+          if (el.stocksCard) stocksObserver.observe(el.stocksCard);
         }
         window.addEventListener('resize', function () {
           clampCardSizes();
