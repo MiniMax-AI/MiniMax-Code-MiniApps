@@ -144,6 +144,7 @@ const app = {
   ctFailures: 0,
   pointer: null,
   drag: null,
+  dragMove: null,
   dragging: false,
   menuOpen: false,
   menuView: 'root',
@@ -897,22 +898,26 @@ function onSpritePointerDown(e) {
   } catch (error) {
     console.warn('[pet] pointer_capture_failed:', errCode(error), error);
   }
+  const startX = app.winPos?.x ?? e.clientX;
   app.drag = {
     pointerId: e.pointerId,
-    startX: e.screenX,
-    startY: e.screenY,
-    win: app.winPos ? { ...app.winPos } : null,
+    grabX: e.clientX,
+    grabY: e.clientY,
+    startX,
     active: false,
     dir: null,
-    extreme: e.screenX,
+    extreme: startX,
   };
 }
 
 function onSpritePointerMove(e) {
   const d = app.drag;
-  if (!d || e.pointerId !== d.pointerId || app.scaleChanging) return;
-  const dx = e.screenX - d.startX;
-  const dy = e.screenY - d.startY;
+  // While the Host is moving the window, client coordinates may be relative to either origin.
+  // Resume from the next pointer event after the Host confirms the new bounds.
+  if (!d || e.pointerId !== d.pointerId || app.scaleChanging || app.dragMove) return;
+  const origin = app.winPos;
+  const dx = e.clientX - d.grabX;
+  const dy = e.clientY - d.grabY;
   if (!d.active) {
     if (Math.hypot(dx, dy) <= DRAG_THRESHOLD) return;
     d.active = true;
@@ -923,20 +928,22 @@ function onSpritePointerMove(e) {
     hideQuickbar();
     els.sprite.classList.add('is-dragging');
     refreshInteractivity();
-    if (!d.win) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
+    if (!origin) console.warn('[pet] drag_without_window_position: no window position yet, animation only');
   }
-  updateDragDirection(d, e.screenX);
-  if (!d.win) return;
+  const x = origin ? Math.round(origin.x + dx) : e.clientX;
+  updateDragDirection(d, x);
+  if (!origin) return;
+  const y = Math.round(origin.y + dy);
+  if (x === origin.x && y === origin.y) return;
   // On Windows a position-only update can return enlarged native bounds. Send the
   // design size with the move, rather than carrying the enlarged bounds into the next one.
-  callBridge(() => win.update({
-    x: Math.round(d.win.x + dx), y: Math.round(d.win.y + dy),
-    width: DESK_WIDTH, height: deskHeight(prefs.scale),
-  })).catch((error) => {
+  app.dragMove = callBridge(() => win.update({ x, y, width: DESK_WIDTH, height: deskHeight(prefs.scale) })).then((state) => {
+    if (app.mode === 'window') onWindowState(state);
+  }).catch((error) => {
     const code = errCode(error);
     if (code === 'not_permitted') console.debug('[pet] drag_move_rejected: not_permitted (target is off every display)');
     else console.warn('[pet] drag_move_failed:', code, error);
-  });
+  }).finally(() => { app.dragMove = null; });
 }
 
 function updateDragDirection(d, sx) {
@@ -965,6 +972,7 @@ function updateDragDirection(d, sx) {
 function finishDrag(e, cancelled) {
   const d = app.drag;
   if (!d || e.pointerId !== d.pointerId) return;
+  if (!cancelled && d.active) onSpritePointerMove(e);
   app.drag = null;
   try {
     if (els.sprite.hasPointerCapture(e.pointerId)) els.sprite.releasePointerCapture(e.pointerId);
@@ -978,7 +986,7 @@ function finishDrag(e, cancelled) {
       // Hover already owns the same three-cycle jump; release must not queue it twice.
       animationGate?.invalidate(); applyActivity();
     } else playOneShot('jumping');
-    callBridge(() => win.getState()).then(onWindowState, logError('get_state_after_drag'));
+    if (!app.dragMove) callBridge(() => win.getState()).then(onWindowState, logError('get_state_after_drag'));
   } else if (!cancelled) {
     void openWorkbench('tasks');
   }
@@ -1515,6 +1523,7 @@ function setScale(value) {
   cancelDrag();
   const current = () => !disposed && intent === scaleIntent;
   scaleUpdates = scaleUpdates.then(async () => {
+    if (app.dragMove) await app.dragMove;
     if (!current()) return;
     if (app.workbenchOpen) await closeWorkbench();
     if (!current()) return;

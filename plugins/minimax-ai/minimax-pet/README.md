@@ -22,6 +22,8 @@ Version **0.9.0** also gives the desktop window one fixed size, tall enough for 
 
 Version **0.9.2** keeps the desktop window at its intended size while dragging by sending the configured size with each move, rather than carrying forward unexpected native bounds. The desktop task card is centered and capped at 264 CSS pixels; it can still fit narrower windows with the existing 8-pixel side gutters. Permissions and dependencies are unchanged.
 
+Version **0.9.3** moves the desktop pet using the Host-confirmed window position and the pointer's offset from the grab point. The page waits for each move to finish before using another pointer sample. If you release while a move is pending, the window stays at the last position accepted by the Host.
+
 Version **0.8.1** fixes the desktop card: the title truncates to one line, only the reply scrolls, and the actions stay pinned, so a long title or reply no longer pushes 返回任务 / 打开对话 out of the card. Expanding the card also grows the window instead of squeezing the reply into one line.
 
 Version **0.8.0** aligns the panel with the MiniMax Code design language: 24px page margins and section gaps, 14px/22px body copy with 12px/18px supporting text, 32px minimum control height, 12px cards and 8px controls, 0.5px borders on desktop overlays, and press/focus states. The desktop pet keeps its 280px layout with the same tokens.
@@ -50,6 +52,7 @@ Earlier local prototypes use a different plugin ID. The Host gives `minimax-pet`
 - The default atlas is checked by actual PNG decoding, frame coverage and deterministic rebuild tests. The separate octopus icon is checked by PNG decoding and visual review. On 2026-10-26, the packaged Skill was exercised with a real Agent in the macOS development build to create, validate, preview and import a custom v2 pet; all nine animation previews and the four cardinal mouse-look directions were checked. This does not replace released-client acceptance.
 - Version 0.9.0 has Node/DOM tests for the card timer, the preference round trip and the copy of both languages (every key the page uses must exist in both), plus a browser check of the panel and desktop window in both languages against a simulated Host. Not verified for 0.9.0: the language the real client reports on any given install, and both languages inside a real MiniMax Code window.
 - Version 0.9.2 was checked in MiniMax Code **3.1.19.232** on Windows 11 x64 (build 26200, 150% display scaling). With the task card open, four automated pointer drags moved the real window without cumulative width or height growth. A physical mouse and other display configurations were not tested for this fix.
+- The drag behavior was exercised with a physical mouse in a local comparison build on MiniMax Inside Code **3.1.19.169**, Windows 11 (build 26300), and a 4K display. Version 0.9.3 has regression tests for input before and after the Host applies a pending move. Desktop testing of the final 0.9.3 package remains open.
 - Not verified for 0.6.0: opening a conversation or following the theme inside a real MiniMax Code 3.1.11+ window (panel or desktop pet), any Windows GUI, and released-client installation or GUI acceptance on 3.1.6. Automated tests use synthetic data and do not prove those paths.
 
 ## Data & access
