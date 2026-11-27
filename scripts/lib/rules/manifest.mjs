@@ -19,6 +19,7 @@ import {
   VERSION_MAX_LENGTH,
 } from '../contract.mjs';
 import { isRecord, pathExists, readJsonFile } from '../fs.mjs';
+import { normalizePluginPath } from '../paths.mjs';
 
 const FILE = '.minimax-plugin/plugin.json';
 
@@ -109,7 +110,12 @@ function imagePath(report, value, label, required) {
     report.error('MANIFEST_FIELD_INVALID', `${label} must be a plugin-relative .png, .jpg, .jpeg, or .webp path`, FILE);
     return undefined;
   }
-  return trimmed;
+  const portable = normalizePluginPath(trimmed);
+  if (!portable.ok) {
+    report.error('MANIFEST_FIELD_INVALID', `${label} ${portable.reason}`, FILE);
+    return undefined;
+  }
+  return portable.value;
 }
 
 function stringArray(report, value, label) {
@@ -136,7 +142,12 @@ async function references(report, packageDir, value, label, pattern, { required,
       report.error('MANIFEST_REFERENCE_INVALID', `${label} entry "${item}" must match ${pattern.source}`, FILE);
       continue;
     }
-    if (mustExist && !(await pathExists(path.join(packageDir, ...item.split('/')), 'file'))) {
+    const portable = normalizePluginPath(item);
+    if (!portable.ok) {
+      report.error('MANIFEST_REFERENCE_INVALID', `${label} entry "${item}" ${portable.reason}`, FILE);
+      continue;
+    }
+    if (mustExist && !(await pathExists(path.join(packageDir, ...portable.value.split('/')), 'file'))) {
       report.error('MANIFEST_REFERENCE_MISSING', `${label} entry "${item}" does not exist`, item);
     }
   }
@@ -148,8 +159,10 @@ async function checkApps(report, packageDir, apps) {
   const providers = new Set();
   // references() already reported bad patterns, missing files, and repeated paths.
   for (const item of new Set(apps)) {
-    const absolutePath = path.join(packageDir, ...item.split('/'));
-    if (!APP_PATH.test(item) || !(await pathExists(absolutePath, 'file'))) continue;
+    const portable = normalizePluginPath(item);
+    if (!portable.ok || !APP_PATH.test(portable.value)) continue;
+    const absolutePath = path.join(packageDir, ...portable.value.split('/'));
+    if (!(await pathExists(absolutePath, 'file'))) continue;
     const file = await readJsonFile(absolutePath);
     if (!file.ok) {
       report.error('MANIFEST_APP_INVALID', `${item} ${file.detail}`, item);
