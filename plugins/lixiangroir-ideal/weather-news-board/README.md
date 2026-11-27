@@ -8,8 +8,12 @@ switchable news columns in one dashboard page.
   (for example `南京`); **切换** cycles through the places that share that name.
 - **自选股** — a personal watchlist of A-share codes and international symbols (gold, silver, crude
   oil, Bitcoin futures, SGE gold 9999). Prices refresh on their own interval, separately from the
-  weather and news interval.
+  weather and news interval. The list is laid out as a grid that reflows to the width the app is
+  actually given, so every entry stays on screen instead of pushing the rest below the fold.
 - **新闻** — six tabs: 要闻, 时政, 科技, 财经, 热榜 (Toutiao hot board) and 知乎日报.
+
+The whole page reacts to the width of its container rather than to the window size, so it looks the
+same whether it is opened in a narrow side panel or on a wide screen.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -32,12 +36,14 @@ rejected.
 
 - MiniMax Code **3.1.19** on **Windows 11** (Windows 10.0.26200, x64), Node.js 24.16.0.
 - Client acceptance exercised: published and opened the Mini App; confirmed the page is not blank
-  and that landmarks, headings, tabs, and controls are reachable; measured the 640 px layout
-  (two columns, weather card and watchlist card bottoms aligned at the same y); checked the
-  >= 900 px three-column layout and the dark theme; added and removed watchlist entries;
-  switched every news tab; confirmed that one auto-refresh cycle advances the quote timestamp and
-  the price; reloaded the page and confirmed the watchlist, the selected tab, and the theme
-  persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
+  and that landmarks, headings, tabs, and controls are reachable; drove the layout through CSS
+  container queries at 420 px, 640 px, 1100 px, and 1440 px container widths and confirmed the
+  dashboard reflows from one column to two to three, that every watchlist entry stays inside its
+  card, that no width produces horizontal overflow, and that the watchlist packs into as many
+  columns as the available width allows; checked the dark theme; added and removed watchlist
+  entries; switched every news tab; confirmed that one auto-refresh cycle advances the quote
+  timestamp and the price; reloaded the page and confirmed the watchlist, the selected tab, and the
+  theme persisted. Console showed 0 errors and 0 warnings; the network showed no failed requests.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the
   fallback branches never ran in the live app.

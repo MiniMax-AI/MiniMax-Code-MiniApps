@@ -80,6 +80,12 @@
         display: none !important;
       }
 
+      /* 布局按可用容器宽度自适应，而非视口宽度 */
+      .app-shell {
+        container-type: inline-size;
+        container-name: app;
+        width: 100%;
+      }
       .app {
         max-width: 1440px;
         margin: 0 auto;
@@ -251,12 +257,13 @@
         display: grid;
         grid-template-columns: minmax(0, 1fr);
         gap: 16px;
+        align-items: start;
       }
       .top-grid {
         display: grid;
-        grid-template-columns: clamp(150px, 30%, 190px) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
         gap: 16px;
-        align-items: stretch;
+        align-items: start;
       }
       .card {
         background: var(--mcode-surface);
@@ -311,10 +318,8 @@
         width: 100%;
       }
       .weather-body {
-        flex: 1;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
         gap: 12px;
       }
       .weather-main {
@@ -464,15 +469,19 @@
         list-style: none;
         margin: 0;
         padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 196px), 1fr));
+        gap: 4px 8px;
+        align-content: start;
+        flex: 0 0 auto;
       }
       .stock-row {
         position: relative;
-        padding: 7px 8px;
+        container-type: inline-size;
+        container-name: tile;
+        padding: 6px 8px;
         border-radius: 8px;
+        min-width: 0;
         transition: background 150ms ease-out;
       }
       .stock-row:hover {
@@ -482,6 +491,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
+        min-width: 0;
       }
       .stock-name {
         font-size: 13.5px;
@@ -489,12 +499,14 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
       }
       .stock-code {
         font-size: 11px;
         color: var(--mcode-text-subtle);
         font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
         white-space: nowrap;
+        flex: none;
       }
       .stock-remove {
         margin-left: auto;
@@ -522,8 +534,20 @@
       .stock-bottom {
         display: flex;
         align-items: baseline;
-        gap: 8px;
+        gap: 4px 8px;
         margin-top: 2px;
+        flex-wrap: wrap;
+      }
+      .stock-quote {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 3px;
+        min-width: 0;
+      }
+      .stock-deltas {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
         flex-wrap: wrap;
       }
       .stock-price {
@@ -564,12 +588,14 @@
         color: var(--mcode-text-muted);
       }
       .stock-empty {
+        grid-column: 1 / -1;
         padding: 10px 2px;
         font-size: 12.5px;
         color: var(--mcode-text-muted);
       }
       .hint {
-        margin: 8px 0 0;
+        margin: auto 0 0;
+        padding-top: 8px;
         font-size: 11.5px;
         line-height: 17px;
         color: var(--mcode-text-subtle);
@@ -783,22 +809,63 @@
         color: #ffffff;
       }
 
-      /* ---------- 响应式 ---------- */
-      @media (min-width: 900px) {
-        .board {
-          grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-          align-items: start;
-        }
+      /* ---------- 响应式（按容器宽度自适应，不依赖视口宽度） ---------- */
+      @container app (min-width: 560px) {
         .top-grid {
-          grid-template-columns: 270px minmax(0, 1fr);
+          grid-template-columns: clamp(184px, 30%, 268px) minmax(0, 1fr);
         }
       }
-      @media (max-width: 560px) {
-        .app {
-          padding: 16px 16px 28px;
+      @container app (min-width: 900px) {
+        .board {
+          grid-template-columns: minmax(210px, 0.55fr) minmax(320px, 1.25fr) minmax(280px, 1.5fr);
         }
         .top-grid {
-          grid-template-columns: minmax(0, 1fr);
+          display: contents;
+        }
+      }
+      @container app (max-width: 559px) {
+        .app {
+          padding: 14px 14px 24px;
+        }
+      }
+      @container tile (max-width: 190px) {
+        .stock-name {
+          font-size: 12.5px;
+        }
+        .stock-code {
+          font-size: 10px;
+        }
+      }
+      @container tile (max-width: 168px) {
+        .stock-price {
+          font-size: 16px;
+          line-height: 22px;
+        }
+      }
+      @container tile (max-width: 140px) {
+        .stock-code {
+          display: none;
+        }
+      }
+      /* 不支持容器查询时退回视口断点 */
+      @supports not (container-type: inline-size) {
+        @media (min-width: 900px) {
+          .board {
+            grid-template-columns: minmax(210px, 0.55fr) minmax(320px, 1.25fr) minmax(280px, 1.5fr);
+          }
+          .top-grid {
+            display: contents;
+          }
+        }
+        @media (min-width: 560px) {
+          .top-grid {
+            grid-template-columns: clamp(184px, 30%, 268px) minmax(0, 1fr);
+          }
+        }
+        @media (max-width: 559px) {
+          .app {
+            padding: 14px 14px 24px;
+          }
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -811,7 +878,8 @@
     </style>
   </head>
   <body>
-    <div class="app">
+    <div class="app-shell">
+      <div class="app">
       <header class="topbar">
         <div class="brand">
           <h1 class="brand-title">天气 · 新闻看板</h1>
@@ -905,6 +973,7 @@
           <ul class="news-list" id="news-list" role="tabpanel" aria-labelledby="tab-headlines" style="margin-top: 10px"></ul>
         </article>
       </main>
+      </div>
     </div>
 
     <div class="toast" id="toast" role="status" hidden></div>
@@ -1413,6 +1482,46 @@
         }
 
         /* ================= 自选股 ================= */
+        var STOCK_MIN_COL = 150;
+        var STOCK_COL_GAP = 8;
+
+        /**
+         * 按可用宽度与条目总数计算最优列数。
+         * 先保证行数最少；行数相同时选择末行留白更少的方案，
+         * 使全部条目在任意容器宽度下都能完整排布。
+         */
+        function layoutStockList() {
+          var list = el.stockList;
+          var count = list.children.length;
+          var width = list.clientWidth;
+          if (!count || !width) {
+            list.style.gridTemplateColumns = '';
+            return;
+          }
+          var maxCols = Math.max(
+            1,
+            Math.floor((width + STOCK_COL_GAP) / (STOCK_MIN_COL + STOCK_COL_GAP)),
+          );
+          var limit = Math.min(maxCols, count);
+          var best = 1;
+          var bestRows = Infinity;
+          var bestEmpty = Infinity;
+          for (var cols = limit; cols >= 1; cols -= 1) {
+            var rows = Math.ceil(count / cols);
+            var empty = cols * rows - count;
+            if (rows < bestRows) {
+              bestRows = rows;
+              bestEmpty = empty;
+              best = cols;
+            } else if (rows === bestRows && empty < bestEmpty) {
+              bestEmpty = empty;
+              best = cols;
+            }
+          }
+          var next = 'repeat(' + best + ', minmax(0, 1fr))';
+          if (list.style.gridTemplateColumns !== next) list.style.gridTemplateColumns = next;
+        }
+
         function renderStocks() {
           var items = state.stocks.length
             ? state.stocks
@@ -1423,6 +1532,7 @@
           if (!items.length) {
             el.stockList.innerHTML =
               '<li class="stock-empty">还没有自选股。输入 6 位 A 股代码，或输入「黄金」「原油」等品种名称后点击「添加」。</li>';
+            layoutStockList();
             return;
           }
 
@@ -1470,10 +1580,12 @@
                 REMOVE_ICON +
                 '</button></div>' +
                 '<div class="stock-bottom">' +
-                '<span class="stock-price">' +
+                '<span class="stock-quote"><span class="stock-price">' +
                 esc(fmtNumber(item.price, decimals)) +
                 '</span>' +
                 (item.unit ? '<span class="stock-unit">' + esc(item.unit) + '</span>' : '') +
+                '</span>' +
+                '<span class="stock-deltas">' +
                 '<span class="stock-delta ' +
                 direction +
                 '">' +
@@ -1486,6 +1598,7 @@
                 arrow +
                 esc(fmtSigned(percent, 2)) +
                 '%</span>' +
+                '</span>' +
                 '</div>' +
                 '</li>'
               );
@@ -1493,6 +1606,7 @@
             .join('');
 
           el.stocksUpdated.textContent = '更新 ' + fmtClock(state.stocksUpdatedAt);
+          layoutStockList();
         }
 
         var REMOVE_ICON =
@@ -1679,6 +1793,15 @@
           el.quoteInterval.value = String(state.quoteInterval);
           el.cityInput.value = state.city;
         }
+
+        /* 容器宽度变化时重新排布自选股 */
+        if (window.ResizeObserver) {
+          var stockObserver = new ResizeObserver(function () {
+            layoutStockList();
+          });
+          stockObserver.observe(el.stockList);
+        }
+        window.addEventListener('resize', layoutStockList);
 
         restoreViewState();
         applyTheme();
