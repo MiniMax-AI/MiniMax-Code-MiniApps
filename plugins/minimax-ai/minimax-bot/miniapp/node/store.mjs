@@ -303,6 +303,24 @@ export class Store {
           // A queued job never reached the model; a running one had already called it.
           attempts: wasQueued ? 0 : 1,
         });
+      } else if (helper.status === 'stopped') {
+        // The stop was asked for and the job was marked stopped at once, but the turn it was in
+        // writes its ledger row when it winds down. If the process was killed in between, that
+        // row is missing: a job the user stopped still spent a turn. The row is written under the
+        // job's own id, so a job that did finish is not counted twice.
+        await this.recordUsageOnce({
+          ts: helper.startedAt ?? helper.createdAt ?? helper.endedAt ?? Date.now(),
+          turnId: helper.id,
+          botId: helper.botId,
+          botName: this.getBot(helper.botId)?.name ?? '',
+          chatId: helper.chatId,
+          kind: 'helper-run',
+          status: 'aborted',
+          durationMs: null,
+          chars: 0,
+          tools: helper.turnTools ?? 0,
+          attempts: helper.startedAt ? 1 : 0,
+        });
       }
     }
     this.state.taskBatches = Array.isArray(this.state.taskBatches) ? this.state.taskBatches : [];

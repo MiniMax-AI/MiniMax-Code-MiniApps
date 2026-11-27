@@ -2051,6 +2051,13 @@ export class Engine {
     }
     if (!HELPER_ACTIVE.has(helper.status)) return { stopped: false, status: helper.status };
     run.stoppedBy = who;
+    // The Host ends a turn between its steps, so a run that is inside a long tool call keeps
+    // going for a while after the abort. The job is not working any more, and the page has to
+    // say so at once: a stop button that leaves the row reading "running" looks like it did
+    // nothing, and the only thing left to try is quitting the whole app.
+    helper.status = 'stopped';
+    void this.store.save().catch((error) => this.logger.warn('minimax_bot.helper_stop_save_failed', { helperId: helper.id, code: error?.code ?? 'unknown' }));
+    this.broadcastHelpers();
     run.controller.abort();
     return { stopped: true, status: 'stopped' };
   }

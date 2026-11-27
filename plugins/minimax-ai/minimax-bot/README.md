@@ -145,6 +145,17 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - The stored name now replaces a run of dots, and a long name is cut on a whole character so an emoji is never left half-written.
 - The extension is kept apart from the rest of the name and survives that cleaning, because it decides how the file is served: `photo..png` was stored as `photo_png`, so it went out as `application/octet-stream` and the Bot received a plain file instead of an image. It is stored as `photo.png` now and stays a PNG end to end.
 
+## 0.7.38 The page tells the user when a chat is stuck and when a job was stopped
+
+- A turn whose outcome cannot be confirmed — the process stopped while it was running, or the Host took it and never said — leaves the request marked as unknown. Every later message of that chat waits for it, on purpose: a correction must not act on a state nobody can vouch for.
+- But the way out was not reachable. The page draws its continuation button on a held message and on a request a restart left stranded; a message with an unknown outcome got no button, and the continuation route answered `busy` when the chat held nothing but that one message. So a chat with a single unknown outcome had no way out at all: the user could not confirm it, could not send it again under the same id, and every new request joined the queue behind it. Restarting did not help, because the state is on disk — and a restart in the middle of a turn is what produces it.
+- A message with an unknown outcome now carries the same button, and the continuation route accepts a chat that holds nothing but such a message. Confirming it does not send that turn again: the request stays marked as unknown, and the chat goes on. The requests that were waiting behind it are sent. Once confirmed, the button is gone and the line says the later messages may go on.
+- The stop button of a background job had the same trouble from the other side. It asked the Host to end the turn, but the job kept the `running` state until that turn actually came back. The Host ends a turn between its steps, so a job inside a long tool call kept reading as running for a while — and to a user pressing the button, nothing had happened at all. The only thing left to try was quitting the whole app.
+- The job is marked stopped the moment the stop is asked for, so the page stops reading it as running. The turn still winds down in the background; what changes is that the page tells the truth about it. The abort still goes to the same turn, and a job that was already stopped or already finished is left alone.
+- Asking to let a stuck chat go now shows on the page that it took: the message says the later messages may go on, and the button is gone. A message that arrives while that is being written goes out with it, instead of waiting for a second press of the button.
+- A job that was stopped and then killed by the process still leaves its turn in the usage ledger. The row is written under the job's own id, so a job that did finish is not counted twice.
+- Nothing else moves: a request with an unknown outcome is still never replayed on its own, and the order of the messages around it is unchanged.
+
 ## 0.7.10 Optional group notes
 
 - A group can keep a note of what it said. After every round the group records the closing lines of the replies, and every Bot of the group gets that record in its standing brief.

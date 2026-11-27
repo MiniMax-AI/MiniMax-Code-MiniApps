@@ -845,3 +845,15 @@ test('the background task strip keeps the official one line rows and folds a lon
   await settle();
   assert.match(strip.querySelector('.helper-more').textContent, /4 more tasks/, 'the queue starts folded again');
 });
+test('an unknown outcome offers the way out, so the chat is not stuck for good', async () => {
+  // A turn whose outcome is unknown holds every later message of the chat. The page has to
+  // offer the way out on the message that carries that state.
+  const unknown = message('msg_unknown', 'Possibly already executed', { role: 'user', dispatchState: 'uncertain' });
+  await reset([unknown]);
+  assert.match(document.querySelector('.message-delivery').textContent, /Outcome unknown/);
+  const button = document.querySelector('.message-delivery button');
+  assert.notEqual(button, null, 'the message that holds the chat offers the continuation');
+  route = ({ path }) => path.endsWith('/resume-pending') ? response({ ok: true }) : undefined;
+  button.click(); await settle();
+  assert.equal(calls.filter((call) => call.path.endsWith('/resume-pending')).length, 1);
+});
