@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Postman Lite</title>
+    <script>
+      // 在首屏渲染前定好主题，避免浅色→深色的闪烁
+      (function () {
+        try {
+          var stored = localStorage.getItem('pm-lite:theme');
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="assets/index-B2mwHLeF.js"></script>
+    <link rel="stylesheet" crossorigin href="assets/index-CvdCbz-Y.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

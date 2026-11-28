@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "postman-lite",
+  "displayName": "Postman Lite",
+  "version": "1.0.0",
+  "description": "本地 API 请求工具：构建请求、查看响应、管理集合。",
+  "author": "ssugarr",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": [
+    "打开 API 请求面板",
+    "用 Postman Lite 调一个接口"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
