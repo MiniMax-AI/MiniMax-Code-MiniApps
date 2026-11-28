@@ -21,6 +21,19 @@ const MIME_TYPES = {
   '.map': 'application/json; charset=utf-8',
 };
 
+/**
+ * fs.stat 在路径非法（比如含 null byte）时会同步抛错，
+ * 那样异常会穿过请求处理冒到事件循环里，把进程带崩。
+ * 这里统一收成回调错误，让调用方按普通 IO 失败处理。
+ */
+function safeStat(target, callback) {
+  try {
+    fs.stat(target, callback);
+  } catch (err) {
+    callback(err);
+  }
+}
+
 function contentTypeFor(filePath) {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
 }
@@ -37,10 +50,18 @@ export function createStaticHandler(rootDir) {
 
     let pathname;
     try {
-      pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname);
+      pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://miniapp.local').pathname);
     } catch {
       return next();
     }
+
+    // 路径里带 null byte 会让 fs 同步抛错，这里直接挡成 400
+    if (pathname.includes('\0')) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('400 Bad Request');
+      return;
+    }
+
     if (pathname.endsWith('/')) pathname += 'index.html';
 
     const target = path.resolve(path.join(root, pathname));
@@ -56,10 +77,24 @@ export function createStaticHandler(rootDir) {
         res.end();
         return;
       }
-      fs.createReadStream(filePath).pipe(res);
+      let stream;
+      try {
+        stream = fs.createReadStream(filePath);
+      } catch {
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('500 Internal Server Error');
+        return;
+      }
+      stream.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        }
+        res.end('500 Internal Server Error');
+      });
+      stream.pipe(res);
     };
 
-    fs.stat(target, (err, stat) => {
+    safeStat(target, (err, stat) => {
       if (!err && stat.isFile()) {
         send(target, stat);
         return;
@@ -69,7 +104,7 @@ export function createStaticHandler(rootDir) {
         return;
       }
       const indexPath = path.join(root, 'index.html');
-      fs.stat(indexPath, (indexErr, indexStat) => {
+      safeStat(indexPath, (indexErr, indexStat) => {
         if (indexErr || !indexStat.isFile()) {
           next();
           return;
@@ -79,3 +114,4 @@ export function createStaticHandler(rootDir) {
     });
   };
 }
+

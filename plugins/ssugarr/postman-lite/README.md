@@ -41,7 +41,10 @@ network; behaviour on macOS and Linux.
 
 - **Files** — reads its own `miniapp/client/` payload and `miniapp/node/` code. Writes
   `state.json` in the Host-assigned data directory.
-- **Network** — only the host the user explicitly requests through the proxy. No telemetry.
+- **Network** — the host the user explicitly requests through the proxy, plus whatever
+  host a redirect points to: redirect following is on by default, so a response can send the request
+  on to a different host than the one in the address bar. Turning off "Follow redirects" keeps the
+  request on the original host. No telemetry.
 - **Processes** — none.
 - **Agent turns** — none.
 - **Conversations read** — none.
@@ -49,8 +52,10 @@ network; behaviour on macOS and Linux.
 - **Microphone / camera / notifications** — not used.
 - **Host navigation read** — not declared.
 - **State** — the Host-assigned plugin data directory. `state.json` holds the collection tree and is
-  replaced atomically, so a forced stop never leaves a half-written file. Clearing that directory
-  resets every collection.
+  replaced atomically, so a forced stop never leaves a half-written file. Request headers are stored
+  as written, so credentials such as `Authorization`, `Cookie`, or `X-Api-Key` are kept in
+  plaintext in `state.json` and are returned by `GET /api/state`. Clearing that directory resets
+  every collection.
 
 ## Files
 
