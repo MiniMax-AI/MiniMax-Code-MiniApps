@@ -145,6 +145,15 @@ The hand-over between two Bots of a group carried the tail of the previous reply
 - The stored name now replaces a run of dots, and a long name is cut on a whole character so an emoji is never left half-written.
 - The extension is kept apart from the rest of the name and survives that cleaning, because it decides how the file is served: `photo..png` was stored as `photo_png`, so it went out as `application/octet-stream` and the Bot received a plain file instead of an image. It is stored as `photo.png` now and stays a PNG end to end.
 
+## 0.7.42 A Bot that is busy says what it is doing, not just that it is busy
+
+- When another Bot is occupied, the work queues behind it. The brief said so and stopped there, so the answer a user got was a restatement of that line — 「这个 Bot 正在忙别的任务，已排队，轮到后自动发送」 — which does not say what the other Bot is doing, cannot be acted on, and is not what the plugin said: the plugin had no such string.
+- The tools to answer it were there the whole time. `get_tasks` reports the title and status of the queued work, `cancel_tasks` stops it, and the tasks page in the sidebar lists every one of them with a stop button. Nothing told the Bot to look before answering.
+- `brief.tool.tasks` and `brief.tool.message` now say what to do when the other Bot is busy: look it up with `get_tasks`, tell the user in one sentence what it is busy with, and use `cancel_tasks` if the user wants it stopped. The rule that the task ids are not read out to the user stays, with the part that was missing: the ids are for the tools, and what the query finds is told to the user.
+- `mcp.t.message_bot` carries the same instruction, because that is the description the model reads when it decides to hand work over.
+- `brief.tool.schedule` now answers the other half of the same question. A user who asks whether something is running on a timer, or why their usage keeps going, gets an answer from `list_schedules`, and `delete_schedule` stops it. The line also states the limit: only this team's scheduled tasks are in that list. A schedule the Host runs elsewhere is not in it and is not under the Bot's control — a cron attached to a session from the host side showed as zero rows in the Bot's own list while it kept spending the session's quota.
+- Only the wording changed. No tool, no state and no limit moved: the same calls with the same arguments do the same things.
+
 ## 0.7.38 The page tells the user when a chat is stuck and when a job was stopped
 
 - A turn whose outcome cannot be confirmed — the process stopped while it was running, or the Host took it and never said — leaves the request marked as unknown. Every later message of that chat waits for it, on purpose: a correction must not act on a state nobody can vouch for.
