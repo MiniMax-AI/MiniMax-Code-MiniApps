@@ -28,7 +28,7 @@ card and the watchlist card sit side by side and neither was sized by hand, they
 height and the space that frees up is filled row by row with the hourly forecast. The three-column
 layout applies the same rule explicitly, and there the two cards end up exactly as tall as the
 taller of the two. Sizes restored from the browser storage are clamped to the current container, so
-a size saved on a wide screen can never squash a card on a narrow one. The cards that share a row are kept inside the container as well: when two of them were sized by hand and their widths no longer fit, the wider one is pulled in, and while a card is being dragged its neighbour gives way instead of letting the board run past the edge.
+a size saved on a wide screen can never squash a card on a narrow one. The cards that share a row are kept inside the container as well: when their widths no longer fit, the overflow is taken back proportionally, so equally wide cards shrink evenly instead of one of them always giving way first, and while a card is being dragged its neighbour gives way instead of letting the board run past the edge. The size shown while dragging is the size that is actually applied.
 
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
@@ -64,9 +64,13 @@ rejected.
   cards had been sized by hand so that they no longer fitted (260 px + 495 px inside a 734 px
   column) and confirmed the wider card was pulled back to 458 px and that the board's scroll width
   matched its client width, so nothing was cut off on the right; repeated that check with all three
-  cards set to 900 px at 640 px and 1100 px container widths; dragged a handle past the right edge
-  and confirmed the neighbour card shrank to its minimum width instead of the board overflowing;
-  dragged the resize handle of each of the three cards
+  cards set to 900 px at 640 px and 1100 px container widths; three cards stored at 900 px inside a
+  1052 px column settle at 340 px each rather than 260/260/500 px, so the cards that share a row
+  shrink evenly; a handle dragged past the right edge made the neighbour card shrink to its minimum
+  width instead of letting the board overflow, and the size shown in the drag badge was the one
+  actually applied (458 px) rather than the one the pointer had reached (751 px); a vertical
+  scrollbar appearing once the content had rendered took 15 px off the available width, and the
+  stored sizes were pulled back to match; dragged the resize handle of each of the three cards
   in turn and confirmed that the card took exactly the dragged width and height, that the other two
   cards kept their own sizes, that a card with a hand-set height scrolls its content inside, and
   that the sizes were stored per card; clicked one handle to reset that single card and used the
