@@ -44,6 +44,7 @@ export const CLIENT_FILES = new Map([
   ['/strip.mjs', { file: 'strip.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/clip-place.mjs', { file: 'clip-place.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/clip-playhead.mjs', { file: 'clip-playhead.mjs', type: 'text/javascript; charset=utf-8' }],
+  ['/immersive.mjs', { file: 'immersive.mjs', type: 'text/javascript; charset=utf-8' }],
   ['/styles.css', { file: 'styles.css', type: 'text/css; charset=utf-8' }],
 ]);
 

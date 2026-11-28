@@ -5,7 +5,7 @@ English | [简体中文](README.zh-CN.md)
 An infinite-canvas node graph for MiniMax Code, modelled on the canvas of
 `work.batvid.com`.
 
-Author: [antianqi](https://github.com/antianqi) · Version: `1.22.10`
+Author: [antianqi](https://github.com/antianqi) · Version: `1.22.11`
 
 ![The canvas with the 图片复刻 template on it: a reference picture goes in, the prompt is read back out of that picture, and a new picture is made from the prompt](docs/preview.png)
 
@@ -709,6 +709,11 @@ Agent to open "节点画布" — or open it from the plugin list.
 5. Drag the circle on the right edge of a node onto another node to connect
    them.
 
+**Immersive mode**: `F11` or `Ctrl+Shift+F` folds the toolbar away and lets
+the canvas take the whole surface, with one `Exit immersive (Esc)` chip in the
+corner. When the Host hands the window to the page the mode is a real
+fullscreen; when it refuses, the page mode still works.
+
 ### Keyboard
 
 | Keys | Action |
@@ -718,7 +723,8 @@ Agent to open "节点画布" — or open it from the plugin list.
 | `Delete` / `Backspace` | Delete the selection |
 | `Shift`+drag | Marquee select |
 | `Shift`+click | Toggle one node in the selection |
-| `Escape` | Close mention menu → panel → menu → deselect |
+| `F11` / `Ctrl+Shift+F` | Immersive mode: the toolbar folds away, the canvas takes the surface |
+| `Escape` | Close mention menu → panel → menu → leave immersive → deselect |
 
 ## Tested environment
 

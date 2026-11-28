@@ -19,6 +19,7 @@ import { wirePlayhead } from './clip-playhead.mjs';
 import { frameStops, paintFilmstrip, paintWaveform, redrawStrips } from './strip.mjs';
 import { isBusyRefusal, panelClosed, panelIsShown, panelTasks, runIsGone, taskIsExpired, theRunThatIsGoing, theRunToWaitFor, waitForTheRun, withDeadline } from './run-watch.mjs';
 import { panelTitleRow } from './task-panel.mjs';
+import { immersiveAction } from './immersive.mjs';
 import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, legacyProductNodes, lineKind, linesDroppedByMode, materializeResults, outputForRun, pendingAncestors as pendingAncestorsIn, planIncoming, planPort, promptTemplateFor, readTemplateFile, runSpecFor, syncMentions, templateFile, templateFromCanvas } from './actions.mjs';
 
 (() => {
@@ -129,6 +130,8 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     tool: null, // { nodeId, tool, params }
     picker: null, // the node picker that opens on an empty drop
     suppressClick: false,
+    // The immersive mode: the chrome goes away and the canvas takes the surface.
+    immersive: false,
   };
 
   const dom = {};
@@ -4441,6 +4444,12 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     dom.deleteButton.disabled = !state.canvas.id;
     dom.gridButton.textContent = state.canvas.backgroundMode === 'dots' ? '网格：圆点' : '网格：线条';
     dom.themeButton.textContent = `主题：${THEME_LABEL[state.theme] ?? THEME_LABEL.system}`;
+    // The button says which way the mode goes, so the user never has to
+    // remember whether it is on.
+    dom.immersiveButton.textContent = state.immersive ? '退出沉浸' : '沉浸';
+    dom.immersiveButton.title = state.immersive
+      ? '退出沉浸模式（Esc）'
+      : '沉浸模式：工具栏收起，画布铺满（F11 / Ctrl+Shift+F）';
     updateHistoryBtns();
   }
 
@@ -6594,6 +6603,15 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     });
 
     window.addEventListener('keydown', (event) => {
+      // The immersive mode is a mode and not an overlay, so its key works
+      // whatever else is open. One rule reads the key; the page does what
+      // the rule means.
+      const immersive = immersiveAction(event, state);
+      if (immersive === 'toggle') {
+        event.preventDefault();
+        setImmersive(!state.immersive);
+        return;
+      }
       if (event.key === 'Escape') {
         // The question the page asks is closed by Escape, like any other.
         if (dom.confirmDialog && !dom.confirmDialog.hidden) {
@@ -6628,6 +6646,11 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
         if (state.editingTitleId) {
           state.editingTitleId = null;
           render();
+          return;
+        }
+        // Nothing else was open: what is left to close is the mode itself.
+        if (immersive === 'exit') {
+          setImmersive(false);
           return;
         }
         selectNode(null, false);
@@ -6668,6 +6691,12 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
         event.preventDefault();
         pasteClipboard();
       }
+    });
+
+    // The user may leave the fullscreen with the key the browser takes, and
+    // the mode has to follow it out.
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && state.immersive) setImmersive(false);
     });
 
     // A native drag would swallow the pointermove stream the canvas relies on.
@@ -7282,6 +7311,41 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
         });
       });
     }
+    dom.immersiveButton.addEventListener('click', () => setImmersive(!state.immersive));
+    // The way out stands on the canvas: in the mode the toolbar is gone, so
+    // the button that leaves it cannot live there.
+    dom.immersiveExit.addEventListener('click', () => setImmersive(false));
+  }
+
+  // ---------------------------------------------------------------- immersive
+
+  /**
+   * The immersive mode: the chrome goes out of the way and the canvas takes
+   * the whole surface.
+   *
+   * The host may hand the window to the page as well, so the mode asks for
+   * the real fullscreen — and keeps the page mode whether the host says yes
+   * or no. A refusal is not an error the user has to read.
+   */
+  function setImmersive(on) {
+    if (state.immersive === on) return;
+    state.immersive = on;
+    dom.app.classList.toggle('nxc-app--immersive', on);
+    dom.immersiveExit.hidden = !on;
+    // The surface grew or shrank, so the canvas has to be told again where
+    // there is room for it.
+    applyViewport();
+    renderToolbar();
+    void syncFullscreen(on);
+  }
+
+  async function syncFullscreen(on) {
+    try {
+      if (on) await document.documentElement.requestFullscreen?.();
+      else await document.exitFullscreen?.();
+    } catch {
+      // The host says no. The canvas is still immersive without it.
+    }
   }
 
   // ---------------------------------------------------------------- bootstrap
@@ -7325,6 +7389,9 @@ import { applyAction, applyModel, canvasTitleAfterTemplate, inheritedTextFor, le
     dom.gridButton = $('btn-grid');
     dom.themeButton = $('btn-theme');
     dom.popoutButton = $('btn-popout');
+    dom.immersiveButton = $('btn-immersive');
+    dom.immersiveExit = $('immersive-exit');
+    dom.app = $('nxc-app');
 
     bindInteractions();
     bindToolbar();
