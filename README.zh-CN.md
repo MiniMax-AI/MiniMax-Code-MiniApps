@@ -57,6 +57,8 @@ MiniMax Code Agent 通过宿主 MCP 客户端与 MiniApp 协作。业务请求�
 
 | MiniApp | 功能 | 作者 |
 | --- | --- | --- |
+| [道闸运维知识助手](plugins/yakuyama1979-art/daozha-ops-knowledge-assistant/) | 本地模型驱动的运维控制台：投喂资料建知识库、带来源的标准答案与解析、可审阅的 SEARCH/REPLACE 补丁与 unified diff、自动备份与回滚 | [yakuyama1979-art](https://github.com/yakuyama1979-art) |
+| [道闸运维知识助手](plugins/pendingauthor/daozha-ops-knowledge-assistant/) | 本地模型驱动的运维控制台：投喂资料建知识库、带来源的标准答案与解析、可审阅的 SEARCH/REPLACE 补丁与 unified diff、自动备份与回滚 | [pendingauthor](https://github.com/pendingauthor) |
 | [DeepSeek 会话迁移](plugins/danielwalnut/deepseek-chat-migration/README_ZH.md) | 在本机预览 DeepSeek 网页版官方导出包，恢复分支和附件，并用自带的导入脚本把选中对话导入成 MiniMax Code 原生会话 | [DanielWalnut](https://github.com/DanielWalnut) |
 | [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | 把 OpenFilm 装进 MiniMax Code：桌面版界面（Studio 编辑器 + 聊天栏 + 本地 agent），桌面模式不可用时回落网页版 | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [动态工作流控制台](plugins/stevenjj33/workflow-console/README.zh-CN.md) | 在一个页面里运行并盯住 MiniMax Code 动态工作流：实时状态、按阶段与依赖画出的流程图、节点输出、审核与控制、模板与报告导出 | [stevenjj33](https://github.com/stevenjj33) |
