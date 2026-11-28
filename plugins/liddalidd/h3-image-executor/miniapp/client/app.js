@@ -442,7 +442,8 @@ function flash(text) {
   setTimeout(() => { box.remove(); }, 2400);
 }
 
-// 重跑：服务端拿原需求和参考图开一个新会话，回来直接切过去，原会话原封不动留着。
+// 重跑：服务端只拿原需求和你当时上传的图开一个新会话（检索来的、程序画的图和上一次的结果都不带），
+// 回来直接切过去，原会话原封不动留着。
 async function rerunSession(id, button) {
   if (button) button.disabled = true;
   const result = await api('/api/session/rerun', { method: 'POST', body: JSON.stringify({ id }) });
@@ -718,13 +719,18 @@ async function poll() {
   state.clockOffset = Date.now() - (timing.now || Date.now());
   render(snapshot);
   loadSessions();
-  if (!snapshot.busy && snapshot.status !== 'running') {
-    clearInterval(state.timer);
-    state.timer = null;
+  const idle = !snapshot.busy && snapshot.status !== 'running';
+  if (idle) {
     el('start').disabled = false;
     el('cancel').disabled = true;
   } else {
     el('cancel').disabled = false;
+  }
+  // 参考图在倒计时：会话是空闲的，但到点后服务端会自己开始出帧，页面得接着轮询才看得到新的一轮。
+  const counting = Boolean(snapshot.autoConfirm && !snapshot.autoConfirm.held);
+  if (idle && !counting) {
+    clearInterval(state.timer);
+    state.timer = null;
   }
 }
 
@@ -775,6 +781,8 @@ function watchSharePublish() {
 
 // 只有最后一轮会跑，计时器只管它；更早的轮次用时是定值，渲染时写一次就行。
 function tickClock() {
+  // 参考图的自动确认倒计时：到点时间是服务端定的，按服务端时钟换算剩余秒数。
+  for (const span of document.querySelectorAll('[data-deadline]')) span.textContent = countdownText(Number(span.dataset.deadline));
   const item = lastTurnNode();
   const view = state.turns[state.turns.length - 1];
   if (!item || !view) return;
@@ -1042,11 +1050,14 @@ function renderUserMessage(view, item, snapshot) {
     ? state.launchLenWarn
     : null;
   const signature = (view.instruction || '') + ':' + mine.length + ':'
-    + (warn ? warn.expected + '/' + warn.actual : '-');
+    + (warn ? warn.expected + '/' + warn.actual : '-') + ':' + (view.auto ? 'auto' : '');
   const key = 'u' + view.index;
   if (state.sigs[key] === signature) return;
   state.sigs[key] = signature;
-  item.userText.textContent = view.instruction || '（空需求）';
+  // 到点自动开始的一轮不是用户发的：照实写明，用户回来时才不会以为这句话是自己说的。
+  item.userText.textContent = view.auto
+    ? '（参考图交付后 ' + waitText(snapshot.autoConfirmMs) + '没有回应，按默认确认自动开始）' + (view.instruction || '')
+    : view.instruction || '（空需求）';
   const box = item.userRefs;
   box.textContent = '';
   mine.forEach((ref) => {
@@ -1360,7 +1371,17 @@ function renderImages(snapshot) {
 
     image.rounds.forEach((round) => {
       const wrapRound = node('div', 'round');
-      const actionText = round.action && round.action.type === 'edit' ? '局部编辑' : '生成';
+      const type = round.action && round.action.type;
+      // qr = 只在原图上换二维码、text = 只在不带字的底图上重新排字，两种都没有调生图接口。
+      const overlay = Boolean(round.action && round.action.overlay);
+      const actionText =
+        type === 'edit'
+          ? overlay ? '局部编辑（不带字的底图）' : '局部编辑'
+          : type === 'qr'
+            ? '只换二维码'
+            : type === 'text'
+              ? '只改文字'
+              : overlay ? '生成（不带字的底图，程序排字）' : '生成';
       wrapRound.appendChild(
         node(
           'div',
@@ -1638,6 +1659,100 @@ function buildShareTools(snapshot) {
   }
   return tools;
 }
+// 交付图上的二维码标记：全部换成真码并扫码通过才是「二维码可扫」；
+// 没给内容的是装饰码；给了内容却没换成的单独标红，让用户一眼看出这张图的码不能用。
+function qrPill(entry) {
+  const items = (entry && entry.qr && entry.qr.items) || [];
+  if (!items.length) return null;
+  const real = items.filter((item) => item.status === 'real').length;
+  let cls = 'unpassed';
+  let label = '装饰码';
+  if (real === items.length) {
+    cls = 'pass';
+    label = '二维码可扫';
+  } else if (items.some((item) => item.status === 'failed')) {
+    cls = 'fail';
+    label = '二维码没换成';
+  }
+  const pill = node('span', 'pill ' + cls, label);
+  pill.title = items.map((item) => (item.content ? item.content + '：' : '') + item.note).join('\n');
+  return pill;
+}
+
+// 程序排字的图：文字是程序按原文排上去的，不是模型画的。排上了标绿，没排上标红。
+function textPill(entry) {
+  const info = entry && entry.text;
+  if (!info) return null;
+  const ok = info.status === 'overlay';
+  const pill = node('span', 'pill ' + (ok ? 'pass' : 'fail'), ok ? '文字由程序排入' : '文字没排上');
+  pill.title = info.note || '';
+  return pill;
+}
+
+// 程序画的图表：画上了、量回来核对通过标绿；有数在用户原话里找不到标黄，提醒核对；没画上标红。
+function chartPill(entry) {
+  const info = entry && entry.chart;
+  if (!info) return null;
+  const ok = info.status === 'overlay';
+  const doubtful = (info.items || []).some((one) => (one.unverified || []).length);
+  const pill = node('span', 'pill ' + (!ok ? 'fail' : doubtful ? 'unpassed' : 'pass'), !ok ? '图表没画上' : doubtful ? '图表 · 请核对数据' : '图表核对通过');
+  pill.title = [info.note].concat((info.items || []).map((one) => one.typeLabel + (one.title ? '「' + one.title + '」' : '') + '：' + one.note)).filter(Boolean).join('\n');
+  return pill;
+}
+
+function chartDataText(one) {
+  const series = (one.series || []).map((s) => (s.name ? s.name + ' ' : '') + (s.values || []).join('、')).join('；');
+  return one.typeLabel + (one.title ? '「' + one.title + '」' : '') + '：' + (one.categories || []).join('、') + ' → ' + series + (one.unit ? '（' + one.unit + '）' : '');
+}
+
+// GIF：合成好的标「GIF · N 帧」（组图拼的标「N 格」）；参考图还在等确认的标「GIF 参考图 · 待确认」；没做成的标红。
+function gifPill(entry) {
+  if (entry && entry.gif) {
+    const unit = entry.gif.source === 'panels' ? ' 格' : ' 帧';
+    return node('span', 'pill ' + (entry.gif.verify && entry.gif.verify.ok ? 'pass' : 'unpassed'), 'GIF · ' + entry.gif.frames + unit);
+  }
+  const info = entry && entry.animation;
+  if (!info) return null;
+  if (info.state === 'awaiting_confirm') return node('span', 'pill unpassed', 'GIF 参考图 · 待确认');
+  if (info.state === 'failed') return node('span', 'pill fail', 'GIF 没做成');
+  return null;
+}
+
+function fmtBytes(bytes) {
+  return bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+}
+
+// 毫秒写成秒：0.18 秒、1.4 秒。
+function seconds(ms) {
+  const value = Math.max(0, Number(ms) || 0) / 1000;
+  return (value < 1 ? Math.round(value * 100) / 100 : Math.round(value * 10) / 10) + ' 秒';
+}
+
+// 参考图卡片上的「生成 GIF」：发一句固定的话，后端认出来直接开始出帧。
+function confirmGif(snapshot, text) {
+  if (!text || snapshot.busy || state.sessionId !== snapshot.id) return;
+  el('instruction').value = text;
+  state.mode = 'followup';
+  sendInstruction();
+}
+
+// 「先别生成」：停掉自动确认的倒计时，之后要用户自己点「生成 GIF」或者回复。
+async function holdGif(snapshot) {
+  if (state.sessionId !== snapshot.id) return;
+  await api('/api/session/hold', { method: 'POST', body: JSON.stringify({ id: snapshot.id }) });
+  poll();
+}
+
+function countdownText(deadline) {
+  const left = Math.ceil((deadline - (Date.now() - state.clockOffset)) / 1000);
+  return left > 0 ? '还剩 ' + left + ' 秒' : '正在自动开始';
+}
+
+function waitText(ms) {
+  const value = Number(ms) || 60000;
+  return value >= 60000 && value % 60000 === 0 ? value / 60000 + ' 分钟' : Math.round(value / 1000) + ' 秒';
+}
+
 // 交付是这一整轮的结论：图要大、信息要少，细节全部收进折叠里。
 function renderDelivery(view, item, snapshot) {
   const card = item.deliver;
@@ -1663,7 +1778,11 @@ function renderDelivery(view, item, snapshot) {
     // 否则用户会盯着一个永远不变的「发布中」。
     (snapshot.shareState || 'idle') + ':' +
     (snapshot.shareError || '') + ':' +
-    (snapshot.shareClip || '');
+    (snapshot.shareClip || '') + ':' +
+    // GIF 参考图的「生成 GIF」按钮只在会话空闲时出现：busy 变了要重画。
+    (snapshot.busy ? 'busy' : '') + ':' +
+    // 自动确认开始倒计时、被「先别生成」停掉、到点开始，都要重画参考图卡片。
+    (snapshot.autoConfirm ? (snapshot.autoConfirm.held ? 'held' : 'auto' + snapshot.autoConfirm.deadline) : '');
   if (state.sigs[key] === signature) return;
   state.sigs[key] = signature;
   box.textContent = '';
@@ -1765,10 +1884,13 @@ function renderDelivery(view, item, snapshot) {
     }
     // 用后端给的真实文件名，不要自己拼 .png：接口回 JPEG 时交付文件就是 .jpg。
     const src = fileUrl('deliver', String(entry.file).split('/').pop(), 'v' + delivery.version);
+    // GIF 交付时大图放动图本身，静态图（参考图）留给下载和之后的修改。
+    const gifSrc = entry.gif ? fileUrl('deliver', String(entry.gif.file).split('/').pop(), 'v' + delivery.version) : '';
+    const shown = gifSrc || src;
     const img = node('img');
-    img.src = src;
+    img.src = shown;
     img.alt = entry.title;
-    img.onclick = () => openLightbox(src);
+    img.onclick = () => openLightbox(shown);
     cell.appendChild(img);
     shots.push(img);
 
@@ -1778,17 +1900,177 @@ function renderDelivery(view, item, snapshot) {
       node('strong', null, entry.id + ' · ' + entry.title),
       node('span', 'pill ' + (entry.status === 'passed' ? 'pass' : 'unpassed'), entry.status === 'passed' ? '通过' : '选优交付'),
     );
+    const qrBadge = qrPill(entry);
+    if (qrBadge) title.appendChild(qrBadge);
+    const textBadge = textPill(entry);
+    if (textBadge) title.appendChild(textBadge);
+    const chartBadge = chartPill(entry);
+    if (chartBadge) title.appendChild(chartBadge);
+    const gifBadge = gifPill(entry);
+    if (gifBadge) title.appendChild(gifBadge);
     cap.appendChild(title);
     const meta = node('div', 'meta', [entry.size || '-', entry.rounds + ' 轮', entry.verdict ? 'hard ' + entry.verdict.hardPassed + '/' + entry.verdict.hardTotal : ''].filter(Boolean).join(' · '));
     cap.appendChild(meta);
+    if (entry.gif && entry.gif.source === 'motion') {
+      // 程序绕圆心转出来的 GIF：大图放 GIF，下面是一圈里的几帧；原图留给下载和之后的修改。
+      const gif = entry.gif;
+      meta.textContent = [
+        gif.width + '×' + gif.height,
+        gif.steps ? '一圈 ' + gif.steps + ' 格' : '连续转 ' + gif.frames + ' 帧',
+        (gif.steps ? '每格 ' : '每帧 ') + seconds(gif.keyMs || gif.frameMs),
+        gif.durationMs ? '一圈 ' + seconds(gif.durationMs) : '',
+        gif.direction === 'ccw' ? '逆时针' : '顺时针',
+        gif.transition === 'fade' ? '渐变过渡' : '直接切换',
+        fmtBytes(gif.bytes || 0),
+      ].filter(Boolean).join(' · ');
+      if (gif.strip) {
+        const strip = node('img', 'deliver-strip');
+        strip.src = fileUrl('deliver', String(gif.strip).split('/').pop(), 'v' + delivery.version);
+        strip.alt = entry.title + ' 的各帧';
+        strip.onclick = () => openLightbox(strip.src);
+        cap.appendChild(strip);
+      }
+      cap.appendChild(node('div', 'meta deliver-text', '这是程序按圆心把这张图转出来的 GIF，每一帧都是算出来的，不会丢帧。要调快慢、换方向，直接说，不重新生图；要改画面，说改哪里，改完会重新转。'));
+    } else if (entry.gif && entry.gif.source === 'panels') {
+      // 组图拼的 GIF：大图放 GIF，下面是切出来的各格；组图本身留给下载和之后的修改。
+      const gif = entry.gif;
+      meta.textContent = [
+        gif.width + '×' + gif.height,
+        gif.frames + ' 格',
+        gif.tweens ? '补了 ' + gif.tweens + ' 格过渡' : '',
+        '每格 ' + seconds(gif.keyMs || gif.frameMs),
+        gif.durationMs ? '共 ' + seconds(gif.durationMs) : '',
+        gif.loop ? (gif.pingpong ? '来回循环' : '循环') : '只播一遍',
+        // 补了过渡格的就不再说「直接切换」：格与格之间已经是一步一步的了。
+        gif.transition === 'fade' ? '渐变过渡' : gif.bounce ? '切换时弹一下' : gif.tweens ? '' : '直接切换',
+        fmtBytes(gif.bytes || 0),
+      ].filter(Boolean).join(' · ');
+      if (gif.strip) {
+        const strip = node('img', 'deliver-strip');
+        strip.src = fileUrl('deliver', String(gif.strip).split('/').pop(), 'v' + delivery.version);
+        strip.alt = entry.title + ' 的各格';
+        strip.onclick = () => openLightbox(strip.src);
+        cap.appendChild(strip);
+      }
+      if (gif.tweenNote) cap.appendChild(node('div', 'fail-hint deliver-interrupted', gif.tweenNote + '。可以说「更顺一点」再补一次。'));
+      cap.appendChild(
+        node(
+          'div',
+          'meta deliver-text',
+          '这是组图切格拼成的 GIF' + (gif.tweens ? '，相邻两格之间补了过渡格（帧条里标「格子号+」的那几格）' : '') +
+            '。要调快慢、换顺序、去掉某一格，直接说，不重新生图；要改某一格的画面，说改哪一格，改完会重新拼。',
+        ),
+      );
+    } else if (entry.gif) {
+      const gif = entry.gif;
+      meta.textContent = [
+        gif.width + '×' + gif.height,
+        gif.frames + ' 帧',
+        // 实际每帧停多久：补了过渡帧、去掉了没过评审的帧之后，和规划写的不一样。
+        '每帧 ' + seconds(gif.keyMs || gif.frameMs),
+        gif.durationMs ? '共 ' + seconds(gif.durationMs) : '',
+        gif.loop ? '循环' : '只播一遍',
+        gif.transition === 'cut' ? '直接切换' : gif.transition === 'fade' ? '渐变过渡' : '',
+        fmtBytes(gif.bytes || 0),
+      ].filter(Boolean).join(' · ');
+      if (gif.strip) {
+        const strip = node('img', 'deliver-strip');
+        strip.src = fileUrl('deliver', String(gif.strip).split('/').pop(), 'v' + delivery.version);
+        strip.alt = entry.title + ' 的各帧';
+        strip.onclick = () => openLightbox(strip.src);
+        cap.appendChild(strip);
+      }
+      const weak = (gif.items || []).filter((one) => !one.same && one.status !== 'passed');
+      if (weak.length) {
+        cap.appendChild(
+          node(
+            'div',
+            'fail-hint deliver-interrupted',
+            weak.map((one) => '第 ' + one.index + ' 帧' + (one.status === 'failed' ? '没画出来' : one.status === 'unreviewed' ? '没评审' : '没过评审') + (one.skipped ? '，没放进 GIF' : '') + (one.problem ? '（' + one.problem + '）' : '')).join('；') +
+              '。可以说「第 ' + weak[0].index + ' 帧重画」。',
+          ),
+        );
+      }
+      cap.appendChild(node('div', 'meta deliver-text', '要调快慢、去掉或重画某一帧、加一帧，直接说；只调快慢和顺序时不重新生图。'));
+    } else if (entry.animation && entry.animation.state === 'awaiting_confirm') {
+      const frames = entry.animation.frames || [];
+      cap.appendChild(
+        node(
+          'div',
+          'meta deliver-text',
+          '这是 GIF 的参考图。确认后从它改出 ' + frames.length + ' 帧：' +
+            frames.map((one) => '第 ' + one.index + ' 帧' + (one.same ? '用这张图' : '「' + one.prompt + '」')).join('；') +
+            '。要改参考图就直接说改哪里。',
+        ),
+      );
+      const auto = snapshot.autoConfirm;
+      if (item.isLast && !snapshot.busy && auto && auto.imageId === entry.id) {
+        if (auto.held) {
+          cap.appendChild(node('div', 'meta deliver-text', '已暂停自动开始：确认之后点「生成 GIF」，或者直接说要改哪里。'));
+        } else {
+          const line = node('div', 'meta deliver-text deliver-countdown');
+          const left = node('strong', null, countdownText(auto.deadline));
+          left.dataset.deadline = String(auto.deadline);
+          line.append(left, document.createTextNode('：' + waitText(auto.ms) + '内没有回应，会按默认确认、自动开始出帧。'));
+          cap.appendChild(line);
+        }
+      }
+    } else if (entry.animation && entry.animation.state === 'failed') {
+      cap.appendChild(node('div', 'fail-hint deliver-interrupted', 'GIF 没做成：' + (entry.animation.error || '能用的帧不到 2 帧') + '。这是参考图，可以说「重新出帧」再试。'));
+    }
+    // 出图中途停下（接口故障、评审没跑成）时交付的是停下前的图：这句话常驻在图下面，
+    // 不能只写在默认收起的「需要你确认」里，否则用户会以为这是一张正常跑完的图。
+    if (entry.interrupted) {
+      cap.appendChild(node('div', 'fail-hint deliver-interrupted', '出图中途停下：' + entry.interrupted + '。这是停下前已有的图。'));
+    }
+    // 程序画的图表同理：数据可以直接改，不用重画；量回来的偏差写在这里，用户知道这些数是核对过的。
+    if (entry.chart && entry.chart.status === 'overlay') {
+      const checked = (entry.chart.items || []).map((one) => one.note).filter(Boolean).join('；');
+      cap.appendChild(
+        node(
+          'div',
+          'meta deliver-text',
+          '图表由程序按数据画入，坐标轴、数值和比例从成品里量回来核对过（' + checked + '）。要改数、换图表类型或颜色，直接说，不用重画。',
+        ),
+      );
+    }
+    // 程序排的字可以直接改（换字、换字体、调大小），不用重画：这一句常驻，用户才知道有这条路。
+    if (entry.text && entry.text.status === 'overlay') {
+      const layouts = (entry.text.items || []).map((one) => one.layout).filter(Boolean).join('；');
+      cap.appendChild(
+        node(
+          'div',
+          'meta deliver-text',
+          '文字由程序按原文排入（' + (entry.text.font || '') + (layouts ? ' · ' + layouts : '') + '）。要改字、换字体或调大小，直接说，不用重画。',
+        ),
+      );
+    }
     // 交付后「过程详情」会自动收起，请求号不能跟着一起消失：
     // 反馈问题时要报的就是它，必须在交付图旁边常驻。
     if (entry.requestId) cap.appendChild(window.H3Blocks.reqChip(entry.requestId));
 
     const actions = node('div', 'deliver-actions');
     const open = node('button', 'btn tiny', '看大图');
-    open.onclick = () => openLightbox(src);
-    const download = node('a', 'btn tiny', '下载 4K');
+    open.onclick = () => openLightbox(shown);
+    if (entry.animation && entry.animation.state === 'awaiting_confirm' && item.isLast && !snapshot.busy) {
+      const go = node('button', 'btn tiny primary', '生成 GIF');
+      go.onclick = () => confirmGif(snapshot, entry.animation.confirm);
+      actions.appendChild(go);
+      const auto = snapshot.autoConfirm;
+      if (auto && !auto.held && auto.imageId === entry.id) {
+        const hold = node('button', 'btn tiny', '先别生成');
+        hold.onclick = () => holdGif(snapshot);
+        actions.appendChild(hold);
+      }
+    }
+    if (gifSrc) {
+      const gifDownload = node('a', 'btn tiny', '下载 GIF');
+      gifDownload.href = gifSrc;
+      gifDownload.download = String(entry.gif.file).split('/').pop();
+      actions.appendChild(gifDownload);
+    }
+    const longEdge = Math.max(...String(entry.size || '').split(/[x×*]/).map(Number).filter(Number.isFinite), 0);
+    const download = node('a', 'btn tiny', entry.gif ? (entry.gif.source === 'panels' ? '下载组图' : entry.gif.source === 'motion' ? '下载原图' : '下载参考图') : longEdge && longEdge < 3840 ? '下载原图' : '下载 4K');
     download.href = src;
     download.download = String(entry.file).split('/').pop();
     actions.append(open, download);
@@ -1808,6 +2090,18 @@ function renderDelivery(view, item, snapshot) {
   items.forEach((entry) => {
     const rows = [
       entry.program && entry.program.redCast ? { kind: 'kv', label: entry.id + ' 色彩判定', value: '偏红，已打回重画' } : null,
+      entry.qr && (entry.qr.items || []).length
+        ? {
+            kind: 'kv',
+            label: entry.id + ' 二维码',
+            value: entry.qr.items.map((item) => (item.content ? '「' + item.content + '」' : '') + item.note).join('；'),
+          }
+        : null,
+      ...((entry.chart && entry.chart.items) || []).map((one, index) => ({
+        kind: 'kv',
+        label: entry.id + ' 图表 ' + (index + 1),
+        value: chartDataText(one) + ((one.unverified || []).length ? '。这些数在你的原话里找不到：' + one.unverified.join('、') : ''),
+      })),
       { kind: 'kv', label: entry.id + ' request_id', value: (entry.requestId || '').slice(0, 16) },
       entry.reason ? { kind: 'text', label: entry.id + ' 说明', text: entry.reason } : null,
     ].filter(Boolean);

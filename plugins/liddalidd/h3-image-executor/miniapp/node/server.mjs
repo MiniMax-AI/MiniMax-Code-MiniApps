@@ -9,6 +9,10 @@ import { runSession, runIncrementalEdit, DEFAULTS } from './lib/workflow.mjs';
 import { detail, text } from './lib/detail.mjs';
 import { buildShareHtml } from './lib/share.mjs';
 import { createRefCache } from './lib/refcache.mjs';
+import { confirmText, restoreAnimation, snapshotAnimation } from './lib/animation.mjs';
+import { restorePanelGif, restorePanelGifSpec, snapshotPanelGif } from './lib/panelgif.mjs';
+import { normalizeMotionGif, restoreMotionGif, snapshotMotionGif } from './lib/motiongif.mjs';
+import { restoreTweens, snapshotTweens } from './lib/paneltween.mjs';
 import { readClipboard, classifyClipboard, disposeClipboard, writeClipboard } from './lib/clipboard.mjs';
 import { publishHtml } from './lib/publish.mjs';
 
@@ -24,9 +28,18 @@ function imageContentType(buffer) {
   if (buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
   if (buffer.length > 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF'
     && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buffer.length > 6 && /^GIF8[79]a$/.test(buffer.subarray(0, 6).toString('ascii'))) return 'image/gif';
   return 'application/octet-stream';
 }
 const MAX_BODY = 24 * 1024 * 1024;
+
+// GIF 参考图交付后等多久没有回应就默认确认、自动开始出帧（ms）。staleMs：运行时重启时，倒计时到点已经过了这么久的
+// 不再自动开始——应用关了好几天再打开，不该突然替用户出帧、花掉接口调用。导出成对象是为了测试里能调短。
+export const AUTO_CONFIRM = { ms: 60000, staleMs: 10 * 60 * 1000 };
+
+function waitText(ms) {
+  return ms >= 60000 && ms % 60000 === 0 ? ms / 60000 + ' 分钟' : Math.round(ms / 1000) + ' 秒';
+}
 
 export async function start(context) {
   const root = context.pluginRoot;
@@ -137,7 +150,17 @@ export async function start(context) {
       const data = parseLooseJson(raw);
       if (!data || !data.id || sessions.has(data.id)) continue;
       const restored = await rehydrate(data, dir);
-      if (restored) sessions.set(restored.id, restored);
+      if (!restored) continue;
+      sessions.set(restored.id, restored);
+      // 重启前还在等确认的参考图：点过「先别生成」的保持暂停；倒计时还在走（或者刚到点不久）的重新计满，
+      // 不立刻开跑——用户可能正准备回复。到点已经过了很久的（应用关了几天），不替用户开始。
+      const pending = data.autoConfirm;
+      if (pending && awaitingImage(restored) === pending.imageId) {
+        if (pending.held) restored.autoConfirm = { imageId: pending.imageId, deadline: 0, held: true };
+        else if (Date.now() - (Number(pending.deadline) || 0) < AUTO_CONFIRM.staleMs) {
+          armAutoConfirm(restored, AUTO_CONFIRM.ms, pending.imageId + ' 的参考图还在等你确认（应用重启过，倒计时重新开始）：' + waitText(AUTO_CONFIRM.ms) + '内没有回应就默认确认，自动开始出帧');
+        }
+      }
     }
     if (sessions.size) context.logger.info('h3.sessions.restored', { count: sessions.size });
   }
@@ -161,13 +184,15 @@ export async function start(context) {
   // 所以这里按"轮"记账：一轮 = { 用户这句话, 从哪条事件开始, 这一轮交付了什么 }。
   // 事件不需要额外打标：下一轮的 startSeq 就是上一轮的右边界。
 
-  function startTurn(session, instruction) {
+  function startTurn(session, instruction, options) {
     const turn = {
       instruction,
       at: Date.now(),
       startSeq: session.eventSeq || 0,
       finishedAt: 0,
       delivery: null,
+      // 用户没回应、到点自动开始的一轮：页面上要标出来，用户回来时才知道这一轮不是他发的。
+      auto: Boolean(options && options.auto),
       // 成本是会话级累加的，扣掉这一轮开始时的基数才是"这一轮花了多少"。
       baseCost: {
         ditImages: session.cost.ditImages,
@@ -221,6 +246,7 @@ export async function start(context) {
       index,
       instruction: turn.instruction || '',
       at: turn.at,
+      auto: Boolean(turn.auto),
       // 下面几个是记账用的原始字段：rehydrate 全靠它们把事件重新切回各轮，不能省。
       startSeq: from,
       finishedAt: turn.finishedAt || 0,
@@ -278,6 +304,77 @@ export async function start(context) {
     return session.persistChain;
   }
 
+  // ---------------------------------------------------------------- GIF 参考图的自动确认
+  //
+  // 参考图交付后等用户确认（点「生成 GIF」或回复）。AUTO_CONFIRM.ms 内没有任何回应就当作确认，自动开始出帧。
+  // 计时放在服务端：页面关了、切走了都照样到点。这段时间里用户发了消息、点了「先别生成」、停止或删除会话，倒计时就取消。
+  // 状态记在 session.autoConfirm 上并落盘：{ imageId, deadline, held }，held 是用户点了「先别生成」，重启之后也不再自动开始。
+  const autoTimers = new Map();
+  let disposed = false;
+
+  function awaitingImage(session) {
+    const items = (session.delivery && session.delivery.items) || [];
+    const item = items.find((one) => one && one.animation && one.animation.state === 'awaiting_confirm');
+    return item ? item.id : '';
+  }
+
+  function stopAutoTimer(session) {
+    const timer = autoTimers.get(session.id);
+    if (timer) clearTimeout(timer);
+    autoTimers.delete(session.id);
+  }
+
+  // 交付完（或者重启恢复时）调用：交付里有等确认的参考图就开始倒计时，没有就清掉。
+  function armAutoConfirm(session, delayMs, note) {
+    stopAutoTimer(session);
+    const imageId = awaitingImage(session);
+    if (!imageId || disposed || session.status === 'cancelled') {
+      session.autoConfirm = null;
+      return;
+    }
+    session.autoConfirm = { imageId, deadline: Date.now() + delayMs, held: false };
+    const timer = setTimeout(() => {
+      autoTimers.delete(session.id);
+      void fireAutoConfirm(session.id);
+    }, delayMs);
+    // 只为这个计时器不必撑着进程不退：dispose 时会统一清掉。
+    if (typeof timer.unref === 'function') timer.unref();
+    autoTimers.set(session.id, timer);
+    push(session, 'plan', note || imageId + ' 的参考图等你确认：' + waitText(delayMs) + '内没有回应就默认确认，自动开始出帧');
+  }
+
+  // 用户有了任何回应：倒计时作废。
+  function cancelAutoConfirm(session) {
+    stopAutoTimer(session);
+    session.autoConfirm = null;
+  }
+
+  function holdAutoConfirm(session) {
+    if (!session.autoConfirm || session.autoConfirm.held) return false;
+    stopAutoTimer(session);
+    session.autoConfirm = { imageId: session.autoConfirm.imageId, deadline: 0, held: true };
+    push(session, 'plan', '已暂停自动开始：确认参考图之后点「生成 GIF」，或者直接说要改哪里');
+    return true;
+  }
+
+  async function fireAutoConfirm(id) {
+    const session = sessions.get(id);
+    if (!session || !session.autoConfirm || session.autoConfirm.held || disposed) return;
+    const imageId = session.autoConfirm.imageId;
+    session.autoConfirm = null;
+    // 到点再核对一遍：还在等这张参考图、没有在跑别的、没被停止。
+    if (session.busy || session.taskActive || session.status === 'cancelled' || awaitingImage(session) !== imageId) {
+      void persist(session);
+      return;
+    }
+    context.logger.info('h3.auto_confirm.fired', { sessionId: session.id, imageId });
+    try {
+      await followUp(session, confirmText(imageId), { auto: true });
+    } catch (error) {
+      context.logger.error('h3.auto_confirm.failed', { sessionId: session.id, message: String(error && error.message ? error.message : error) });
+    }
+  }
+
   // 出图前的关键确认：工作流在闸门这里挂起，等页面回答，或者用户直接选"按默认方案"。
   const gates = new Map();
 
@@ -297,11 +394,15 @@ export async function start(context) {
     return Boolean(resolve);
   }
 
-  // 重跑：拿原会话的需求和参考图开一个新会话。参考图在磁盘上，转成 dataUrl 走同一条创建路径，
-  // 这样重跑出来的会话和手输需求创建的完全一致，不会多出一种特殊结构。
+  // 重跑：只带原需求和你当时手动上传的图，别的一概不带。以前会把这个会话里的参考图全带上：检索来的、
+  // 程序画的角色基准图和 GIF 参考图，到了新会话里全变成「你上传的」，规划拿它们当参考，
+  // 新的一次等于照着上一次的结果再画（真机 20261117-21581a 的 GIF 参考图就会被带过去）。
+  // 上传的图在磁盘上，转成 dataUrl 走同一条创建路径，重跑出来的会话和手输需求创建的完全一致。
   async function rerunSession(source) {
+    const all = source.refs || [];
+    const uploaded = all.filter((ref) => ref.origin === 'user');
     const refs = [];
-    for (const ref of (source.refs || []).slice(0, 8)) {
+    for (const ref of uploaded.slice(0, 8)) {
       try {
         const buffer = await readFile(ref.path);
         const ext = String(ref.file || '').split('.').pop().toLowerCase() || 'png';
@@ -314,7 +415,7 @@ export async function start(context) {
         // 参考图读不到就跳过：重跑本身不该因为少一张图而失败。
       }
     }
-    return createSession({ instruction: source.instruction, refs });
+    return createSession({ instruction: source.instruction, refs, rerun: { from: source.id, left: all.length - uploaded.length } });
   }
 
   // 删除会话：先把整个目录挪进 .trash 再从内存摘掉，不直接 rm。
@@ -325,6 +426,7 @@ export async function start(context) {
     // 正在跑的会话不允许删：agent 还在往这个目录里写，删了会写出一堆无主文件。
     // status 也要看：重启后 busy 会被恢复成 false，只看它会漏掉「看起来在跑」的那种。
     if (session.busy || session.taskActive || session.status === 'running') return { error: 'busy' };
+    cancelAutoConfirm(session);
     sessions.delete(id);
     try {
       const trash = join(dataRoot, '.trash');
@@ -510,6 +612,8 @@ export async function start(context) {
       deliveryVersion: 0,
       // 角色基准图：多图时先出的外观基准，只做内部参考，不进交付。
       characterRefs: [],
+      // 追问里重新检索参考图的记录。
+      editRefQueries: [],
       // 跨图一致性评审结论，所有图出完之后才写得出来。
       crossCheck: null,
       fatal: '',
@@ -519,6 +623,16 @@ export async function start(context) {
     sessions.set(id, session);
     startTurn(session, session.instruction);
     push(session, 'input', '收到需求：' + session.instruction + (refs.length ? '（附 ' + refs.length + ' 张参考图）' : ''));
+    // 重跑来的：写清带了什么、没带什么。只是一条记录，不进任何提示词。
+    const rerun = payload.rerun && typeof payload.rerun === 'object' ? payload.rerun : null;
+    if (rerun && SAFE_NAME.test(String(rerun.from || ''))) {
+      push(
+        session,
+        'input',
+        '重跑 ' + rerun.from + '：只带原需求' + (refs.length ? '和你上传的 ' + refs.length + ' 张图' : '') +
+          (Number(rerun.left) > 0 ? '，上一次检索来的、程序画的 ' + Number(rerun.left) + ' 张参考图和结果都没带' : ''),
+      );
+    }
 
     // taskActive 一直到后台任务真正结束才放下。「停止」会立刻把 busy 置回 false，
     // 但被中止的任务还要一点时间收尾；这期间不许追问、不许删除，否则同一个会话上会跑两个任务。
@@ -537,23 +651,34 @@ export async function start(context) {
         session.busy = false;
         session.finishedAt = Date.now();
         finishTurn(session);
+        armAutoConfirm(session, AUTO_CONFIRM.ms);
         await persist(session);
       }
     })();
     return session;
   }
 
-  async function followUp(session, instruction) {
+  // options.auto：到点自动确认发起的这一轮（见 fireAutoConfirm）。
+  async function followUp(session, instruction, options) {
     if (session.busy || session.taskActive) throw new Error('busy');
+    const auto = Boolean(options && options.auto);
+    // 用户发了任何话（包括点「生成 GIF」）都算回应了，倒计时作废。
+    cancelAutoConfirm(session);
     session.busy = true;
     session.status = 'running';
     session.finishedAt = 0;
     if (!session.config) session.config = await h3.resolveConfig(true);
     // 这一轮的起点必须记在"收到追问"这条事件之前，它自己属于新一轮。
-    startTurn(session, instruction);
-    push(session, 'edit', '收到追问：' + instruction, {
-      detail: detail('增量编辑请求', [text('用户这次的话', instruction)]),
-    });
+    startTurn(session, instruction, { auto });
+    if (auto) {
+      push(session, 'edit', waitText(AUTO_CONFIRM.ms) + '内没有回应，按默认确认：用这张参考图开始出 GIF', {
+        detail: detail('自动确认', [text('按这句话开始', instruction)]),
+      });
+    } else {
+      push(session, 'edit', '收到追问：' + instruction, {
+        detail: detail('增量编辑请求', [text('用户这次的话', instruction)]),
+      });
+    }
     session.taskActive = true;
     session.task = (async () => {
       try {
@@ -568,6 +693,7 @@ export async function start(context) {
         session.busy = false;
         session.finishedAt = Date.now();
         finishTurn(session);
+        armAutoConfirm(session, AUTO_CONFIRM.ms);
         await persist(session);
       }
     })();
@@ -604,13 +730,33 @@ export async function start(context) {
       gate: session.gate,
       permissions: session.permissions,
       pendingQuestion: session.pendingQuestion,
+      // GIF 参考图的自动确认：页面画倒计时和「先别生成」，重启时靠它决定要不要重新计时。
+      autoConfirm: session.autoConfirm
+        ? { imageId: session.autoConfirm.imageId, deadline: session.autoConfirm.deadline || 0, held: Boolean(session.autoConfirm.held), ms: AUTO_CONFIRM.ms }
+        : null,
+      // 自动开始的那一轮气泡上要写明等了多久。
+      autoConfirmMs: AUTO_CONFIRM.ms,
       // origin 决定这张图算"你给的"还是"系统搜的"：用户气泡只能放前者，搜到的属于执行轨迹。
       refs: session.refs.map((ref) => ({
         id: ref.id,
         file: 'refs/' + ref.file,
         note: ref.note,
         origin: ref.origin || (ref.source ? 'search' : 'user'),
+        // 检索来的图是从哪个地址下的。追问里用户说某张参考图不对时，重新检索要靠它把那张排除掉；
+        // 不落盘的话，重启之后同一张错图还会被再搜回来。
+        source: ref.source || '',
+        // 这张参考图拿来做什么、取它什么：重启后的追问编辑照样要逐张告诉模型。
+        use: ref.use || '',
+        take: ref.take || '',
       })),
+      // 追问里重新检索过的项。编辑节点要靠它知道哪些实体已经找到、哪些还没找到。
+      editRefQueries: session.editRefQueries || [],
+      // 规划给的检索预算和实际用了多少：排查「为什么没搜」「为什么搜了一半就停」用。
+      refBudget: session.refBudget
+        ? { limit: session.refBudget.limit, used: session.refBudget.used, searches: session.refBudget.searches, gates: session.refBudget.gates, stopped: session.refBudget.stopped || [] }
+        : null,
+      // 追问编辑、跨图评审撞过几次工具调用上限：重启后同一个节点照样多给（见 budget.mjs）。
+      toolHits: session.toolHits || null,
       // 角色基准图要跟着会话活过重启：跨图评审靠它判断"本组本该一致"，
       // 前端也要靠它说明每张图的外观基准是谁。path 是绝对路径，不能带出去。
       characterRefs: (session.characterRefs || []).map((ref) => ({
@@ -676,10 +822,42 @@ export async function start(context) {
           // 丢了它，重启后追问时 executeAction 就不会再强制带上角色图，主体会漂回各画各的。
           characterRefs: image.spec.characterRefs || [],
           textLayers: image.spec.textLayers,
+          // 二维码内容必须落盘：重启后用户补一句「码换成 xxx」，要靠它判断这张图本来有没有码。
+          qrCodes: image.spec.qrCodes || [],
+          // 程序排字的位置、书体和不带字的底图 prompt：重启后改字、重画都靠它。
+          textOverlay: image.spec.textOverlay || null,
+          basePrompt: image.spec.basePrompt || '',
+          // GIF 的帧安排（每帧怎么变、每帧多久、循环）：重启后调节奏、重画某一帧都靠它。
+          animation: image.spec.animation || null,
+          // 组图拼 GIF 的节奏（切格提示、每格多久、顺序）：重启后调快慢、改组图之后重拼都靠它。
+          panelGif: image.spec.panelGif || null,
+          // 程序转圈 GIF 的转法（圆心、格数、方向、每格多久）：重启后调快慢、换方向、改图之后重转都靠它。
+          motionGif: image.spec.motionGif || null,
+          // 规划判的难度：重启后的追问、重画照样按它定各节点的工具调用上限。
+          difficulty: image.spec.difficulty || '',
+          difficultyReason: image.spec.difficultyReason || '',
+          // 规划的文字层按版面读不出用户引号里的字（规划改过一次还是这样）：评审提醒、交付说明靠它。
+          readingProblems: image.spec.readingProblems || [],
+          // 程序画的图表（数据、位置、类型）：重启后改数、换类型都靠它。
+          charts: image.spec.charts || [],
           checklist: image.spec.checklist,
         },
+        // GIF 的运行状态：参考图是哪张、每帧画到哪了、各帧的候选文件。
+        animation: snapshotAnimation(image.animation),
+        // 组图拼好的 GIF：从哪张组图拼的、切成几格、文件名。重启后没改过就不用重拼。
+        panelGif: snapshotPanelGif(image.panelGif),
+        // 程序转好的 GIF：从哪张图转的、程序最后用的圆心、文件名。
+        motionGif: snapshotMotionGif(image.motionGif),
+        // 组图 GIF 的过渡格：每一步用哪张候选组图的哪一格。重启后不用重新生图。
+        panelTweens: snapshotTweens(image.panelTweens),
+        textMode: image.textMode || '',
+        textReason: image.textReason || '',
         chosenReason: image.chosenReason || '',
         chosenId: image.chosen ? image.chosen.id : null,
+        // 色彩基准：这张图第一张颜色合格的候选。重启后的追问编辑照样要带它对照颜色。
+        colorAnchor: image.colorAnchor ? { id: image.colorAnchor.id, file: image.colorAnchor.file } : null,
+        // 评审、修正、选优、动图评审在这张图上撞过几次工具调用上限。
+        toolHits: image.toolHits || null,
         // 下一轮候选从哪个轮号继续编号。不存它，重启后增量编辑会从 r1 重新编，
         // 把上一轮已经交付的同名文件覆盖掉。
         roundBase: image.roundBase || 0,
@@ -692,11 +870,17 @@ export async function start(context) {
             id: candidate.id,
             size: candidate.size,
             file: candidate.file,
+            // 贴真码之前的原图（file 指向贴好的那张）。只用来对照排查，恢复时不依赖它。
+            originalFile: candidate.originalFile || null,
+            // 程序排字之前、不带字的底图。之后改字、在这张图上编辑都从它开始。
+            baseFile: candidate.baseFile || null,
             previewFile: candidate.previewFile || null,
             sheetFile: candidate.sheet ? candidate.sheet.split('/').pop() : null,
             requestId: candidate.requestId,
             actionType: candidate.actionType,
             parentId: candidate.parentId,
+            // 这一轮编辑一起送进去的色彩基准图（排查「为什么颜色没漂」「这轮带没带基准」用）。
+            anchorId: candidate.anchorId || null,
             prompt: candidate.actionPrompt || '',
             revisedPrompt: candidate.revisedPrompt,
             program: candidate.program
@@ -706,7 +890,14 @@ export async function start(context) {
                   drift: candidate.program.drift,
                   sharpness: candidate.program.sharpness,
                   redCast: Boolean(candidate.program.redCast),
+                  whiteCast: candidate.program.whiteCast || '',
                   stats: candidate.program.stats,
+                  // 二维码替换结论：只换码的追问要靠它判断底图上的码是不是真码。
+                  qr: candidate.program.qr || null,
+                  // 程序排字结论：交付卡片上的「文字由程序排入」靠它。
+                  text: candidate.program.text || null,
+                  // 程序画图表的结论：交付卡片上的「图表核对通过」靠它。
+                  chart: candidate.program.chart || null,
                 }
               : null,
             checks: candidate.checks || [],
@@ -947,7 +1138,8 @@ export async function start(context) {
     if (request.method === 'POST' && path === '/api/session') {
       const payload = await readJson(request);
       if (!payload || !String(payload.instruction || '').trim()) return json(response, 400, { error: 'empty_instruction' });
-      const session = await createSession(payload);
+      // 只收需求和上传的图：rerun 这类内部字段只由服务端自己的重跑路径给。
+      const session = await createSession({ instruction: payload.instruction, refs: payload.refs });
       json(response, 200, { id: session.id });
       return;
     }
@@ -982,6 +1174,7 @@ export async function start(context) {
       const payload = await readJson(request);
       const session = sessions.get(String(payload.id || ''));
       if (!session) return json(response, 404, { error: 'no_session' });
+      cancelAutoConfirm(session);
       const answers = Array.isArray(payload.answers) ? payload.answers : [];
       // Agent 的问卷带 requestId，出图前的闸门不带：按这个分流，问卷的回答才不会被当成闸门的回答。
       const requestId = String(payload.requestId || '');
@@ -1007,11 +1200,22 @@ export async function start(context) {
         // 先标成 cancelled 再放闸门、中止回合：工作流醒来时要能认出这是用户自己停的，
         // 不能按默认方案接着出图，也不能把被中止的回合当成失败。
         session.status = 'cancelled';
+        cancelAutoConfirm(session);
         resolveGate(session, []);
         agent.cancelSession(session);
         session.busy = false;
         push(session, 'cancel', '已取消当前流程', { level: 'warn' });
       }
+      json(response, 200, { ok: true });
+      return;
+    }
+    // 「先别生成」：停掉参考图的自动确认倒计时，之后要用户自己点「生成 GIF」或者回复才出帧。
+    if (request.method === 'POST' && path === '/api/session/hold') {
+      const payload = await readJson(request);
+      const session = sessions.get(String(payload.id || ''));
+      if (!session) return json(response, 404, { error: 'no_session' });
+      if (!holdAutoConfirm(session)) return json(response, 409, { error: 'no_countdown' });
+      await persist(session);
       json(response, 200, { ok: true });
       return;
     }
@@ -1051,6 +1255,10 @@ export async function start(context) {
   const dispose = () => {
     if (disposal) return disposal;
     context.signal.removeEventListener('abort', onAbort);
+    // 倒计时只清计时器，不清 session.autoConfirm：它已经落盘，重启后按它重新计时。
+    disposed = true;
+    for (const timer of autoTimers.values()) clearTimeout(timer);
+    autoTimers.clear();
     agent.cancelAll();
     // 剪贴板子进程是我们自己拉起来的，Host 只 SIGTERM 这个 Node 入口，不会管孙进程。
     disposeClipboard();
@@ -1118,6 +1326,38 @@ function sessionDirs(dir) {
 }
 
 // 把落盘的 snapshot 还原成可继续操作的内存会话：看图、追问、再次交付都能用。
+// 检索预算只是记录（花了多少、哪些没搜），恢复时只认数字和字符串。
+function restoreRefBudget(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const n = (value) => (Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value)) : 0);
+  return {
+    limit: n(raw.limit),
+    used: n(raw.used),
+    searches: n(raw.searches),
+    gates: n(raw.gates),
+    reserved: 0,
+    stopped: Array.isArray(raw.stopped) ? raw.stopped.filter((item) => typeof item === 'string').slice(0, 12) : [],
+  };
+}
+
+// 节点名 → 撞上限次数，只认已知的节点名和小整数。
+const TOOL_HIT_STEPS = new Set(['plan', 'judge', 'refine', 'select', 'edit', 'cross', 'frames']);
+function restoreToolHits(raw) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out = {};
+  for (const [step, value] of Object.entries(raw)) {
+    const count = Number(value);
+    if (TOOL_HIT_STEPS.has(step) && Number.isInteger(count) && count > 0) out[step] = Math.min(count, 10);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// 色彩基准只认 images 目录里的文件名：session.json 是可被改写的输入，不能让它指向别处。
+function restoreColorAnchor(raw, dirs) {
+  if (!raw || typeof raw !== 'object' || !raw.id || !SAFE_NAME.test(String(raw.file || ''))) return null;
+  return { id: String(raw.id), file: raw.file, path: join(dirs.images, raw.file) };
+}
+
 async function rehydrate(data, dir) {
   const dirs = sessionDirs(dir);
   // 老会话落盘时没记 origin。检索来的参考图 note 就是规划里写的 query，
@@ -1138,6 +1378,8 @@ async function rehydrate(data, dir) {
         note,
         source: ref.source || '',
         origin: ref.origin || (ref.source || searchNotes.has(note.trim()) ? 'search' : 'user'),
+        use: typeof ref.use === 'string' ? ref.use : '',
+        take: typeof ref.take === 'string' ? ref.take.slice(0, 80) : '',
       };
     })
     .filter((ref) => ref.id && SAFE_NAME.test(ref.file));
@@ -1149,7 +1391,8 @@ async function rehydrate(data, dir) {
   try {
     for (const name of await readdir(dirs.images)) {
       // 扩展名不写死 .png：接口回 JPEG 时候选图落盘是 .jpg，写死会扫不到、轮号算错。
-      const hit = /^([A-Za-z0-9]+)-r(\d+)-g\d+(?:-cc)?\.(?:png|jpe?g|webp)$/i.exec(name);
+      // -qr 是贴好真码的那份（qrfix），-chart 是程序画好图表的那份（chart），-text 是程序排好字的那份（textoverlay），和原图同一个轮号。
+      const hit = /^([A-Za-z0-9]+)-r(\d+)-g\d+(?:-cc|-qr|-chart|-text)?\.(?:png|jpe?g|webp)$/i.exec(name);
       if (!hit) continue;
       const seen = Number(hit[2]);
       if (seen > (diskRounds.get(hit[1]) || 0)) diskRounds.set(hit[1], seen);
@@ -1168,6 +1411,10 @@ async function rehydrate(data, dir) {
         id: candidate.id,
         file: candidate.file,
         path: join(dirs.images, candidate.file),
+        originalFile: candidate.originalFile || null,
+        originalPath: candidate.originalFile && SAFE_NAME.test(candidate.originalFile) ? join(dirs.images, candidate.originalFile) : null,
+        baseFile: candidate.baseFile || null,
+        basePath: candidate.baseFile && SAFE_NAME.test(candidate.baseFile) ? join(dirs.images, candidate.baseFile) : null,
         previewFile: candidate.previewFile || null,
         preview: candidate.previewFile ? join(dirs.previews, candidate.previewFile) : null,
         sheet: candidate.sheetFile ? join(dirs.sheets, candidate.sheetFile) : null,
@@ -1175,6 +1422,7 @@ async function rehydrate(data, dir) {
         requestId: candidate.requestId,
         actionType: candidate.actionType,
         parentId: candidate.parentId,
+        anchorId: candidate.anchorId || null,
         actionPrompt: candidate.prompt || '',
         revisedPrompt: candidate.revisedPrompt,
         round: round.index,
@@ -1223,13 +1471,31 @@ async function rehydrate(data, dir) {
         // 角色基准图编号要跟着会话活过重启，否则追问时 refine 会把它顶掉，主体又漂回去。
         characterRefs: (image.spec && image.spec.characterRefs) || [],
         textLayers: (image.spec && image.spec.textLayers) || [],
+        qrCodes: (image.spec && Array.isArray(image.spec.qrCodes) && image.spec.qrCodes) || [],
+        textOverlay: (image.spec && image.spec.textOverlay) || null,
+        basePrompt: (image.spec && image.spec.basePrompt) || '',
+        animation: (image.spec && image.spec.animation) || null,
+        panelGif: restorePanelGifSpec(image.spec && image.spec.panelGif),
+        motionGif: normalizeMotionGif(image.spec && image.spec.motionGif),
+        difficulty: (image.spec && ['easy', 'normal', 'hard'].includes(image.spec.difficulty) && image.spec.difficulty) || '',
+        difficultyReason: (image.spec && typeof image.spec.difficultyReason === 'string' && image.spec.difficultyReason.slice(0, 60)) || '',
+        readingProblems: (image.spec && Array.isArray(image.spec.readingProblems) && image.spec.readingProblems.slice(0, 8)) || [],
+        charts: (image.spec && Array.isArray(image.spec.charts) && image.spec.charts) || [],
         checklist: (image.spec && image.spec.checklist) || [],
       },
+      animation: restoreAnimation(image.animation, dirs),
+      panelGif: restorePanelGif(image.panelGif),
+      motionGif: restoreMotionGif(image.motionGif),
+      panelTweens: restoreTweens(image.panelTweens),
+      textMode: image.textMode === 'overlay' ? 'overlay' : '',
+      textReason: image.textReason || '',
       rounds,
       roundBase,
       status: image.status || 'pending',
       chosen,
       chosenReason: image.chosenReason || '',
+      colorAnchor: restoreColorAnchor(image.colorAnchor, dirs),
+      toolHits: restoreToolHits(image.toolHits),
     };
   });
 
@@ -1310,6 +1576,10 @@ async function rehydrate(data, dir) {
     delivery,
     deliveryVersion: delivery ? delivery.version : 0,
     characterRefs: Array.isArray(data.characterRefs) ? data.characterRefs : [],
+    editRefQueries: Array.isArray(data.editRefQueries) ? data.editRefQueries : [],
+    // 以前重启后丢了：session.json 里的 refBudget 下一次落盘就变成 null，排查「为什么没搜」时看不到。
+    refBudget: restoreRefBudget(data.refBudget),
+    toolHits: restoreToolHits(data.toolHits),
     crossCheck: data.crossCheck || (delivery && delivery.crossCheck) || null,
     fatal:
       data.status === 'running'
@@ -1317,6 +1587,8 @@ async function rehydrate(data, dir) {
         : data.fatal || derivedFatal || '',
     busy: false,
     archived: true,
+    // 自动确认的倒计时由 restoreSessions 按落盘的状态决定要不要重新开始。
+    autoConfirm: null,
     cost: data.cost || { ditImages: 0, ditMs: 0, agentCalls: 0, agentMs: 0, usage: null },
   };
 }
@@ -1330,6 +1602,7 @@ async function restoreTurns(data, dirs, failReasons) {
     return data.turns.map((turn) => ({
       instruction: turn.instruction || '',
       at: turn.at || bornAt,
+      auto: Boolean(turn.auto),
       // 追问事件自己属于新一轮，所以起点是它的前一条。
       startSeq: Number(turn.startSeq) || 0,
       finishedAt: Number(turn.finishedAt) || 0,

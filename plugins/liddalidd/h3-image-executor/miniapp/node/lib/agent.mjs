@@ -18,6 +18,14 @@ function notPermittedError() {
   return error;
 }
 
+// 回合被判 error 后，第 1、2 次重试前各等多久。模型服务的 502 往往持续几十秒，立刻重发只会再撞一次。
+// 导出成可改的对象，测试里改小。
+export const RETRY_WAIT = { ms: [8000, 20000] };
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function createAgentRunner(context, host) {
   const pendingPermissions = new Map();
   const running = new Set();
@@ -170,6 +178,9 @@ export function createAgentRunner(context, host) {
   // 跑一个需要 JSON 回复的节点。
   // - 工具调用超过 maxTools 就在运行时中断，然后在同一会话里强制收尾（保留已经查到的信息）。
   // - 回复不是合法 JSON 时在同一会话里要求重写。
+  // - 回合被 Host 判成 error（多半是模型服务临时故障）：等一会儿，换新会话按原样重跑，工具上限不变。
+  //   以前重跑时上限会变成不限，而且是立刻重发：真机 20261112-23b706 / 463fcd 里模型服务正在报 502，
+  //   第二次 0.6 秒就失败了，第三次没有上限地跑了两分钟。
   async function runJson(session, options) {
     const step = options.step;
     const maxTools = options.maxTools || 0;
@@ -177,19 +188,25 @@ export function createAgentRunner(context, host) {
     let ms = 0;
     let toolCalls = 0;
     let text = options.instruction;
+    // 本次调用的工具上限。强制收尾时才降到 0（只要 JSON，不该再调工具）。
+    let budget = maxTools;
+    let mode = 'start';
     const allTools = [];
+    // 撞没撞过上限：调用方据此让同一个节点下次多给几次（见 budget.mjs）。
+    let hitCap = false;
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      host.onProgress(session, step, attempt === 0 ? '开始' : '收尾中', {
+      host.onProgress(session, step, mode === 'start' ? '开始' : mode === 'retry' ? '换新会话重试' : '收尾中', {
         detail: detail('节点输入 · ' + step, [
-          kv('轮次', attempt === 0 ? '首次调用' : '第 ' + (attempt + 1) + ' 次（收尾）'),
-          kv('工具预算', (attempt === 0 ? maxTools : 0) + ' 次'),
+          kv('轮次', attempt === 0 ? '首次调用' : '第 ' + (attempt + 1) + ' 次（' + (mode === 'retry' ? '重试' : '收尾') + '）'),
+          kv('工具预算', budget ? budget + ' 次' : mode === 'finish' ? '0 次（只要最终 JSON）' : '不限'),
+          options.budgetNote && mode !== 'finish' ? kv('预算怎么定的', options.budgetNote) : null,
           textBlock('发给模型的完整提示词', text),
         ]),
       });
       let turn;
       try {
-        turn = await runTurn(session, text, sessionId, step, attempt === 0 ? maxTools : 0);
+        turn = await runTurn(session, text, sessionId, step, budget);
       } catch (error) {
         // 中断后同一会话可能不可用，退回到全新会话强制收尾。
         // 权限被关掉时换会话也没用，直接把带说明的错误交上去。
@@ -212,7 +229,10 @@ export function createAgentRunner(context, host) {
       session.cost.byStep[step] = bucket;
 
       if (turn.overBudget) {
+        hitCap = true;
         text = '工具调用预算已经用完，不要再调用任何工具。现在就用你已经掌握的信息，直接输出最终 JSON 对象。';
+        budget = 0;
+        mode = 'finish';
         continue;
       }
       if (turn.result.status !== 'finished') {
@@ -222,12 +242,16 @@ export function createAgentRunner(context, host) {
         const suffix = info ? '：' + [info.code, info.message].filter(Boolean).join(' ') : '';
         const failure = 'agent_' + turn.result.status + suffix;
         // Host 把这一轮判成 error（实测过一次：第 2 次 LLM 返回后卡 191 秒，整轮 205 秒后 error），
-        // 是上游的问题不是我们的问题。换个干净会话再试一次，别让一次抽风把整个节点报废。
+        // 是上游的问题不是我们的问题。等一会儿换个干净会话再试，别让一次抽风把整个节点报废。
         // aborted 是我们自己中断的（工具预算耗尽 / 用户点停止），重试没有意义。
         if (turn.result.status === 'error' && attempt < 2 && session.status !== 'cancelled') {
-          host.onProgress(session, step, '本轮被判失败，换新会话重试：' + failure, { level: 'warn' });
+          host.onProgress(session, step, '本轮被判失败，' + Math.round(RETRY_WAIT.ms[attempt] / 1000) + ' 秒后换新会话重试：' + failure, { level: 'warn' });
+          await sleep(RETRY_WAIT.ms[attempt]);
+          if (session.status === 'cancelled') throw new Error(failure);
           sessionId = null;
           text = options.instruction;
+          budget = maxTools;
+          mode = 'retry';
           continue;
         }
         // 不是工具预算（上面已经 continue）也不是用户点了停止，那多半是用户在插件详情里
@@ -235,7 +259,10 @@ export function createAgentRunner(context, host) {
         if (turn.result.status === 'aborted' && session.status !== 'cancelled') {
           throw new Error(failure + '：Agent 回合被中止。如果你刚关闭了 Agent 权限，' + AGENT_OFF_HINT);
         }
-        throw new Error(failure);
+        // 重试用完还是 error：多半是模型服务这段时间不可用，标成临时故障，上层据此先交付手上已有的图。
+        const error = new Error(failure);
+        if (turn.result.status === 'error') error.transient = true;
+        throw error;
       }
       const lastText = turn.result.text || '';
       const data = extractJson(lastText);
@@ -250,9 +277,11 @@ export function createAgentRunner(context, host) {
             textBlock('模型最终回复', lastText),
           ]),
         });
-        return { data, text: lastText, sessionId };
+        return { data, text: lastText, sessionId, toolCalls, overBudget: hitCap };
       }
       text = '上一次回复无法解析成 JSON。请只输出一个合法 JSON 对象，不要 markdown 代码块、不要任何解释文字。';
+      budget = 0;
+      mode = 'finish';
     }
     throw new Error('agent_json_parse_failed');
   }
