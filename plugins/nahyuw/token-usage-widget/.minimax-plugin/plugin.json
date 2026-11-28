@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "token-usage-widget",
+  "displayName": "Token Usage Widget / Token 用量悬浮窗",
+  "version": "1.0.0",
+  "description": "A floating dial for your MiniMax account's Token quota, consumption rate and recent usage, with an always-on-top popup window and a bilingual settings page. / 圆形悬浮窗展示 MiniMax 账号的 5 小时与 7 天周期额度、消耗速率与近期用量，支持独立置顶悬浮窗与中英文双语设置页。",
+  "author": "nahyuw",
+  "icon": "icon.png",
+  "category": "Productivity",
+  "exampleQueries": [
+    "Open the Token Usage Widget",
+    "Show my Token usage for the current 5-hour cycle",
+    "Open Token 用量悬浮窗",
+    "看看我本周的 Token 用量比例"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

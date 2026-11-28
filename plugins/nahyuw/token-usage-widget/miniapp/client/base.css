@@ -1,0 +1,1233 @@
+/* Token 用量悬浮窗 — 共用样式（MiniMax Code 视觉基线） */
+
+:root,
+[data-theme='light'] {
+  --mcode-bg: #ffffff;
+  --mcode-bg-secondary: #f5f5f5;
+  --mcode-surface: #ffffff;
+  --mcode-surface-muted: #fafafa;
+  --mcode-text: #171717;
+  --mcode-text-muted: #666666;
+  --mcode-text-subtle: #adadad;
+  --mcode-border: #0a0a0a14;
+  --mcode-border-strong: #0a0a0af2;
+  --mcode-accent: #0094fc;
+  --mcode-success: #04b54b;
+  --mcode-warning: #f56811;
+  --mcode-danger: #f73646;
+  --mcode-primary-action-bg: #171717;
+  --mcode-primary-action-text: #ffffff;
+  --gauge-track: #e9eef6;
+  --gauge-depth-inner: rgb(255 255 255 / 78%);
+  --gauge-depth-edge: rgb(12 24 46 / 16%);
+  --gauge-water-from: rgb(124 206 255 / 95%);
+  --gauge-water-to: rgb(0 92 196 / 98%);
+  --gauge-water-mid: rgb(86 186 255 / 62%);
+  --gauge-water-soft: rgb(140 212 255 / 46%);
+  --gauge-water-line: rgb(255 255 255 / 55%);
+  --gauge-bubble: rgb(255 255 255 / 78%);
+  --gauge-rim-light: rgb(255 255 255 / 62%);
+  --gauge-rim-dark: rgb(10 22 44 / 30%);
+  --gauge-arc-from: #0094fc;
+  --gauge-arc-to: #86d0ff;
+  --gauge-arc-track: #0a0a0a1f;
+  --gauge-arc-glow: rgb(0 148 252 / 45%);
+  --gauge-gloss-from: rgb(255 255 255 / 58%);
+  --gauge-gloss-to: rgb(255 255 255 / 0%);
+  --gauge-floor-from: rgb(14 26 46 / 26%);
+  --gauge-floor-to: rgb(14 26 46 / 0%);
+  --gauge-shadow: 0 6px 14px -8px rgb(8 40 70 / 38%);
+  --gauge-shadow-hover: 0 10px 22px -8px rgb(8 40 70 / 46%);
+  --gauge-trend-stroke: rgb(38 62 96 / 88%);
+  --gauge-trend-halo: rgb(255 255 255 / 72%);
+  --gauge-trend-fill-top: rgb(74 104 136 / 16%);
+  --gauge-trend-fill-peak: rgb(74 104 136 / 42%);
+  --gauge-trend-fill-bottom: rgb(74 104 136 / 0%);
+  /* 干区玻璃厚度（径向渐变）：中心 90% 透明 -> 边缘 75% 透明 */
+  --gauge-dry-alpha-center: 0.1;
+  --gauge-dry-alpha-mid: 0.13;
+  --gauge-dry-alpha-edge: 0.25;
+  /* 干区透明后读数要压在任何桌面底色上都读得清：亮色主题配白晕，暗色主题配黑晕 */
+  --gauge-text-halo:
+    0 0 1.2px rgb(255 255 255 / 100%),
+    0 0 4px rgb(255 255 255 / 96%),
+    0 0 9px rgb(255 255 255 / 68%);
+  --panel-shadow: 0 10px 30px rgb(10 10 10 / 12%);
+}
+
+[data-theme='dark'] {
+  --mcode-bg: #171717;
+  --mcode-bg-secondary: #1c1c1c;
+  --mcode-surface: #262626;
+  --mcode-surface-muted: #262626;
+  --mcode-text: #ededed;
+  --mcode-text-muted: #949494;
+  --mcode-text-subtle: #666666;
+  --mcode-border: #ffffff14;
+  --mcode-border-strong: #fffffff2;
+  --mcode-accent: #0077d9;
+  --mcode-success: #009c3d;
+  --mcode-warning: #e25507;
+  --mcode-danger: #e31937;
+  --mcode-primary-action-bg: #ffffff;
+  --mcode-primary-action-text: #171717;
+  --gauge-track: #1b1f27;
+  --gauge-depth-inner: rgb(255 255 255 / 14%);
+  --gauge-depth-edge: rgb(0 0 0 / 55%);
+  --gauge-water-from: rgb(74 182 255 / 90%);
+  --gauge-water-to: rgb(0 62 146 / 98%);
+  --gauge-water-mid: rgb(40 154 248 / 56%);
+  --gauge-water-soft: rgb(104 196 255 / 38%);
+  --gauge-water-line: rgb(255 255 255 / 45%);
+  --gauge-bubble: rgb(255 255 255 / 58%);
+  --gauge-rim-light: rgb(255 255 255 / 28%);
+  --gauge-rim-dark: rgb(0 0 0 / 55%);
+  --gauge-arc-from: #38b6ff;
+  --gauge-arc-to: #1c6cff;
+  --gauge-arc-track: #ffffff21;
+  --gauge-arc-glow: rgb(56 182 255 / 45%);
+  --gauge-gloss-from: rgb(255 255 255 / 20%);
+  --gauge-gloss-to: rgb(255 255 255 / 0%);
+  --gauge-floor-from: rgb(0 0 0 / 60%);
+  --gauge-floor-to: rgb(0 0 0 / 0%);
+  --gauge-shadow: 0 6px 14px -8px rgb(0 0 0 / 62%);
+  --gauge-shadow-hover: 0 10px 22px -8px rgb(0 0 0 / 72%);
+  --gauge-trend-stroke: rgb(198 218 238 / 88%);
+  --gauge-trend-halo: rgb(0 0 0 / 52%);
+  --gauge-trend-fill-top: rgb(150 188 222 / 14%);
+  --gauge-trend-fill-peak: rgb(150 188 222 / 40%);
+  --gauge-trend-fill-bottom: rgb(150 188 222 / 0%);
+  --gauge-dry-alpha-center: 0.1;
+  --gauge-dry-alpha-mid: 0.13;
+  --gauge-dry-alpha-edge: 0.25;
+  --gauge-text-halo:
+    0 0 1.2px rgb(0 0 0 / 100%),
+    0 0 4px rgb(0 0 0 / 92%),
+    0 0 9px rgb(0 0 0 / 66%);
+  --panel-shadow: 0 10px 34px rgb(0 0 0 / 42%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mcode-text);
+  background: var(--mcode-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+dt {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mcode-accent);
+  outline-offset: 2px;
+}
+
+.numeric {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--mcode-text-muted);
+}
+
+.subtle {
+  color: var(--mcode-text-subtle);
+}
+
+/* ---------- 通用控件 ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  color: var(--mcode-text);
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, opacity 150ms ease-out;
+}
+
+.btn:hover {
+  border-color: var(--mcode-border-strong);
+}
+
+.btn--primary {
+  background: var(--mcode-primary-action-bg);
+  border-color: var(--mcode-primary-action-bg);
+  color: var(--mcode-primary-action-text);
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--scale {
+  min-width: 66px;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--mcode-border);
+}
+
+.segmented button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mcode-text-muted);
+  cursor: pointer;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--mcode-surface);
+  border: 1px solid var(--mcode-border);
+  color: var(--mcode-text);
+}
+
+.card {
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+}
+
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--mcode-surface-muted);
+  border: 1px solid var(--mcode-border);
+  color: var(--mcode-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.status--error {
+  border-color: var(--mcode-danger);
+  color: var(--mcode-danger);
+}
+
+.status--ok {
+  border-color: var(--mcode-success);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* ---------- 悬浮窗页面 ---------- */
+
+.widget-page {
+  background: transparent;
+  overflow: hidden;
+  height: 100%;
+}
+
+:root {
+  --widget-scale: 0.6;
+}
+
+.widget {
+  --gauge-base: min(200px, 76vw);
+  --gauge-max: 52vh;
+  --gauge-size: min(calc(var(--gauge-base) * var(--widget-scale)), var(--gauge-max));
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 14px 16px 16px;
+  gap: 10px;
+}
+
+.widget__head {
+  display: none;
+}
+
+/* 悬浮窗模式：原来顶部那条拖动手柄让出的高度，改成上边距，
+   圆盘的位置不变，免得它顶上去压到宿主窗口右上角的按钮。 */
+html[data-mode='window'] .widget {
+  padding-top: 40px;
+}
+
+.widget__stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  justify-items: center;
+  align-items: start;
+  gap: 10px;
+  padding: 2px 0 0;
+}
+
+.gauge__wrap {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.gauge {
+  position: relative;
+  width: var(--gauge-size);
+  height: var(--gauge-size);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: grab;
+  display: block;
+  touch-action: none;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.gauge::before {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  border-radius: 50%;
+  box-shadow: var(--gauge-shadow);
+  transition: box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+/* 放大反馈跟着「指针真的在圆上」走，不用 :hover —— 方框的四个角也在按钮里，
+   贴着圆盘边缘就会误触发 */
+.gauge.is-hot {
+  transform: scale(1.035);
+}
+
+.gauge.is-hot::before {
+  box-shadow: var(--gauge-shadow-hover);
+}
+
+.gauge.is-dragging {
+  cursor: grabbing;
+  transform: scale(0.985);
+}
+
+.gauge__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 玻璃底：轨道 + 深度渐变 + 底部落影。
+   水面以上的干区用遮罩压到 15%（85% 透明），桌面能透过来；
+   水下部分保持原样。玻璃底与高光共用同一个遮罩，
+   否则干区仍会被 58% 的白色高光冲淡。 */
+.gauge__mask-base {
+  fill: url(#gaugeDryGradient);
+}
+
+.gauge__stop--dry-center {
+  stop-color: rgb(255 255 255 / var(--gauge-dry-alpha-center));
+}
+
+.gauge__stop--dry-mid {
+  stop-color: rgb(255 255 255 / var(--gauge-dry-alpha-mid));
+}
+
+.gauge__stop--dry-edge {
+  stop-color: rgb(255 255 255 / var(--gauge-dry-alpha-edge));
+}
+
+.gauge__stop--rim-light {
+  stop-color: var(--gauge-rim-light);
+}
+
+.gauge__stop--rim-none {
+  stop-color: rgb(255 255 255 / 0%);
+}
+
+.gauge__stop--rim-dark {
+  stop-color: var(--gauge-rim-dark);
+}
+
+/* 遮罩里的水面是全白：水下完全透出，水上只剩 15% */
+#gaugeMaskWave {
+  fill: #ffffff;
+}
+
+.gauge__track {
+  fill: var(--gauge-track);
+}
+
+.gauge__depth {
+  opacity: 0.95;
+}
+
+.gauge__floor {
+  fill: url(#gaugeFloor);
+}
+
+.gauge__stop--floor-from {
+  stop-color: var(--gauge-floor-from);
+}
+
+.gauge__stop--floor-to {
+  stop-color: var(--gauge-floor-to);
+}
+
+.gauge__stop--depth-from {
+  stop-color: var(--gauge-depth-inner);
+}
+
+.gauge__stop--depth-to {
+  stop-color: var(--gauge-depth-edge);
+}
+
+.gauge__stop--gloss-from {
+  stop-color: var(--gauge-gloss-from);
+}
+
+.gauge__stop--gloss-to {
+  stop-color: var(--gauge-gloss-to);
+}
+
+.gauge__stop--water-from {
+  stop-color: var(--gauge-water-from);
+}
+
+.gauge__stop--water-to {
+  stop-color: var(--gauge-water-to);
+}
+
+.gauge__stop--arc-from {
+  stop-color: var(--gauge-arc-from);
+}
+
+.gauge__stop--arc-to {
+  stop-color: var(--gauge-arc-to);
+}
+
+.gauge__gloss {
+  pointer-events: none;
+}
+
+.gauge__wave {
+  fill: var(--gauge-water-soft);
+}
+
+.gauge__wave--mid {
+  fill: var(--gauge-water-mid);
+}
+
+.gauge__wave--front {
+  fill: url(#gaugeWaterGradient);
+  stroke: var(--gauge-water-line);
+  stroke-width: 1.1;
+}
+
+.wave {
+  animation: wave-drift 12s linear infinite;
+}
+
+.wave--mid {
+  animation-duration: 9s;
+}
+
+.wave--front {
+  animation-duration: 6.5s;
+}
+
+@keyframes wave-drift {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-220px);
+  }
+}
+
+.bubble {
+  fill: var(--gauge-bubble);
+  opacity: 0;
+  animation: bubble-rise 6s ease-in infinite;
+}
+
+.bubble--b {
+  animation-duration: 7.6s;
+  animation-delay: -2.1s;
+}
+
+.bubble--c {
+  animation-duration: 5.2s;
+  animation-delay: -3.4s;
+}
+
+@keyframes bubble-rise {
+  0% {
+    transform: translateY(72px);
+    opacity: 0;
+  }
+
+  18% {
+    opacity: 0.75;
+  }
+
+  82% {
+    opacity: 0.45;
+  }
+
+  100% {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+}
+
+/* 瓶口：不再是发丝描边，而是一圈带受光方向的厚边 */
+.gauge__ring {
+  fill: none;
+  stroke: url(#gaugeRimGradient);
+  stroke-width: 4;
+}
+
+.gauge__arc-track {
+  fill: none;
+  stroke: var(--gauge-arc-track);
+  stroke-width: 5.6;
+}
+
+.gauge__arc-value {
+  fill: none;
+  stroke: url(#gaugeArcGradient);
+  stroke-width: 5.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px var(--gauge-arc-glow));
+  transition: stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gauge__readout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  color: var(--mcode-text);
+  /* 干区是透的，读数靠这层光晕压住桌面底色 */
+  text-shadow: var(--gauge-text-halo);
+}
+
+/* 中心不再垫任何底板：圆形磨砂镜片会在干区里切出一道明显的圆边
+   （实测边界落在圆盘半径 40% 处，正是遮罩渐隐的起点）。
+   读数改由 .gauge__readout 的文字光晕托住，压在任何桌面底色上都读得清。 */
+
+/* 数值与单位并排，单位小一号跟着基线走 */
+.gauge__figure {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: calc(var(--gauge-size) * 0.012);
+}
+
+.gauge__unit {
+  font-size: calc(var(--gauge-size) * 0.058);
+  font-weight: 500;
+  color: var(--mcode-text-muted);
+  letter-spacing: 0;
+}
+
+.gauge__value {
+  position: relative;
+  font-size: calc(var(--gauge-size) * 0.17);
+  line-height: 1.08;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* 趋势只留一条线，不要卡片底与投影，线直接落在圆盘上 */
+.gauge__trend {
+  position: relative;
+  width: 47%;
+  height: 19%;
+  min-height: calc(var(--gauge-size) * 0.1);
+  margin-top: calc(var(--gauge-size) * 0.03);
+  pointer-events: none;
+}
+
+.gauge__trend svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 图表压在颗粒之上，保持线条清晰 */
+.gauge__chart {
+  position: relative;
+  z-index: 1;
+}
+
+/* 曲线下方补一层面积填充，但仍然不画卡片底 */
+.gauge__trend-fill-top {
+  stop-color: var(--gauge-trend-fill-top);
+}
+
+.gauge__trend-fill-peak {
+  stop-color: var(--gauge-trend-fill-peak);
+}
+
+.gauge__trend-fill-bottom {
+  stop-color: var(--gauge-trend-fill-bottom);
+}
+
+.gauge__trend #gaugeTrendArea {
+  fill: url(#gaugeTrendFill);
+}
+
+/* 曲线：没有卡片底了，用一圈同色光晕保证在水面和轨道上都读得清 */
+.gauge__trend #gaugeTrendLine {
+  fill: none;
+  stroke: var(--gauge-trend-stroke);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 1.6px var(--gauge-trend-halo));
+}
+
+.gauge__readout > * {
+  z-index: 1;
+}
+
+/* 详情面板：hover 展开 */
+
+.detail {
+  grid-row: 2;
+  grid-column: 1;
+  width: 100%;
+  min-height: 0;
+  align-self: stretch;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--mcode-border);
+  border-radius: 12px;
+  background: var(--mcode-surface);
+  box-shadow: var(--panel-shadow);
+  scrollbar-width: thin;
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+  filter: blur(8px);
+  transition: opacity 240ms ease-out, transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 240ms ease-out;
+  pointer-events: none;
+}
+
+.widget__stage.is-detail-visible .detail,
+.widget__stage:has(.gauge:focus-visible) .detail {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  pointer-events: auto;
+}
+
+.detail__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.detail__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.detail__stamp {
+  font-size: 11px;
+  color: var(--mcode-text-subtle);
+}
+
+.detail__list {
+  display: grid;
+  gap: 2px;
+}
+
+.detail__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 1px 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--mcode-border);
+}
+
+.detail__row:last-child {
+  border-bottom: 0;
+}
+
+.detail__label {
+  grid-column: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--mcode-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail__value {
+  grid-column: 2;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.detail__sub {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: right;
+  color: var(--mcode-text-subtle);
+}
+
+/* 圆盘口径行：说明水面与外圈分别代表哪一项 */
+.detail__gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--mcode-text-subtle);
+}
+
+.detail__gauge-line {
+  display: block;
+}
+
+.detail__note {
+  display: none;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mcode-text-subtle);
+}
+
+.detail__action {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.spark {
+  display: none;
+  align-items: flex-end;
+  gap: 3px;
+  height: 26px;
+  margin: 6px 0 8px;
+}
+
+.spark__bar {
+  flex: 1;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--mcode-accent);
+  opacity: 0.85;
+}
+
+.spark__bar--muted {
+  opacity: 0.32;
+}
+
+/* 宽屏（File Panel 内联）布局 */
+@media (min-width: 560px) {
+  html:not([data-mode='window']) .widget-page {
+    background: var(--mcode-bg);
+    overflow: auto;
+  }
+
+  html:not([data-mode='window']) .widget {
+    --gauge-base: clamp(180px, min(44vw, 44vh), 320px);
+    --gauge-max: 520px;
+    height: auto;
+    min-height: 100vh;
+    padding: 28px;
+    gap: 20px;
+  }
+
+  html:not([data-mode='window']) .widget__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+  }
+
+  html:not([data-mode='window']) .widget__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+
+  html:not([data-mode='window']) .widget__title {
+    font-size: 18px;
+    line-height: 28px;
+    font-weight: 600;
+  }
+
+  html:not([data-mode='window']) .widget__desc {
+    font-size: 13px;
+    color: var(--mcode-text-muted);
+  }
+
+  html:not([data-mode='window']) .widget__stage {
+    gap: 20px;
+    max-width: 880px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  html:not([data-mode='window']) .detail {
+    align-self: start;
+    padding: 16px 18px;
+  }
+
+  html:not([data-mode='window']) .detail__note {
+    display: block;
+  }
+
+  html:not([data-mode='window']) .spark {
+    display: flex;
+  }
+
+  html:not([data-mode='window']) .detail__row {
+    padding: 5px 0;
+  }
+
+  html:not([data-mode='window']) .detail__label {
+    font-size: 13px;
+  }
+
+  html:not([data-mode='window']) .detail__value {
+    font-size: 14px;
+  }
+}
+
+/* 宽屏：仪表盘与详情并排 */
+@media (min-width: 900px) {
+  html:not([data-mode='window']) .widget__stage {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: start;
+    gap: 24px;
+  }
+
+  html:not([data-mode='window']) .gauge__wrap {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  html:not([data-mode='window']) .detail {
+    grid-row: 1;
+    grid-column: 2;
+  }
+}
+
+/* ---------- 设置页面 ---------- */
+
+.settings-page {
+  background: var(--mcode-bg);
+  min-height: 100vh;
+}
+
+/* 单文档双视图：悬浮窗视图与设置视图共用一份文档，避免页面跳转后宿主吞掉第一次点击 */
+.settings-view {
+  display: none;
+}
+
+html[data-view='settings'] .settings-view {
+  display: block;
+}
+
+html[data-view='settings'] .widget {
+  display: none;
+}
+
+/* 悬浮窗模式下的设置页：顶部手柄可拖动窗口 */
+.settings__drag {
+  display: none;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--mcode-text-muted);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+html[data-mode='window'] .settings__drag {
+  display: flex;
+}
+
+.settings__drag svg {
+  width: 22px;
+  height: 8px;
+}
+
+html.is-window-drag,
+html.is-window-drag * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.settings__drag.is-dragging {
+  cursor: grabbing;
+}
+
+/* 悬浮窗被放大时，详情面板仍保持在可读高度 */
+html[data-mode='window'] .detail {
+  max-height: 510px;
+}
+
+.settings {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 20px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings__title {
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.settings__desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--mcode-text-muted);
+}
+
+.section {
+  padding: 16px 18px;
+}
+
+.section__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.section__hint {
+  font-size: 12px;
+  color: var(--mcode-text-muted);
+  margin-bottom: 12px;
+}
+
+.metric-list {
+  display: grid;
+  gap: 2px;
+}
+
+.metric {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+.metric:hover {
+  background: var(--mcode-surface-muted);
+}
+
+.metric input {
+  margin: 3px 0 0;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mcode-accent);
+  flex: none;
+}
+
+.metric__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.metric__name {
+  font-size: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric__value {
+  font-size: 12px;
+  color: var(--mcode-text-muted);
+  white-space: nowrap;
+}
+
+.metric__hint {
+  font-size: 12px;
+  color: var(--mcode-text-subtle);
+  line-height: 1.5;
+}
+
+.metric__grip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  color: var(--mcode-text-subtle);
+  cursor: grab;
+  flex: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.metric__grip svg {
+  width: 10px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.metric__grip:active {
+  cursor: grabbing;
+}
+
+.metric--dragging {
+  opacity: 0.42;
+}
+
+.metric--drop-before {
+  box-shadow: inset 0 2px 0 var(--mcode-accent);
+}
+
+.metric--drop-after {
+  box-shadow: inset 0 -2px 0 var(--mcode-accent);
+}
+
+.metric--fixed {
+  cursor: default;
+}
+
+.metric--fixed:hover {
+  background: transparent;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+/* 下拉框：和其它设置项一样靠右，三行宽度一致 */
+.field__select {
+  width: 220px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--mcode-border);
+  background: var(--mcode-surface);
+  color: var(--mcode-text);
+  font-family: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.field__select:focus-visible {
+  outline: 2px solid var(--mcode-accent);
+  outline-offset: 1px;
+}
+
+.field__label {
+  font-size: 14px;
+}
+
+.field__hint {
+  font-size: 12px;
+  color: var(--mcode-text-subtle);
+}
+
+.source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.source {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mcode-text-muted);
+}
+
+.source__dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--mcode-success);
+}
+
+.source__dot--error {
+  background: var(--mcode-danger);
+}
+
+.source__name {
+  color: var(--mcode-text);
+}
+
+.settings__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toast {
+  font-size: 12px;
+  color: var(--mcode-success);
+}
+
+@media (max-width: 559px) {
+  .settings {
+    padding: 16px 14px 40px;
+    gap: 16px;
+  }
+
+  .settings__head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .settings__head .btn {
+    width: 100%;
+  }
+
+  .field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .segmented {
+    flex-wrap: wrap;
+  }
+
+  .segmented button {
+    flex: 1 1 auto;
+    padding: 0 6px;
+  }
+
+  .metric {
+    padding: 9px 4px;
+  }
+
+  .metric__name {
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+}
+
+@media (hover: none) {
+  .detail {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    pointer-events: auto;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .wave,
+  .bubble {
+    animation: none;
+  }
+
+  .bubble {
+    opacity: 0;
+  }
+}

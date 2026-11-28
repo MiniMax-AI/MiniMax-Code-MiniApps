@@ -57,6 +57,7 @@ The MiniMax Code Agent communicates through the host MCP client. Business reques
 
 | MiniApp | What it does | Author |
 | --- | --- | --- |
+| [Token Usage Widget / Token 用量悬浮窗](plugins/nahyuw/token-usage-widget/) | A floating dial for your MiniMax account's Token quota, consumption rate and recent usage, with an always-on-top popup window and a bilingual settings page | [nahyuw](https://github.com/nahyuw) |
 | [DeepSeek Chat Migration](plugins/danielwalnut/deepseek-chat-migration/) | Preview official DeepSeek web exports locally, restore branches and attachments, and import selected conversations as native MiniMax Code sessions with a bundled importer | [DanielWalnut](https://github.com/DanielWalnut) |
 | [OpenFilm](plugins/cristinamadureira353-svg/openfilm/) | Run OpenFilm inside MiniMax Code with the desktop interface: Studio editor, chat column and local agents, with a web-Studio fallback | [最爱双皮奶](https://github.com/cristinamadureira353-svg) |
 | [Dynamic Workflow Console](plugins/stevenjj33/workflow-console/) | Run and supervise MiniMax Code dynamic workflows from one page: live status, a stage-and-dependency flow graph, per-node output, approval and control, templates, and report export | [stevenjj33](https://github.com/stevenjj33) |
