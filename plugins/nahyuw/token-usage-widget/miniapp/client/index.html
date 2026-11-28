@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN" data-view="widget">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Token 用量悬浮窗</title>
+    <link rel="stylesheet" href="/assets/base.css" />
+  </head>
+  <body class="widget-page">
+    <main class="widget" id="app" data-mode="inline">
+      <header class="widget__head">
+        <div class="widget__intro">
+          <h1 class="widget__title" data-i18n="widget.title">Token 用量</h1>
+          <p class="widget__desc" data-i18n="widget.desc">实时查看当前 5 小时与 7 天周期进度、Token 速率与消耗量</p>
+        </div>
+        <div class="widget__actions">
+          <button class="btn btn--scale" id="scaleButton" type="button" data-i18n-title="scale.title" title="缩放悬浮窗（⌘/Ctrl + 滚轮）">100%</button>
+          <button class="btn" id="popupButton" type="button" data-i18n="popup.mode">悬浮窗模式</button>
+        </div>
+      </header>
+
+      <div class="widget__stage" id="stage">
+        <div class="gauge__wrap">
+          <button class="gauge" id="gaugeButton" type="button" data-i18n-aria="gauge.aria" aria-label="Token 用量水位，点击进入设置">
+            <svg class="gauge__svg" viewBox="0 0 220 220" aria-hidden="true" focusable="false">
+              <defs>
+                <clipPath id="gaugeClip">
+                  <circle cx="110" cy="110" r="94" />
+                </clipPath>
+                <!-- 干区玻璃的厚度：中心 90% 透明，边缘 75% 透明。
+                     越靠边越厚，透出桌面时像一圈瓶壁，圆盘才有体积。 -->
+                <radialGradient id="gaugeDryGradient" gradientUnits="userSpaceOnUse" cx="110" cy="110" r="94">
+                  <stop class="gauge__stop--dry-center" offset="0%" />
+                  <stop class="gauge__stop--dry-mid" offset="55%" />
+                  <stop class="gauge__stop--dry-edge" offset="100%" />
+                </radialGradient>
+                <!-- 瓶口：内圈一道受光的边，左上受光、右下压暗，玻璃壁才有厚度 -->
+                <linearGradient id="gaugeRimGradient" gradientUnits="userSpaceOnUse" x1="40" y1="40" x2="180" y2="180">
+                  <stop class="gauge__stop--rim-light" offset="0%" />
+                  <stop class="gauge__stop--rim-none" offset="52%" />
+                  <stop class="gauge__stop--rim-dark" offset="100%" />
+                </linearGradient>
+                <!-- 遮罩：水面以上只留一点玻璃底，水面以下保持原样 -->
+                <mask id="gaugeGlassMask" maskUnits="userSpaceOnUse" x="0" y="0" width="220" height="220">
+                  <rect class="gauge__mask-base" x="0" y="0" width="220" height="220" />
+                  <g id="gaugeMaskWater" transform="translate(0 216)">
+                    <g class="wave wave--front">
+                      <path id="gaugeMaskWave" d="" />
+                    </g>
+                  </g>
+                </mask>
+                <linearGradient id="gaugeArcGradient" x1="0" y1="0" x2="1" y2="1">
+                  <stop class="gauge__stop gauge__stop--arc-from" offset="0%" />
+                  <stop class="gauge__stop gauge__stop--arc-to" offset="100%" />
+                </linearGradient>
+                <linearGradient id="gaugeWaterGradient" gradientUnits="userSpaceOnUse" x1="0" y1="-12" x2="0" y2="212">
+                  <stop class="gauge__stop gauge__stop--water-from" offset="0%" />
+                  <stop class="gauge__stop gauge__stop--water-to" offset="100%" />
+                </linearGradient>
+                <radialGradient id="gaugeDepth" cx="0.38" cy="0.28" r="0.88">
+                  <stop class="gauge__stop gauge__stop--depth-from" offset="0%" />
+                  <stop class="gauge__stop gauge__stop--depth-to" offset="100%" />
+                </radialGradient>
+                <radialGradient id="gaugeFloor" cx="0.5" cy="0.5" r="0.5">
+                  <stop class="gauge__stop gauge__stop--floor-from" offset="0%" />
+                  <stop class="gauge__stop gauge__stop--floor-to" offset="100%" />
+                </radialGradient>
+                <radialGradient id="gaugeGloss" cx="0.3" cy="0.16" r="0.62">
+                  <stop class="gauge__stop gauge__stop--gloss-from" offset="0%" />
+                  <stop class="gauge__stop gauge__stop--gloss-to" offset="100%" />
+                </radialGradient>
+              </defs>
+
+              <g clip-path="url(#gaugeClip)">
+                <g class="gauge__glass" mask="url(#gaugeGlassMask)">
+                  <rect class="gauge__track" x="0" y="0" width="220" height="220" />
+                  <rect class="gauge__depth" x="0" y="0" width="220" height="220" fill="url(#gaugeDepth)" />
+                  <ellipse class="gauge__floor" cx="110" cy="196" rx="96" ry="46" />
+                </g>
+                <g id="gaugeWater" transform="translate(0 216)">
+                  <g class="wave wave--back">
+                    <path class="gauge__wave gauge__wave--soft" id="waveBack" d="" />
+                  </g>
+                  <g class="wave wave--mid">
+                    <path class="gauge__wave gauge__wave--mid" id="waveMid" d="" />
+                  </g>
+                  <g class="wave wave--front">
+                    <path class="gauge__wave gauge__wave--front" id="waveFront" d="" />
+                  </g>
+                  <g class="bubbles">
+                    <circle class="bubble" cx="92" cy="64" r="3" />
+                    <circle class="bubble bubble--b" cx="132" cy="52" r="2" />
+                    <circle class="bubble bubble--c" cx="108" cy="76" r="2.4" />
+                  </g>
+                </g>
+                <rect class="gauge__gloss" x="0" y="0" width="220" height="220" fill="url(#gaugeGloss)" mask="url(#gaugeGlassMask)" />
+              </g>
+
+              <circle class="gauge__ring" cx="110" cy="110" r="92" />
+              <g class="gauge__arc" transform="rotate(-90 110 110)">
+                <circle class="gauge__arc-track" cx="110" cy="110" r="97.6" />
+                <circle
+                  class="gauge__arc-value"
+                  id="gaugeArc"
+                  cx="110"
+                  cy="110"
+                  r="97.6"
+                  stroke-dasharray="613.27"
+                  stroke-dashoffset="613.27"
+                />
+              </g>
+            </svg>
+            <span class="gauge__readout">
+              <span class="gauge__figure">
+                <span class="gauge__value" id="gaugeValue">--</span>
+                <span class="gauge__unit" id="gaugeUnit"></span>
+              </span>
+              <span class="gauge__trend" id="gaugeTrend" aria-hidden="true">
+                <svg class="gauge__chart" viewBox="0 0 120 34" preserveAspectRatio="none" focusable="false">
+                  <defs>
+                    <linearGradient id="gaugeTrendFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop class="gauge__trend-fill-top" offset="0" />
+                      <!-- 密度堆在基线稍上方，到基线时化到 0：
+                           面积不再在圆盘里切出一条笔直的硬边 -->
+                      <stop class="gauge__trend-fill-peak" offset="0.72" />
+                      <stop class="gauge__trend-fill-bottom" offset="1" />
+                    </linearGradient>
+                    <!-- 两端也化开：面积不再像一张贴着直边的纸片。
+                         注意 SVG 的 mask 是亮度遮罩，黑=隐藏，这里必须用白，
+                         用黑会把整片面积直接遮没。 -->
+                    <linearGradient id="gaugeTrendFade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="120" y2="0">
+                      <stop offset="0" stop-color="#fff" stop-opacity="0" />
+                      <stop offset="0.1" stop-color="#fff" stop-opacity="1" />
+                      <stop offset="0.9" stop-color="#fff" stop-opacity="1" />
+                      <stop offset="1" stop-color="#fff" stop-opacity="0" />
+                    </linearGradient>
+                    <mask id="gaugeTrendMask" maskContentUnits="userSpaceOnUse">
+                      <rect x="0" y="0" width="120" height="34" fill="url(#gaugeTrendFade)" />
+                    </mask>
+                  </defs>
+                  <path id="gaugeTrendArea" d="" mask="url(#gaugeTrendMask)" />
+                  <path id="gaugeTrendLine" d="" />
+                </svg>
+              </span>
+            </span>
+          </button>
+        </div>
+
+
+        <section class="detail" id="gaugeDetails" data-i18n-aria="detail.aria" aria-label="Token 用量详情">
+          <div class="detail__head">
+            <h2 class="detail__title" data-i18n="detail.title">用量详情</h2>
+            <span class="detail__stamp" id="detailStamp">--</span>
+          </div>
+          <div class="detail__gauge" id="detailGauge"></div>
+          <div class="spark" id="detailSpark" role="img" data-i18n-aria="spark.aria" aria-label="最近 7 天 Token 用量"></div>
+          <dl class="detail__list" id="detailList"></dl>
+          <p class="detail__note" id="detailNote"></p>
+        </section>
+      </div>
+    </main>
+
+    <div class="settings-view" id="settingsView">
+      <main class="settings" id="settingsApp">
+      <div class="settings__drag" id="settingsDrag" data-i18n-title="settings.drag.title" title="拖动可移动窗口">
+        <svg viewBox="0 0 22 8" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="4" cy="4" r="1.3" fill="currentColor" />
+          <circle cx="11" cy="4" r="1.3" fill="currentColor" />
+          <circle cx="18" cy="4" r="1.3" fill="currentColor" />
+        </svg>
+      </div>
+      <header class="settings__head">
+        <div>
+          <h1 class="settings__title" data-i18n="settings.title">Token 用量设置</h1>
+          <p class="settings__desc" data-i18n="settings.desc">选择悬浮窗要展示的指标，并调整刷新频率与外观。</p>
+        </div>
+        <button class="btn" id="backButton" type="button" data-i18n="settings.back">返回悬浮窗</button>
+      </header>
+
+      <form class="card section" id="settingsForm">
+        <h2 class="section__title" data-i18n="section.metrics">展示指标</h2>
+        <p class="section__hint" data-i18n="section.metrics.hint">勾选的指标会出现在悬浮窗的详情面板中，拖动左侧手柄可调整面板里的先后顺序（也可用 Alt + ↑/↓）。</p>
+        <div class="metric-list" id="metricList"></div>
+      </form>
+
+      <section class="card section">
+        <h2 class="section__title" data-i18n="section.refresh">刷新频率</h2>
+        <p class="section__hint" data-i18n="section.refresh.hint">悬浮窗多久读取一次用量数据。</p>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.refresh">刷新间隔</div>
+            <div class="field__hint" data-i18n="field.refresh.hint">账号额度数据本身按分钟级变化，不必过于频繁</div>
+          </div>
+          <div class="segmented" id="refreshGroup" role="group" data-i18n-aria="field.refresh" aria-label="刷新间隔"></div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2 class="section__title" data-i18n="section.widget">悬浮窗</h2>
+        <p class="section__hint" data-i18n="section.widget.hint">
+          悬浮窗模式下，拖动圆形或顶部手柄即可移动窗口，⌘/Ctrl + 滚轮可即时缩放；设置页顶部的手柄同样可以拖动窗口。
+        </p>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.size">大小</div>
+            <div class="field__hint" data-i18n="field.size.hint">圆形与详情面板同步缩放，共 5 档：最小 / 小 / 中 / 大 / 最大</div>
+          </div>
+          <div class="segmented" id="scaleGroup" role="group" data-i18n-aria="field.size" aria-label="悬浮窗大小"></div>
+        </div>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.position">位置</div>
+            <div class="field__hint" data-i18n="field.position.hint">拖动悬浮窗后的位置会被记住</div>
+          </div>
+          <button class="btn" id="resetPositionButton" type="button" data-i18n="action.resetPosition">重置位置</button>
+        </div>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.trendPeriod">趋势周期</div>
+            <div class="field__hint" id="trendPeriodHint" data-i18n="field.trendPeriod.hint">圆盘里那条趋势曲线的统计窗口</div>
+          </div>
+          <div class="segmented" id="trendPeriodGroup" role="group" data-i18n-aria="field.trendPeriod" aria-label="趋势周期"></div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2 class="section__title" data-i18n="section.gauge">圆盘显示</h2>
+        <p class="section__hint" data-i18n="section.gauge.hint">中心指标、水面高度、外圈进度分别显示哪一项；选速率做外圈时，按当前速度推算 5 小时周期会被烧掉多少。</p>
+        <div class="field">
+          <label class="field__label" for="centerSelect" data-i18n="field.center">中心指标</label>
+          <select class="field__select" id="centerSelect" data-i18n-aria="field.center" aria-label="中心指标"></select>
+        </div>
+        <div class="field">
+          <label class="field__label" for="waterSelect" data-i18n="field.water">水面高度</label>
+          <select class="field__select" id="waterSelect" data-i18n-aria="field.water" aria-label="水面高度"></select>
+        </div>
+        <div class="field">
+          <label class="field__label" for="ringSelect" data-i18n="field.ring">外圈进度</label>
+          <select class="field__select" id="ringSelect" data-i18n-aria="field.ring" aria-label="外圈进度"></select>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2 class="section__title" data-i18n="section.appearance">外观</h2>
+        <p class="section__hint" data-i18n="section.appearance.hint">跟随系统时，优先使用 MiniMax Code 的界面主题。</p>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.theme">主题</div>
+            <div class="field__hint" data-i18n="field.theme.hint">影响悬浮窗与设置页配色</div>
+          </div>
+          <div class="segmented" id="themeGroup" role="group" data-i18n-aria="field.theme" aria-label="主题"></div>
+        </div>
+        <div class="field">
+          <div>
+            <div class="field__label" data-i18n="field.language">语言</div>
+            <div class="field__hint" data-i18n="field.language.hint">默认跟随系统语言</div>
+          </div>
+          <div class="segmented" id="languageGroup" role="group" data-i18n-aria="field.language" aria-label="语言"></div>
+        </div>
+      </section>
+
+      <section class="card section">
+        <h2 class="section__title" data-i18n="section.sources">数据来源</h2>
+        <p class="section__hint" data-i18n="section.sources.hint">5 小时与 7 天周期进度来自 MiniMax 账号额度接口；当天与最近 7 天用量来自账号用量接口；速率与趋势取账号实时 Token 累计的差分。</p>
+        <div class="source-list" id="sourceList"></div>
+      </section>
+
+      <div class="settings__foot">
+        <button class="btn btn--ghost" id="resetButton" type="button" data-i18n="action.reset">恢复默认</button>
+        <span class="toast" id="toast" role="status"></span>
+      </div>
+          </main>
+    </div>
+    <script type="module" src="/assets/widget.js"></script>
+    <script type="module" src="/assets/settings.js"></script>
+  </body>
+</html>
