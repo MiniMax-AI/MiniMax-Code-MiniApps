@@ -121,6 +121,18 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      /* 运行时还没就绪时的提示：宿主会在页面不可见时停掉进程 */
+      .startup-chip {
+        align-self: center;
+        margin-left: 10px;
+        padding: 2px 10px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
       .topbar-actions {
         display: flex;
         align-items: center;
@@ -1051,6 +1063,7 @@
         <div class="brand">
           <h1 class="brand-title">天气 · 新闻看板</h1>
           <span class="brand-sub" id="brand-sub" role="status">正在加载…</span>
+          <span class="startup-chip" id="startup-chip" role="status" hidden>服务启动中…</span>
         </div>
         <div class="topbar-actions">
           <label class="switch">
@@ -1265,6 +1278,7 @@
 
         var el = {
           brandSub: document.getElementById('brand-sub'),
+          startupChip: document.getElementById('startup-chip'),
           autoRefresh: document.getElementById('auto-refresh'),
           refreshInterval: document.getElementById('refresh-interval'),
           refreshBtn: document.getElementById('refresh-btn'),
@@ -1476,6 +1490,122 @@
                 return payload;
               });
           });
+        }
+
+        /* ================= 运行时启动 ================= */
+        /* 宿主会在页面不可见时停掉运行时（docs/runtime.md 的 Lifecycle 一节），
+           页面被重新加载时服务可能还没就绪。网络层的失败——连不上、
+           返回的不是 JSON——说明服务没起来，这里做退避重试；
+           服务已经就绪、只是某个上游源失败时，交给原来的错误处理。 */
+        var STARTUP_RETRY_DELAYS = [400, 800, 1600, 3200, 6400, 10000];
+        var startupGraceUntil = 0;
+        var startupState = 'ok';
+        var serviceEverOk = false;
+
+        function isServiceDown(error) {
+          return !(error && error.code);
+        }
+
+        function showStartupState(delay) {
+          startupState = 'starting';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = false;
+          el.startupChip.textContent =
+            '服务启动中… ' + Math.ceil(delay / 1000) + ' 秒后重试';
+        }
+
+        /* 重试到头仍然连不上：改成"服务未就绪"，别把提示停在"启动中"上。 */
+        function showServiceDownState() {
+          startupState = 'down';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = false;
+          el.startupChip.textContent = '服务未就绪，稍后会自动重试';
+        }
+
+        function hideStartupState() {
+          startupState = 'ok';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = true;
+          el.startupChip.textContent = '服务启动中…';
+        }
+
+        /* 取数时若服务还没起来，按退避重试。
+           冷启动（还没连上过服务）只在页面打开后的宽限期内重试；
+           曾经连上过、后来服务被停掉（宿主会在页面不可见时停进程），
+           则一直允许重试，直到重试次数用完或连上为止。 */
+        function getJsonResilient(url) {
+          var attempt = 0;
+          function run() {
+            return getJson(url)
+              .then(function (payload) {
+                serviceEverOk = true;
+                if (startupState !== 'ok') hideStartupState();
+                return payload;
+              })
+              .catch(function (error) {
+                if (!isServiceDown(error)) throw error;
+                var mayRetry =
+                  serviceEverOk || Date.now() <= startupGraceUntil;
+                if (!mayRetry || attempt >= STARTUP_RETRY_DELAYS.length) {
+                  if (startupState !== 'ok') showServiceDownState();
+                  throw error;
+                }
+                var delay = STARTUP_RETRY_DELAYS[attempt];
+                attempt += 1;
+                showStartupState(delay);
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, delay);
+                }).then(run);
+              });
+          }
+          return run();
+        }
+
+        /* 写操作同样要抗住"服务还没起来"。自选股的 add / remove 在服务端
+           是幂等的（重复添加只提示"已在自选股中"），所以重试不会重复写。 */
+        function postJsonResilient(url, body) {
+          var attempt = 0;
+          function run() {
+            return fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+              .then(function (response) {
+                return response
+                  .json()
+                  .catch(function () {
+                    return null;
+                  })
+                  .then(function (payload) {
+                    if (!payload) throw new Error('bad_response');
+                    if (!response.ok || payload.ok === false) {
+                      var error = new Error(payload.message || '请求失败');
+                      error.code = payload.error || 'request_failed';
+                      throw error;
+                    }
+                    serviceEverOk = true;
+                    if (startupState !== 'ok') hideStartupState();
+                    return payload;
+                  });
+              })
+              .catch(function (error) {
+                if (!isServiceDown(error)) throw error;
+                var mayRetry =
+                  serviceEverOk || Date.now() <= startupGraceUntil;
+                if (!mayRetry || attempt >= STARTUP_RETRY_DELAYS.length) {
+                  if (startupState !== 'ok') showServiceDownState();
+                  throw error;
+                }
+                var delay = STARTUP_RETRY_DELAYS[attempt];
+                attempt += 1;
+                showStartupState(delay);
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, delay);
+                }).then(run);
+              });
+          }
+          return run();
         }
 
         /* ================= 天气卡自适应 ================= */
@@ -1784,7 +1914,7 @@
             pick: String(state.pick),
             refresh: refresh,
           });
-          return getJson('/api/board?' + params.toString())
+          return getJsonResilient('/api/board?' + params.toString())
             .then(function (payload) {
               if (payload.data) {
                 state.weather = payload.data;
@@ -1900,7 +2030,7 @@
         function loadNews(options) {
           var refresh = options && options.refresh ? '1' : '0';
           var params = new URLSearchParams({ source: state.tab, refresh: refresh });
-          return getJson('/api/board?' + params.toString())
+          return getJsonResilient('/api/board?' + params.toString())
             .then(function (payload) {
               state.news = payload.data;
               state.newsStale = Boolean(payload.stale);
@@ -2077,7 +2207,7 @@
         function loadStocks(options) {
           var refresh = options && options.refresh ? '1' : '0';
           var params = new URLSearchParams({ refresh: refresh });
-          return getJson('/api/stocks?' + params.toString())
+          return getJsonResilient('/api/stocks?' + params.toString())
             .then(function (payload) {
               state.watchlist = payload.watchlist || [];
               state.stocks = payload.stocks || [];
@@ -2090,32 +2220,21 @@
         }
 
         function mutateWatchlist(action, code) {
-          return fetch('/api/watchlist', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ action: action, code: code }),
-          })
-            .then(function (response) {
-              return response
-                .json()
-                .catch(function () {
-                  return null;
-                })
-                .then(function (payload) {
-                  if (!payload || payload.ok === false) {
-                    showToast((payload && payload.message) || '操作失败', 'error');
-                    return false;
-                  }
-                  state.watchlist = payload.watchlist || [];
-                  state.stocks = payload.stocks || [];
-                  state.stocksUpdatedAt = new Date().toISOString();
-                  renderStocks();
-                  showToast(payload.message || '已更新');
-                  return true;
-                });
+          return postJsonResilient('/api/watchlist', { action: action, code: code })
+            .then(function (payload) {
+              state.watchlist = payload.watchlist || [];
+              state.stocks = payload.stocks || [];
+              state.stocksUpdatedAt = new Date().toISOString();
+              renderStocks();
+              showToast(payload.message || '已更新');
+              return true;
             })
-            .catch(function () {
-              showToast('网络异常，操作未生效', 'error');
+            .catch(function (error) {
+              if (isServiceDown(error)) {
+                showToast('服务未就绪，操作未生效，请稍后重试', 'error');
+                return false;
+              }
+              showToast((error && error.message) || '操作失败', 'error');
               return false;
             });
         }
@@ -2662,6 +2781,9 @@
         renderWeather();
         renderNews();
         renderStocks();
+
+        /* 页面刚加载时给运行时留一段启动宽限期 */
+        startupGraceUntil = Date.now() + 45000;
 
         loadBoard().then(function () {
           updateBrandStatus();

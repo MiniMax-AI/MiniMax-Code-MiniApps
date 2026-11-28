@@ -34,6 +34,16 @@ Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quot
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
 figure can be compared.
 
+The board also keeps working while its own service is still coming up. The Host stops the Mini App
+process whenever the page is hidden, so a page that is brought back to the front can find the
+service gone. A request that cannot reach the service — no response at all, or a response that is
+not JSON — is retried with a growing backoff of 0.4 s, 0.8 s, 1.6 s, 3.2 s, 6.4 s and 10 s, and
+the title bar shows how long the next attempt will take. A request that does reach the service but
+fails because of an upstream source is not retried, so a broken source never looks like a broken
+service. Once the retries are used up the title bar says the service is not ready, and the next
+automatic refresh picks the board up again. Adding or removing a watchlist entry is retried the
+same way, which is safe because both operations are idempotent on the server.
+
 ## Install and open
 
 1. Install the plugin in MiniMax Code.
@@ -80,7 +90,14 @@ rejected.
   timestamp and the price; confirmed that two news requests without the refresh flag return the
   same timestamp while the same request with it returns a new one; read back all six news columns
   and the quote list and confirmed every returned link starts with https; reloaded the page and
-  confirmed the watchlist, the selected tab, and the theme persisted. Console showed 0 errors and 0
+  confirmed the watchlist, the selected tab, and the theme persisted; made the service unreachable
+  and confirmed the board fell back to the backoff retries — the title bar counted down 1 s, 2 s,
+  4 s, 7 s and 10 s, then reported the service as not ready once the retries were used up, and the
+  board recovered on the next refresh with `/api/board` and `/api/stocks` answering 200 and the
+  notice disappearing; repeated that with the service down for 25 s and confirmed the notice never
+  settled on a state that did not match reality; added a watchlist entry while the service was down
+  for 3 s and confirmed the write was retried and applied once the service came back, then removed
+  the entry again. Console showed 0 errors and 0
   warnings; the network showed no failed requests.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the
