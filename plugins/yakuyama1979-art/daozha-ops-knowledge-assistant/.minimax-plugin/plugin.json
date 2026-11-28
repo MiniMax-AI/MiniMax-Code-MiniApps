@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "daozha-ops-knowledge-assistant",
+  "displayName": "道闸运维知识助手",
+  "version": "1.0.0",
+  "description": "Local-model operations console: ingest manuals into a searchable knowledge base, answer with cited standard answers and analysis, and turn plain-language change requests into reviewable SEARCH/REPLACE patches with unified diff, automatic backup and rollback.",
+  "author": "yakuyama1979-art",
+  "icon": "icon.png",
+  "category": "Business",
+  "exampleQueries": [
+    "打开道闸运维知识助手",
+    "投喂道闸售后运维规则手册并回答质保期问题"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}

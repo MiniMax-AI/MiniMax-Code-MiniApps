@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>道闸运维知识助手</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 20h18M6 20V9m12 11V9M6 9h12M12 9V4m0 0L8 6m4-2 4 2" />
+          </svg>
+          <div>
+            <p class="brand-title">道闸运维知识助手</p>
+            <p class="brand-sub">本地模型 · 知识库 · 改代码</p>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="主导航">
+          <button type="button" class="nav-item is-active" data-view="kb" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h7v14H4zM13 5h7v9h-7z" /></svg>
+            <span>知识库</span>
+          </button>
+          <button type="button" class="nav-item" data-view="ask">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.3M12 16.5h.01" /></svg>
+            <span>运维问答</span>
+          </button>
+          <button type="button" class="nav-item" data-view="patch">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M15 7l5 5-5 5" /></svg>
+            <span>AI 改代码</span>
+          </button>
+          <button type="button" class="nav-item" data-view="deploy">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 19h16" /></svg>
+            <span>部署</span>
+          </button>
+          <button type="button" class="nav-item" data-view="settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 3a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 3h4l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z" /></svg>
+            <span>路由与设置</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-status">
+          <span class="status-dot" id="status-dot" data-state="pending"></span>
+          <span id="status-text">正在读取本地模型状态…</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <h1 id="view-title">知识库</h1>
+            <p id="view-desc">投喂道闸运维资料，建立可检索的本地知识库</p>
+          </div>
+          <div class="topbar-actions" id="topbar-actions"></div>
+        </header>
+
+        <div class="content">
+          <!-- 知识库 -->
+          <section id="view-kb" class="view-panel">
+            <div class="grid-two">
+              <section class="card" aria-labelledby="kb-ingest-title">
+                <h2 id="kb-ingest-title" class="card-title">投喂资料</h2>
+                <p class="card-desc">支持 txt / md / docx / xlsx / pdf，投喂后由本地模型自动归纳并向量化。</p>
+                <form id="kb-upload-form" class="stack">
+                  <div class="field">
+                    <label for="kb-category">资料分类</label>
+                    <select id="kb-category" name="category" required></select>
+                  </div>
+                  <div class="field">
+                    <label for="kb-files">选择资料文件</label>
+                    <input id="kb-files" name="files" type="file" multiple accept=".txt,.md,.markdown,.docx,.xlsx,.pdf" />
+                  </div>
+                  <button type="submit" class="btn btn-primary" id="kb-upload-btn">投喂并建立索引</button>
+                  <p class="form-note" id="kb-upload-status" role="status"></p>
+                </form>
+              </section>
+
+              <section class="card" aria-labelledby="kb-browse-title">
+                <h2 id="kb-browse-title" class="card-title">从资料目录投喂</h2>
+                <p class="card-desc">从已配置的资料目录中选择文件，换合同或规则时可直接重新投喂。</p>
+                <div class="stack">
+                  <div class="field">
+                    <label for="kb-root">资料目录</label>
+                    <select id="kb-root"></select>
+                  </div>
+                  <div class="picker" id="kb-file-list" role="listbox" aria-label="资料文件列表" tabindex="0"></div>
+                  <button type="button" class="btn btn-secondary" id="kb-ingest-path-btn" disabled>投喂选中文件</button>
+                  <p class="form-note" id="kb-browse-status" role="status"></p>
+                </div>
+              </section>
+            </div>
+
+            <section class="card" aria-labelledby="kb-list-title">
+              <div class="card-head">
+                <h2 id="kb-list-title" class="card-title">已入库资料</h2>
+                <span class="pill" id="kb-count">0 份</span>
+              </div>
+              <div id="kb-documents"></div>
+            </section>
+          </section>
+
+          <!-- 问答 -->
+          <section id="view-ask" class="view-panel" hidden>
+            <section class="card" aria-labelledby="ask-title">
+              <h2 id="ask-title" class="card-title">提出运维问题</h2>
+              <p class="card-desc">先在本地知识库中检索相关片段，再由模型给出带来源的标准答案与解析。</p>
+              <form id="ask-form" class="stack">
+                <div class="field">
+                  <label for="ask-question">问题</label>
+                  <textarea id="ask-question" rows="3" placeholder="例如：道闸主机质保期是多久？易损件是否在质保范围内？" required></textarea>
+                </div>
+                <div class="field field-inline">
+                  <label for="ask-topk">检索片段数</label>
+                  <input id="ask-topk" type="number" min="1" max="20" value="6" />
+                </div>
+                <button type="submit" class="btn btn-primary" id="ask-btn">生成标准答案</button>
+                <p class="form-note" id="ask-status" role="status"></p>
+              </form>
+            </section>
+
+            <section class="card" aria-labelledby="ask-result-title" id="ask-result-card" hidden>
+              <div class="card-head">
+                <h2 id="ask-result-title" class="card-title">回答</h2>
+                <span class="pill" id="ask-route-pill">—</span>
+              </div>
+              <div id="ask-result"></div>
+            </section>
+          </section>
+
+          <!-- AI 改代码 -->
+          <section id="view-patch" class="view-panel" hidden>
+            <div class="grid-two">
+              <section class="card" aria-labelledby="patch-pick-title">
+                <h2 id="patch-pick-title" class="card-title">选择目标文件</h2>
+                <p class="card-desc">只允许修改 <code id="patch-roots-label">已允许写入的目录</code> 下的文件。</p>
+                <div class="stack">
+                  <div class="field">
+                    <label for="patch-root">允许写入的目录</label>
+                    <select id="patch-root"></select>
+                  </div>
+                  <div class="picker" id="patch-file-list" role="listbox" aria-label="目标文件列表" tabindex="0"></div>
+                  <div class="field">
+                    <label for="patch-path">目标文件路径</label>
+                    <input id="patch-path" type="text" spellcheck="false" placeholder="/absolute/path/to/project/example.html" />
+                  </div>
+                </div>
+              </section>
+
+              <section class="card" aria-labelledby="patch-req-title">
+                <h2 id="patch-req-title" class="card-title">描述修改要求</h2>
+                <p class="card-desc">模型会先定位代码位置，再生成 SEARCH/REPLACE 补丁，补丁必须唯一匹配原文才会被应用。</p>
+                <form id="patch-form" class="stack">
+                  <div class="field">
+                    <label for="patch-requirement">修改要求</label>
+                    <textarea id="patch-requirement" rows="4" placeholder="例如：把页面标题改成「道闸运维知识助手」，并保留原有样式" required></textarea>
+                  </div>
+                  <button type="submit" class="btn btn-primary" id="patch-preview-btn">生成补丁预览</button>
+                  <p class="form-note" id="patch-status" role="status"></p>
+                </form>
+              </section>
+            </div>
+
+            <section class="card" aria-labelledby="patch-result-title" id="patch-result-card" hidden>
+              <div class="card-head">
+                <h2 id="patch-result-title" class="card-title">补丁预览</h2>
+                <span class="pill" id="patch-route-pill">—</span>
+              </div>
+              <div id="patch-result"></div>
+            </section>
+
+            <section class="card" aria-labelledby="patch-backup-title">
+              <div class="card-head">
+                <h2 id="patch-backup-title" class="card-title">备份与回滚</h2>
+                <span class="pill" id="backup-count">0 条</span>
+              </div>
+              <div id="patch-backups"></div>
+            </section>
+          </section>
+
+          <!-- 部署 -->
+          <section id="view-deploy" class="view-panel" hidden>
+            <div class="grid-two">
+              <section class="card" aria-labelledby="deploy-cmd-title">
+                <h2 id="deploy-cmd-title" class="card-title">部署命令</h2>
+                <p class="card-desc">命令保存在本地配置里，工作目录必须在允许写入的两个根目录之下。</p>
+                <form id="deploy-form" class="stack">
+                  <div class="field">
+                    <label for="deploy-name">名称</label>
+                    <input id="deploy-name" type="text" placeholder="发布道闸站点" />
+                  </div>
+                  <div class="field">
+                    <label for="deploy-command">命令</label>
+                    <input id="deploy-command" type="text" spellcheck="false" placeholder="dir /b" />
+                  </div>
+                  <div class="field">
+                    <label for="deploy-workdir">工作目录</label>
+                    <input id="deploy-workdir" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
+                  </div>
+                  <div class="row-actions">
+                    <button type="submit" class="btn btn-primary" id="deploy-save-btn">保存命令</button>
+                    <button type="button" class="btn btn-ghost" id="deploy-reset-btn">清空</button>
+                  </div>
+                  <p class="form-note" id="deploy-config-status" role="status"></p>
+                </form>
+              </section>
+
+              <section class="card" aria-labelledby="deploy-list-title">
+                <h2 id="deploy-list-title" class="card-title">已配置命令</h2>
+                <div id="deploy-list"></div>
+              </section>
+            </div>
+
+            <section class="card" aria-labelledby="deploy-log-title">
+              <div class="card-head">
+                <h2 id="deploy-log-title" class="card-title">执行日志</h2>
+                <span class="pill" id="deploy-log-count">0 条</span>
+              </div>
+              <div id="deploy-logs"></div>
+            </section>
+          </section>
+
+          <!-- 路由与设置 -->
+          <section id="view-settings" class="view-panel" hidden>
+            <section class="card" aria-labelledby="routing-title">
+              <h2 id="routing-title" class="card-title">模型路由</h2>
+              <p class="card-desc">本地模型使用 Ollama；14B 模型固定 8K 上下文，小模型固定 16K；嵌入固定使用 bge-m3。</p>
+              <div class="segmented" id="routing-modes" role="radiogroup" aria-label="路由模式"></div>
+              <p class="form-note" id="routing-hint"></p>
+            </section>
+
+            <div class="grid-two">
+              <section class="card" aria-labelledby="local-title">
+                <h2 id="local-title" class="card-title">本地模型</h2>
+                <div id="local-models"></div>
+              </section>
+
+              <section class="card" aria-labelledby="online-title">
+                <h2 id="online-title" class="card-title">在线模型</h2>
+                <div id="online-model"></div>
+              </section>
+            </div>
+
+            <section class="card" aria-labelledby="roots-title">
+              <h2 id="roots-title" class="card-title">目录与备份</h2>
+              <form id="roots-form" class="stack">
+                <div class="field">
+                  <label for="write-roots">允许写入的目录（每行一个，AI 改代码只会改这些目录）</label>
+                  <textarea id="write-roots" rows="3" spellcheck="false"></textarea>
+                </div>
+                <div class="field">
+                  <label for="ingest-roots">资料目录（每行一个，用于从磁盘投喂资料）</label>
+                  <textarea id="ingest-roots" rows="3" spellcheck="false"></textarea>
+                </div>
+                <div class="field">
+                  <label for="backup-root">备份根目录</label>
+                  <input id="backup-root" type="text" spellcheck="false" />
+                </div>
+                <div class="row-actions">
+                  <button type="submit" class="btn btn-primary" id="roots-save-btn">保存设置</button>
+                </div>
+                <p class="form-note" id="roots-status" role="status"></p>
+              </form>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast-stack" id="toasts" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
