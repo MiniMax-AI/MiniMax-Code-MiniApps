@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config, ConfigError, load_facts, load_toml
+from .safepath import guard_project_write
 from .texscan import scan_tex
 
 MISSING_CODE = "REQUIRED_EVIDENCE_MISSING"
@@ -272,6 +273,8 @@ def write_lock(project_root: Path, evidence: dict) -> dict:
                             for i in normal[key])
             lines.append('"%s" = [%s]' % (key.replace('"', '\\"'), ids))
     path = Path(project_root) / LOCK_REL
+    # 写侧落点闸：冻结件必须落在项目根内（软链绕出去就拒写，不落盘）。
+    guard_project_write(Path(project_root), path, what="证据冻结件", rel=LOCK_REL)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"path": LOCK_REL, "sha256": digest, "entries": entries,

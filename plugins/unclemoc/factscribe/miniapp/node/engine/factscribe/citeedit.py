@@ -20,7 +20,7 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 
-from .citeview import _bib_paths, _tex_sources
+from .citeview import _bib_paths, _tex_sources, inside_root, project_root
 from .citations import parse_bib
 from .config import ConfigError, load_config
 from .textio import read_text_exact, write_text_exact
@@ -93,14 +93,20 @@ def _write_atomic(path: Path, text: str) -> None:
 
 
 def _project_bib(cfg) -> Path:
-    """项目自己的 bib 文件（配置里的 `bib`）。越出项目根一律拒。"""
+    """项目自己的 bib 文件（配置里的 `bib`）。越出项目根一律拒。
+
+    口径与读侧 `citeview.inside_root()` 共用一份：写侧拒、读侧丢，
+    但「在不在项目内」的判定规则只有一份，两侧不会各说各话。
+    """
     rel = str(getattr(cfg, "bib", "") or "refs.bib").strip()
     pure = PurePosixPath(rel.replace("\\", "/"))
     if pure.is_absolute() or any(part == ".." for part in pure.parts):
         raise ConfigError("配置里的 bib 必须是项目内的相对路径：%s" % rel,
                           code="BIB_PATH_ESCAPE")
-    root = cfg.root.resolve()
-    target = root.joinpath(*[p for p in pure.parts if p not in ("", ".")])
+    root = project_root(cfg)
+    target = inside_root(root, rel)
+    if target is None:
+        raise ConfigError("bib 越出项目根：%s" % rel, code="BIB_PATH_ESCAPE")
     try:
         target.resolve().relative_to(root)
     except ValueError:
@@ -148,7 +154,7 @@ def citation_add_data(project: Path | str, body: dict,
         raise ConfigError("请求体必须是 JSON 对象", code="CITATION_INVALID")
     key = _clean_key(body.get("key"))
     cfg = load_config(Path(project))
-    root = cfg.root.resolve()
+    root = project_root(cfg)
 
     # key 已存在 → 409。查的是整个 bib 集合：加到 refs.bib 里撞上 extra.bib
     # 的同名 key，一样是重复。
@@ -192,7 +198,7 @@ def citation_delete_data(project: Path | str, body: dict,
         raise ConfigError("请求体必须是 JSON 对象", code="CITATION_INVALID")
     key = _clean_key(body.get("key"))
     cfg = load_config(Path(project))
-    root = cfg.root.resolve()
+    root = project_root(cfg)
 
     # 定位：parse_bib 给出每条的行范围（line..end）。
     hits = []

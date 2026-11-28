@@ -60,15 +60,29 @@ The engine is written in Python. Its source is vendored into the package, so the
 
 ### Line endings
 
-A save keeps the line endings your file already had. The engine reads sections with Python's
-universal-newline mode (CRLF becomes LF before the text ever reaches the page) and writes the
-file back byte for byte, so without a second step **every save rewrites the whole file with LF
-endings** — a CRLF manuscript loses all its CR bytes on the first edit. The Node shell therefore
-reads the real endings from the file on disk before the save, hands the engine an LF-only body,
-and puts the original endings back afterwards: lines the save did not touch keep their exact
-endings (a file with mixed endings stays mixed), the edited lines take the file's dominant
-ending, and the text itself is never altered — only the endings move. If the file changed
-underneath while the save was running, the endings are left alone instead of being overwritten.
+A save keeps the line endings your file already had.
+
+The engine reads a section with Python's universal-newline mode (CRLF becomes LF before the text
+ever reaches the page) and writes the file back byte for byte, so without a second step **every
+save rewrites the whole file with LF endings** — a CRLF manuscript loses all its CR bytes on the
+first edit. Two independent steps prevent that:
+
+- The engine restores the endings itself. Every line it wrote keeps the ending of the line it
+  replaced; a line the user typed gets the file's dominant ending. The AI draft block inserted
+  into a manuscript is written with the file's dominant ending as well, so a CRLF manuscript gets
+  a CRLF draft block instead of a stray run of LF lines.
+- The Node shell keeps a second, independent safety net: before a save it reads the real endings
+  from the text files on disk, hands the engine an LF-only body, and puts the original endings
+  back afterwards — lines the save did not touch keep their exact endings (a file with mixed
+  endings stays mixed), the changed lines take the file's dominant ending. It moves endings only,
+  never a character of text, and if the file changed underneath while the save was running it
+  leaves the endings alone instead of overwriting somebody else's edit.
+
+The two steps were measured against each other on the same files (CRLF, LF and mixed-ending
+manuscripts, each saved with and without a content change, plus an AI draft insertion): when the
+engine restores the endings correctly the shell's pass produces byte-identical output in every
+case but one, and in that one case it is the shell's result that keeps the untouched line's
+original ending.
 
 On first use the page asks for your paper root directory: any directory that contains a
 `factscribe.toml` is treated as a paper project. It can be changed later from the settings page.
@@ -83,17 +97,21 @@ On first use the page asks for your paper root directory: any directory that con
 - Minimum client version: 3.1.2. The package declares `agentAccess: ["session.run"]`, which
   needs 3.1.2; no `engines` bound is declared, so clients from 3.1.2 on still install it and
   only lose the assistant model picker when their client does not expose the model catalogue.
-- Node 26.7 with the package's own tests: `node --test tests/*.test.mjs` — 19 cases, all
-  green (16 unit cases for the line-ending module, plus 3 end-to-end cases that start the
-  vendored Python engine and save into a copy of the sample paper).
-- The line-ending round trip was measured on the vendored sample paper: a 678-byte section with
-  11 CRLF endings came back with all 11 endings and the same text. Without the fix the engine's
-  own save rewrote the same file as 667 bytes with 0 CRLF endings — every CR byte lost.
+- The package's own tests: `node --test tests/*.test.mjs` — 32 cases, all green: 16 unit cases
+  for the line-ending module, 8 cases for the status-code passthrough (the shell must not turn
+  the engine's 409/400/404 into a 502), and 8 end-to-end cases that start the vendored Python
+  engine and save into a copy of the sample paper. Run on Node 20.20.2, 22.23.5 and 26.7.0 —
+  32/32 green on each, no case skipped.
+- The line-ending round trip was measured on the vendored sample paper: a section of 678 bytes
+  with 11 CRLF endings came back with all 11 endings and the same text. The same section without
+  the CR bytes weighs 667 bytes with 0 CRLF endings — that is what a save would leave behind if
+  the endings were not restored.
 - Not verified: Windows and Linux hosts. The package ships no platform-specific binary and the
   Node entry uses only Node built-ins, but no run on those platforms has been done. The Windows
   interpreter discovery (`py` launcher, versioned commands, common install directories) is
-  covered by unit tests, but no end-to-end run on a real Windows machine has been done; the 36
-  Windows candidates are generated from the platform string, not measured on Windows.
+  covered by unit tests, but no end-to-end run on a real Windows machine has been done; the
+  Windows candidate list is generated from the platform string (31 to 37 entries, depending on
+  which environment variables are set), not measured on Windows.
 
 ## Data & access
 
@@ -104,10 +122,10 @@ On first use the page asks for your paper root directory: any directory that con
   `proposals/` (proposal records) and `custom-models.json` (an API key you typed yourself, mode
   0600). Inside your paper directory, only where you click: `sections/*.tex` (atomic write plus a
   `.bak` copy, refused when the file changed underneath) and `facts/draft/` for imported drafts.
-  Opening a disk also records `last_opened` in that disk's `factscribe.toml`. Restoring the
-  original line endings after a save writes the same file again through a sibling temporary file
-  (`<name>.eol-tmp-<pid>`) and renames it over the original, so no extra file is left behind; the
-  temporary file is removed if the write fails.
+  Opening a disk also records `last_opened` in that disk's `factscribe.toml`. Putting the
+  original line endings back after a save writes the same file again through a sibling temporary
+  file (`<name>.eol-tmp-<pid>`) and renames it over the original, so no extra file is left behind;
+  the temporary file is removed if the write fails.
 - **Network hosts**: none by default. The Node service and the Python engine listen on loopback
   only (`127.0.0.1`). If you add a custom model in the panel, the Node shell sends the prompt to
   the OpenAI-compatible endpoint you typed; the host Agent turn is run by the Host on your

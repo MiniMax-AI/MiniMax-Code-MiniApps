@@ -1359,16 +1359,27 @@ def _draft_insertion(source: str, block: Block, body: str) -> tuple[str, str, in
 
     提议单与真写回共用这一份计算——差异卡上看到的落盘结果，
     与人点确认后真正写进文件的那一份，是同一条路算出来的。
+
+    **行尾按所在文件走**（与 save_block 的 restore_newlines 同一套口径）：
+    CRLF 稿子里插进去的草稿块也是 CRLF，不补出 LF 行；LF 稿子也不会被
+    改成 CRLF。新插进去的行没有「原来的行尾」可依——按**文件的主导行尾**
+    补（restore_newlines 的 fallback 口径，不另造一套）。
+
+    草稿**正文**一个字不改：只改行尾，不动内容。
     """
     marker = _next_draft_id(source)
-    region = _draft_region(marker, body)
+    eol = dominant_newline(source)
+    # 草稿块内部：每一行的行尾按文件的主导行尾落。走 restore_newlines
+    # 这条（与 save_block 同一条）：没有原文可依 → 全部用 fallback，
+    # fallback 就是文件的主导行尾。
+    region = restore_newlines(_draft_region(marker, body), "", fallback=eol)
     newline = source.find("\n", block.end)
     if newline == -1:
         insert_at = len(source)
-        insertion = "\n\n" + region + "\n"
+        insertion = eol + eol + region + eol
     else:
         insert_at = newline + 1
-        insertion = "\n" + region + "\n"
+        insertion = eol + region + eol
     return marker, insertion, insert_at
 
 

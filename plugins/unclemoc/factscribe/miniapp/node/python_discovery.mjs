@@ -246,7 +246,17 @@ export function probePythonCandidate(candidate, options = {}) {
       // ENOENT＝这台机器上根本没有这个命令；其余错误＝命令在，但跑不起来。
       done({ status: code === 'ENOENT' ? 'missing' : 'broken', detail: code || String((error && error.message) || error) });
     });
-    child_.on('exit', (code) => {
+    // 判定必须等 stdout/stderr 读完再下结论——所以听 'close'，不听 'exit'。
+    //
+    // 'exit' 只保证「进程退出了」，不保证管道里的字节已经交给父进程：机器一忙
+    // （CI runner 上五个矩阵并行、apt 还在装 poppler），'exit' 就可能先于 stdout
+    // 的 'data' 到达——那时 out 还是空的，一个明明吐了版本号的解释器会被判成
+    // broken/no_version，用户看到的是「这个命令不是可用的 Python 解释器」。
+    // 'close' 才是「进程退出、且 stdout/stderr 两个管道都读完」。
+    //
+    // 语义没变：状态还是 ready/old/missing/broken 四选一，文案一个字没改，
+    // 只是把「读数据」的时机从「进程退出」挪到「管道读完」。
+    child_.on('close', (code) => {
       const version = parsePythonVersion(out);
       if (!version) {
         done({ status: 'broken', detail: code === 0 ? 'no_version' : 'exit_' + code });

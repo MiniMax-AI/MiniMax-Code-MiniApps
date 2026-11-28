@@ -21,6 +21,7 @@ from pathlib import Path
 from .config import Config, ConfigError, load_config, load_facts, load_toml
 from .constants import CONFIDENCE_OK
 from .facts import sha256_file
+from .safepath import guard_facts_write, guard_project_write
 from .textio import read_text_exact, to_lf
 
 LANGS = ("zh", "en")
@@ -404,6 +405,15 @@ def init_project(root: Path, *, title: str | None = None,
     files = _render(lang, clean_title, clean_author)
     overwritten = [name for name in files if (root / name).is_file()]
 
+    # 写侧落点闸：七个落点全查一遍再落盘——软链绕出去就拒写，不落盘，也不
+    # 留下半副骨架。闸在 mkdir 之前：目录本身是软链时，mkdir 会把目录建在
+    # 软链那边去；拒写时连目标目录都不必先建出来。
+    for name in files:
+        dest = root / name
+        if name == FACTS_FILE:
+            guard_facts_write(root, dest, rel=name)
+        else:
+            guard_project_write(root, dest, what="项目骨架", rel=name)
     root.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
         dest = root / name
@@ -731,6 +741,15 @@ def prepare_fact(root: Path, *, fid: str, claim: str, value: str,
                           "V3 的审批目标请按 SPEC-V3.0 写在 schema 声明里）")
     known = load_facts(cfg)
     ledger_path, ledger_explicit = resolve_ledger(root, cfg, ledger)
+    # 写侧信任根闸：账本的真实目标越出项目根就拒写——不落盘、不留半截文件。
+    # 与读侧同一对码（FACT_FILE_OUTSIDE_PROJECT / FACT_FILE_UNRESOLVED，
+    # red / exit 5），severity 与 exit 一律不动。闸在其它内容校验之前：
+    # 落点越界是信任根缺口，先说它，别让内容校验盖住它。
+    try:
+        ledger_rel = ledger_path.relative_to(root).as_posix()
+    except ValueError:
+        ledger_rel = ledger_path.name
+    guard_facts_write(root, ledger_path, rel=ledger_rel)
     if ledger_path.is_file():
         load_toml(ledger_path)  # 账坏了就别往上追加
 
@@ -787,7 +806,7 @@ def prepare_fact(root: Path, *, fid: str, claim: str, value: str,
         "derived_from": parents,
         "expr": expr,
         "note": str(note or "").strip(),
-        "ledger": ledger_path.relative_to(root).as_posix(),
+        "ledger": ledger_rel,
         "ledger_explicit": ledger_explicit,
         # source_path＝产物在盘上的绝对路径（提案那侧要读它核对 value）。
         # add_fact 会把它摘掉——CLI 的输出形状一个字不变。

@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .safepath import guard_project_write
 from .textio import (dominant_newline, read_text_exact, split_keepends,
                      write_text_exact)
 
@@ -234,6 +235,8 @@ def _rewrite_project_table(path: Path, values: dict) -> None:
 
     行尾按原样保留：改一个键不牵动整份文件的换行。
     """
+    # 写侧落点闸：声明文件必须留在项目根内（软链绕出去就拒写，不落盘）。
+    guard_project_write(path.parent, path, what="项目声明", rel=path.name)
     raw = read_text_exact(path)
     parts = split_keepends(raw)
     contents = [content for content, _ in parts]

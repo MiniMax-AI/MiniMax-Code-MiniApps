@@ -30,6 +30,12 @@ _WRITE_TOOLS = {
                 "file": {"type": "string",
                          "description": "Project-relative .tex path, e.g. sections/03.tex"},
                 "text": {"type": "string", "description": "Full new file content"},
+                "expect_sha": {"type": "string",
+                               "description": "Optional fingerprint of the section "
+                                              "version this edit was based on "
+                                              "(sha256 hex, first 16 chars). If it "
+                                              "no longer matches the file on disk, "
+                                              "the write is refused (BLOCK_STALE)."},
             },
             "required": ["file", "text"],
             "additionalProperties": False,
@@ -157,7 +163,8 @@ def _dispatch(project: Path, allow_write: bool, name: str,
                                       str(args.get("at") or ""), allow_write)
     if name == "factscribe_write_section":
         return write_section_data(project, str(args.get("file") or ""),
-                                  args.get("text"), allow_write)
+                                  args.get("text"), allow_write,
+                                  str(args.get("expect_sha") or ""))
     if name == "factscribe_add_fact":
         return add_fact_data(project, args, allow_write)
     raise KeyError(name)

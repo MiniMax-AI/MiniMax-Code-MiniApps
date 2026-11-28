@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "factscribe",
   "displayName": "FactScribe 论文工作台",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A local workbench for writing papers: open your manuscript projects, read the check report, the fact ledger and the knowledge base, and let the assistant propose edits you approve before anything reaches the file. Numbers and citations stay pinned to the ledger; the AI proposes, you decide.",
   "author": "UncleMoc · BGISMALL",
   "icon": "icon.png",

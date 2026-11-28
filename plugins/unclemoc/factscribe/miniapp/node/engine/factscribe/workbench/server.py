@@ -29,6 +29,12 @@
   POST /api/project/new                           新建论文项目（落盘）
   POST /api/project/update                        改项目（标题等）
   POST /api/project/opened                        记「最近打开」
+  GET  /api/disk/<project>/<disk>/citations       引用清单（只读：多 bib 汇总 + 每条的状态）
+  GET  /api/disk/<project>/<disk>/assets          盘里的图片清单（只读）
+  GET  /api/disk/<project>/<disk>/asset?path=...  取一张图的字节（只读）
+  POST /api/disk/<project>/<disk>/citations/add   往 bib 末尾追加一条引用
+  POST /api/disk/<project>/<disk>/citations/delete 删掉 bib 里的某一条
+  POST /api/samples/guide                         把内置示例论文装到工作根下面
   POST /api/chat                                  AI 对话（OpenAI 兼容后端；不可达→降级）
   POST /api/chat/prepare                          只组装给宿主 Agent 的提示词（**不调模型**）
   GET  /api/ai/models?project=&disk=              可选模型清单（[ai].models；缺省模型保证在列）
@@ -70,6 +76,16 @@ from .write import (ABSTRACT_BLOCK_ID, BLOCK_STALE_CODE,
                     insert_fact_binding, move_section, rename_section,
                     save_abstract, save_block, set_disk_title, touch_opened,
                     update_paper_project)
+
+#: 内置示例装进工作根时用的目录名（装完就是项目列表里的一个项目）。
+SAMPLE_DIR_NAME = "guide-sample"
+
+#: 引用增删的错误码 → HTTP 状态（与旧节级服务那条通道同口径）。
+_CITE_STATUS = {
+    "CITATION_EXISTS": 409,
+    "CITATION_MISSING": 404,
+    "BIB_PATH_ESCAPE": 400,
+}
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {
@@ -318,6 +334,33 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                                                     disk_path, rel))
             if what == "pdf":
                 return self._serve_pdf(disk_path)
+            if what == "citations":
+                # 引用清单（只读）：多 bib 汇总 + 每条的状态（不联网核对）。
+                from ..citeview import citations_data
+                try:
+                    data = citations_data(disk_path)
+                except ConfigError as exc:
+                    return self._error(400, str(exc),
+                                       getattr(exc, "code", "CONFIG_INVALID"))
+                data.update({"ok": True, "project": project_id,
+                             "disk": disk_id})
+                return self._json(data)
+            if what == "assets":
+                # 盘里的图片清单（只读）：前端画缩略图用。
+                from .assets import list_assets
+                data = list_assets(disk_path)
+                data.update({"ok": True, "project": project_id,
+                             "disk": disk_id})
+                return self._json(data)
+            if what == "asset":
+                # 取一张图的字节（只读）：路径闸与旧节级前端那条通道同规则。
+                from .assets import AssetError, read_asset
+                try:
+                    body, ctype = read_asset(
+                        disk_path, unquote(_param_of(query, "path")))
+                except AssetError as exc:
+                    return self._error(exc.status, str(exc), exc.code)
+                return self._send(200, body, ctype)
             if what == "report":
                 from .checkreport import report_payload
                 data = report_payload(
@@ -437,6 +480,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if len(parts) == 5:
                 return self._knowledge_upload(parts[2])
         body = self._body()
+        if route == "/api/samples/guide":
+            # 装示例：不绑盘，只写工作根下的那一个目录。
+            return self._samples_guide(body)
         # 只有这几个接口接受写；其余的路由仍是只读（405，跟段一一致）。
         if route == "/api/chat":
             return self._chat(body)
@@ -451,6 +497,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 if (len(parts) == 6 and parts[4] == "report"
                         and parts[5] == "rerun"):
                     return self._report_rerun(parts[2], parts[3])
+                # 引用增删：写的是 bib，不是正文段。
+                if len(parts) == 6 and parts[4] == "citations":
+                    if parts[5] == "add":
+                        return self._citation_add(parts[2], parts[3], body)
+                    if parts[5] == "delete":
+                        return self._citation_delete(parts[2], parts[3], body)
                 return self._disk_post(route, body)
             if route == "/api/project/new":
                 return self._project_new(body)
@@ -492,6 +544,57 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         result = rerun(disk)
         result.update({"project": project_id, "disk": disk_id})
         return self._json(result)
+
+    def _citation_add(self, project_id: str, disk_id: str,
+                      body: dict) -> None:
+        """往这个盘的 bib 末尾追加一条引用（原子写）。
+
+        口径与旧节级服务那条通道同一条：key 已存在 → 409 CITATION_EXISTS。
+        """
+        disk = self.index.writable_disk(project_id, disk_id)
+        if disk is None:
+            return self._error(404, "没有这个盘（或不在根目录下）：%s/%s"
+                               % (project_id, disk_id))
+        from ..citeedit import citation_add_data
+        try:
+            data = citation_add_data(disk, body, allow_write=True)
+        except ConfigError as exc:
+            code = getattr(exc, "code", "")
+            return self._error(_CITE_STATUS.get(code, 400), str(exc), code)
+        data.update({"ok": True, "project": project_id, "disk": disk_id})
+        return self._json(data)
+
+    def _citation_delete(self, project_id: str, disk_id: str,
+                         body: dict) -> None:
+        """删掉 bib 里的某一条（按 key 定位行范围，原子写回）。"""
+        disk = self.index.writable_disk(project_id, disk_id)
+        if disk is None:
+            return self._error(404, "没有这个盘（或不在根目录下）：%s/%s"
+                               % (project_id, disk_id))
+        from ..citeedit import citation_delete_data
+        try:
+            data = citation_delete_data(disk, body, allow_write=True)
+        except ConfigError as exc:
+            code = getattr(exc, "code", "")
+            return self._error(_CITE_STATUS.get(code, 400), str(exc), code)
+        data.update({"ok": True, "project": project_id, "disk": disk_id})
+        return self._json(data)
+
+    def _samples_guide(self, body: dict) -> None:
+        """把内置示例论文装到工作根下面（装完就在项目列表里）。
+
+        只写这一个目录：用户的论文一个字都不动。已存在且没要求 reset 时
+        原样返回，不覆盖用户在这份示例里改过的东西。
+        """
+        from ..samples import SampleError, install_guide_sample_into
+        target = Path(self.index.root) / SAMPLE_DIR_NAME
+        try:
+            data = install_guide_sample_into(target,
+                                             reset=bool(body.get("reset")))
+        except SampleError as exc:
+            return self._error(exc.status, str(exc), exc.code)
+        data.update({"ok": True})
+        return self._json(data)
 
     def _disk_post(self, route: str, body: dict) -> None:
         parts = [part for part in route.split("/") if part]

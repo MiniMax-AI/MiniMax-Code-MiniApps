@@ -17,11 +17,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 
 from .audit import Issue
-from .config import Config, ConfigError, load_toml
-from . import config as _config
-from .constants import (EXIT_CONFIG, EXIT_INTERNAL, EXIT_OK, EXIT_RED,
-                        EXIT_YELLOW, SCHEMA_VERSION, SEV_RED, SEV_YELLOW,
-                        VERSION)
+from .config import (Config, ConfigError, load_toml, outside_closure_note,
+                     outside_facts_note)
+from .constants import (EXIT_ATTACK_OPEN, EXIT_CONFIG, EXIT_INTEGRITY,
+                        EXIT_INTERNAL, EXIT_MISSING, EXIT_OK, EXIT_PROOF,
+                        EXIT_RED, EXIT_STALE, EXIT_YELLOW, SCHEMA_VERSION,
+                        SEV_RED, SEV_YELLOW, VERSION)
 from .facts import Fact
 from .texscan import scan_tex
 
@@ -35,8 +36,16 @@ def _cell(v) -> str:
 
 def render_matrix(cfg: Config, facts: list[Fact], sections: list[tuple[str, str]]):
     if not facts:
+        # 空账有两种：真没账（配置错，exit 2）；或账文件是越界／不可解的软链、
+        # 被账本拒收（信任根缺口，exit 5）。后者要说清是哪一种，不许混。
+        note = outside_facts_note(cfg)
+        if note:
+            raise ConfigError(note)
         raise ConfigError("facts 为空（%s 没匹配到任何 fact）——矩阵无从生成" % cfg.facts_glob)
     if not sections:
+        note = outside_closure_note(cfg)
+        if note:
+            raise ConfigError(note)
         raise ConfigError("sections 为空（%s 没匹配到任何 .tex）" % cfg.sections_glob)
 
     used_sections: dict[str, list[str]] = {f.id: [] for f in facts}
@@ -111,8 +120,17 @@ def _print_issue(i: Issue, idx: int) -> str:
 
 
 def _status_word(code: int) -> str:
+    """退出码 → 人读结论词。
+
+    闭集里每个码都要有说法：原先只映射 0–4，5/6/7/8/9 一律落进默认的
+    "?"，于是「1 红 / 0 黄 → ?（退出码 5）」这种红闸结论行会印一个问号。
+    说法与 checks.EXIT_CODE_CLOSED_SET 的语义对齐。
+    """
     return {EXIT_OK: "绿", EXIT_RED: "红（有违例）", EXIT_YELLOW: "黄（未核验，不判死）",
-            EXIT_CONFIG: "配置/用法错", EXIT_INTERNAL: "工具内部错误"}.get(code, "?")
+            EXIT_CONFIG: "配置/用法错", EXIT_INTERNAL: "工具内部错误",
+            EXIT_INTEGRITY: "红（覆盖/信任链缺口）", EXIT_PROOF: "红（未达证明要求）",
+            EXIT_STALE: "红（过期/重放）", EXIT_MISSING: "工具缺失",
+            EXIT_ATTACK_OPEN: "红（攻击面未闭合）"}.get(code, "?")
 
 
 def _human_check(cfg, facts, issues, warnings, conflicts, summary, code) -> str:
@@ -546,231 +564,22 @@ def evidence_digest(ws, report: dict) -> str:
 # TOML 读取
 # --------------------------------------------------------------------------
 
-def _toml_scalar(text: str):
-    t = text.strip()
-    if t == "true":
-        return True
-    if t == "false":
-        return False
-    if re.fullmatch(r"[+-]?\d+", t):
-        return int(t)
-    if re.fullmatch(r"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?", t):
-        return float(t)
-    return t
-
-
-class _MiniToml:
-    """3.10 兜底：认 inline table 与 inline table 数组的 TOML 子集解析器。
-
-    config.load_toml 在 3.10 走的是极简解析器，不认 `{ k = v }`，
-    而报告格式必须用 inline table（sources 数组）。有 tomllib 时一律用
-    config.load_toml；没有时才用这个。
-    """
-
-    def __init__(self, text: str):
-        self.s = text
-        self.i = 0
-        self.n = len(text)
-
-    def _fail(self, msg: str):
-        raise ValueError(msg)
-
-    def _ws(self, nl: bool = False):
-        while self.i < self.n:
-            c = self.s[self.i]
-            if c == "#":
-                while self.i < self.n and self.s[self.i] != "\n":
-                    self.i += 1
-            elif c in " \t\r":
-                self.i += 1
-            elif c == "\n" and nl:
-                self.i += 1
-            else:
-                break
-
-    def parse(self) -> dict:
-        root: dict = {}
-        cur = root
-        while True:
-            self._ws(nl=True)
-            if self.i >= self.n:
-                return root
-            if self.s[self.i] == "[":
-                cur = self._header(root)
-            else:
-                key, value = self._keyval()
-                cur[key] = value
-
-    def _header(self, root: dict) -> dict:
-        self.i += 1
-        is_array = False
-        if self.i < self.n and self.s[self.i] == "[":
-            is_array = True
-            self.i += 1
-        parts = self._dotted_key()
-        self._ws()
-        if self.i >= self.n or self.s[self.i] != "]":
-            self._fail("表头没有闭合 ]")
-        self.i += 1
-        if is_array:
-            if self.i >= self.n or self.s[self.i] != "]":
-                self._fail("表数组头没有闭合 ]]")
-            self.i += 1
-        holder = root
-        for part in parts[:-1]:
-            nxt = holder.setdefault(part, {})
-            if isinstance(nxt, list):
-                nxt = nxt[-1]
-            if not isinstance(nxt, dict):
-                self._fail("表名 %r 与同名非表值冲突" % part)
-            holder = nxt
-        leaf = parts[-1]
-        if is_array:
-            arr = holder.setdefault(leaf, [])
-            if not isinstance(arr, list):
-                self._fail("[[%s]] 与同名表冲突" % leaf)
-            new = {}
-            arr.append(new)
-            return new
-        tbl = holder.setdefault(leaf, {})
-        if not isinstance(tbl, dict):
-            self._fail("表 %r 与同名非表值冲突" % leaf)
-        return tbl
-
-    def _dotted_key(self) -> list:
-        parts = []
-        while True:
-            self._ws()
-            parts.append(self._key_token())
-            self._ws()
-            if self.i < self.n and self.s[self.i] == ".":
-                self.i += 1
-                continue
-            return parts
-
-    def _key_token(self) -> str:
-        if self.i < self.n and self.s[self.i] in "\"'":
-            return self._string()
-        start = self.i
-        while self.i < self.n and self.s[self.i] not in "=. \t\r\n[]{}":
-            self.i += 1
-        if start == self.i:
-            self._fail("键解析不了")
-        return self.s[start:self.i]
-
-    def _keyval(self):
-        parts = self._dotted_key()
-        self._ws()
-        if self.i >= self.n or self.s[self.i] != "=":
-            self._fail("行里没有 =")
-        self.i += 1
-        return ".".join(parts), self._value()
-
-    def _value(self):
-        self._ws()
-        if self.i >= self.n:
-            self._fail("值缺失")
-        c = self.s[self.i]
-        if c in "\"'":
-            return self._string()
-        if c == "[":
-            return self._array()
-        if c == "{":
-            return self._inline_table()
-        start = self.i
-        while self.i < self.n and self.s[self.i] not in ",]}\n#":
-            self.i += 1
-        return _toml_scalar(self.s[start:self.i])
-
-    def _string(self) -> str:
-        quote = self.s[self.i]
-        self.i += 1
-        out = []
-        while self.i < self.n:
-            c = self.s[self.i]
-            if quote == '"' and c == "\\":
-                self.i += 1
-                if self.i >= self.n:
-                    break
-                e = self.s[self.i]
-                mapping = {"n": "\n", "t": "\t", "r": "\r", "b": "\b",
-                           "f": "\f", '"': '"', "\\": "\\"}
-                if e in mapping:
-                    out.append(mapping[e])
-                    self.i += 1
-                elif e == "u" and self.i + 4 < self.n:
-                    out.append(chr(int(self.s[self.i + 1:self.i + 5], 16)))
-                    self.i += 5
-                else:
-                    out.append(e)
-                    self.i += 1
-                continue
-            if c == quote:
-                self.i += 1
-                return "".join(out)
-            out.append(c)
-            self.i += 1
-        self._fail("字符串没有闭合引号")
-
-    def _array(self) -> list:
-        self.i += 1
-        out = []
-        while True:
-            self._ws(nl=True)
-            if self.i >= self.n:
-                self._fail("数组没有闭合 ]")
-            if self.s[self.i] == "]":
-                self.i += 1
-                return out
-            out.append(self._value())
-            self._ws(nl=True)
-            if self.i < self.n and self.s[self.i] == ",":
-                self.i += 1
-                continue
-            self._ws(nl=True)
-            if self.i < self.n and self.s[self.i] == "]":
-                self.i += 1
-                return out
-            self._fail("数组里逗号或 ] 丢了")
-
-    def _inline_table(self) -> dict:
-        self.i += 1
-        out: dict = {}
-        while True:
-            self._ws(nl=True)
-            if self.i >= self.n:
-                self._fail("inline table 没有闭合 }")
-            if self.s[self.i] == "}":
-                self.i += 1
-                return out
-            key, value = self._keyval()
-            out[key] = value
-            self._ws(nl=True)
-            if self.i < self.n and self.s[self.i] == ",":
-                self.i += 1
-                continue
-            self._ws(nl=True)
-            if self.i < self.n and self.s[self.i] == "}":
-                self.i += 1
-                return out
-            self._fail("inline table 里逗号或 } 丢了")
-
-
 def _load_report_toml(path: Path) -> dict:
-    """读报告 TOML：优先 factscribe.config.load_toml；3.10 才走兜底解析器。"""
-    if getattr(_config, "_tomllib", None) is not None:
-        try:
-            return load_toml(path)
-        except ConfigError as exc:
-            raise ReportError("报告 TOML 读不了：%s" % exc, code="BAD_TOML")
+    """读报告 TOML：统一走 config.load_toml。
+
+    3.11+ 走标准库 tomllib，3.10 走仓内那份严格兜底解析器 —— 两条路径
+    读出同一个结果、对坏文件给出同一个结论。
+
+    为什么不再留一份 3.10 专用解析器：旧代码在 3.10 上另起炉灶写了一份
+    宽松解析器（只为认 inline table），那份是**宽松**的：坏表头当表名收下、
+    裸词当字符串收下、重复键默默覆盖 —— 同一份坏报告在 3.10 上"能读"，
+    在 3.11+ 上被拒，两种解释器两个结论。现在仓内兜底解析器既严格又认
+    inline table，这层分叉没有存在理由了。
+    """
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ReportError("报告读不了：%s" % exc, code="FILE_NOT_FOUND")
-    try:
-        return _MiniToml(text).parse()
-    except ValueError as exc:
-        raise ReportError("报告 TOML 解析失败：%s" % exc, code="BAD_TOML")
+        return load_toml(path)
+    except ConfigError as exc:
+        raise ReportError("报告 TOML 读不了：%s" % exc, code="BAD_TOML")
 
 
 # --------------------------------------------------------------------------

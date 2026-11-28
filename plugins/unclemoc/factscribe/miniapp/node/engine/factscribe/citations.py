@@ -64,12 +64,50 @@ class BibEntry:
         return None, ""
 
 
+def _rel_under_root(path: Path, root: Path) -> str | None:
+    """`path` 在项目根下的相对路径；对不上就是 `None`。
+
+    同一个项目根有两种拼法：解析软链前（`/var/...`、`/tmp/...`）与
+    解析软链后（`/private/var/...`）。调用方给的 `root` 与 `path` 落在
+    哪一边不一定一致——**同一个项目的两种拼法不该让相对路径算不出来**，
+    所以两种拼法都试一遍。
+
+    两种都对不上，才是真越出项目根。
+    """
+    bases = [Path(root)]
+    try:
+        bases.append(Path(root).resolve())
+    except OSError:
+        pass
+    for base in bases:
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    # path 自己可能带软链（真实位置在别处）：再拿解析后的 path 比一次。
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    for base in bases:
+        try:
+            return resolved.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    return None
+
+
 def parse_bib(path: Path, root: Path) -> list[BibEntry]:
     try:
         text = read_text_exact(path)
     except OSError as exc:
         raise ConfigError("读不了参考文献 %s：%s" % (path, exc))
-    rel = path.relative_to(root).as_posix()
+    rel = _rel_under_root(path, root)
+    if rel is None:
+        # 不在项目根内：不再让 ValueError 裸崩穿透到调用方，按本模块
+        # 既有的错误类型收成 ConfigError（调用方只需要判一种错）。
+        raise ConfigError("参考文献不在项目根内：%s（项目根：%s）"
+                          % (path, root))
     macros = {}
     for sm in _STRING_RE.finditer(text):
         macros[sm.group(1).lower()] = " ".join((sm.group(2) or sm.group(3) or "").split())

@@ -23,7 +23,8 @@ from pathlib import Path
 
 from .buildpdf import find_cjk_font, find_fandol_fonts
 from .config import (Config, ConfigError, find_config_file, load_config,
-                     load_facts, load_sections, load_toml)
+                     load_facts, load_sections, load_toml,
+                     outside_closure_note, outside_facts_note)
 from .evidence import LOCK_REL, read_lock, unfrozen_info
 from .scaffold import INIT_FILES
 from .textio import read_text_exact, to_lf
@@ -225,6 +226,10 @@ def _sections_check(cfg: Config) -> dict:
         return _check("sections", "章节", LEVEL_FAIL, str(exc),
                       fix="检查 factscribe.toml 的 sections / root_tex")
     if not sections:
+        note = outside_closure_note(cfg)
+        if note:
+            return _check("sections", "章节", LEVEL_FAIL, note,
+                          fix="把越界的软链挪进项目内或改指向")
         return _check("sections", "章节", LEVEL_WARN,
                       "没有匹配到任何 .tex 章节，audit 会对着空正文跑",
                       fix="把正文放进 sections/ 或改 sections 配置")
@@ -238,6 +243,12 @@ def _facts_check(cfg: Config) -> tuple[dict, list]:
         return (_check("facts", "事实账", LEVEL_FAIL, str(exc),
                        fix="按报错修 facts/ 下的 TOML"), [])
     if not facts:
+        # 空账有两种：真没账（空账警告，exit 2）；或账文件是越界／不可解的
+        # 软链、被账本拒收（信任根缺口，exit 5）——后者是失败，不是空账。
+        note = outside_facts_note(cfg)
+        if note:
+            return (_check("facts", "事实账", LEVEL_FAIL, note,
+                           fix="把越界或不可解的软链挪进项目内，或改指向"), [])
         return (_check(
             "facts", "事实账", LEVEL_WARN,
             "账里还没有事实：空账不能通过 check（exit 2）",
