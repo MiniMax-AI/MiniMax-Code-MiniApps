@@ -1,0 +1,3147 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>天气 · 新闻看板</title>
+    <style>
+      /* ---------- 语义变量：浅色 / 深色两套 ---------- */
+      :root,
+      [data-theme='light'] {
+        --mcode-bg: #ffffff;
+        --mcode-bg-secondary: #f5f5f5;
+        --mcode-surface: #ffffff;
+        --mcode-surface-muted: #fafafa;
+        --mcode-text: #171717;
+        --mcode-text-muted: #666666;
+        --mcode-text-subtle: #adadad;
+        --mcode-border: #0a0a0a14;
+        --mcode-border-strong: #0a0a0af2;
+        --mcode-accent: #0094fc;
+        --mcode-success: #04b54b;
+        --mcode-warning: #f56811;
+        --mcode-danger: #f73646;
+        --mcode-primary-action-bg: #171717;
+        --mcode-primary-action-text: #ffffff;
+        --mcode-shadow: 0 0 20px rgb(10 10 10 / 8%);
+        /* A 股习惯：红涨绿跌 */
+        --mcode-up: #f73646;
+        --mcode-down: #04b54b;
+        --mcode-flat: #949494;
+      }
+
+      [data-theme='dark'] {
+        --mcode-bg: #171717;
+        --mcode-bg-secondary: #1c1c1c;
+        --mcode-surface: #262626;
+        --mcode-surface-muted: #262626;
+        --mcode-text: #ededed;
+        --mcode-text-muted: #949494;
+        --mcode-text-subtle: #666666;
+        --mcode-border: #ffffff14;
+        --mcode-border-strong: #fffffff2;
+        --mcode-accent: #0077d9;
+        --mcode-success: #009c3d;
+        --mcode-warning: #e25507;
+        --mcode-danger: #e31937;
+        --mcode-primary-action-bg: #ffffff;
+        --mcode-primary-action-text: #171717;
+        --mcode-shadow: 0 0 20px rgb(0 0 0 / 34%);
+        --mcode-up: #e31937;
+        --mcode-down: #009c3d;
+        --mcode-flat: #949494;
+      }
+
+      /* ---------- 基础 ---------- */
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--mcode-bg);
+        color: var(--mcode-text);
+        font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+
+      /* 布局按可用容器宽度自适应，而非视口宽度 */
+      .app-shell {
+        width: 100%;
+      }
+      .app {
+        container-type: inline-size;
+        container-name: app;
+        max-width: 1440px;
+        margin: 0 auto 0 0;
+        padding: 20px 24px 32px;
+      }
+
+      /* ---------- 顶栏 ---------- */
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px 16px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+        position: relative;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+      }
+      .brand-title {
+        margin: 0;
+        font-size: 18px;
+        line-height: 28px;
+        font-weight: 600;
+      }
+      .brand-sub {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* 运行时还没就绪时的提示：宿主会在页面不可见时停掉进程 */
+      .startup-chip {
+        align-self: center;
+        margin-left: 10px;
+        padding: 2px 10px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      /* ---------- 控件 ---------- */
+      .switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 12.5px;
+        color: var(--mcode-text-muted);
+        white-space: nowrap;
+      }
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .switch-track {
+        position: relative;
+        width: 30px;
+        height: 17px;
+        border-radius: 9px;
+        background: var(--mcode-border-strong);
+        transition: background 150ms ease-out;
+        flex: none;
+      }
+      .switch-track::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: var(--mcode-surface);
+        transition: transform 150ms ease-out;
+      }
+      .switch input:checked + .switch-track {
+        background: var(--mcode-accent);
+      }
+      .switch input:checked + .switch-track::after {
+        transform: translateX(13px);
+      }
+      .switch input:focus-visible + .switch-track {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 2px;
+      }
+
+      input[type='text'],
+      select {
+        height: 32px;
+        padding: 0 8px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 12.5px;
+        min-width: 0;
+      }
+      input[type='text']::placeholder {
+        color: var(--mcode-text-subtle);
+      }
+      input[type='text']:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--mcode-accent);
+        outline-offset: 1px;
+        border-color: var(--mcode-border-strong);
+      }
+
+      .btn {
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text);
+        font: inherit;
+        font-size: 12.5px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 150ms ease-out, opacity 150ms ease-out;
+      }
+      .btn:hover {
+        background: var(--mcode-bg-secondary);
+      }
+      .btn-primary {
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        border-color: transparent;
+      }
+      .btn-primary:hover {
+        opacity: 0.88;
+        background: var(--mcode-primary-action-bg);
+      }
+      .icon-btn {
+        width: 32px;
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        cursor: pointer;
+        transition: background 150ms ease-out, color 150ms ease-out;
+      }
+      .icon-btn:hover {
+        color: var(--mcode-text);
+        background: var(--mcode-bg-secondary);
+      }
+      .icon-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      .icon-btn.is-spinning svg {
+        animation: spin 900ms linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ---------- 卡片 ---------- */
+      .board {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+        overflow-x: hidden;
+      }
+      .card {
+        background: var(--mcode-surface);
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        box-shadow: var(--mcode-shadow);
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        position: relative;
+      }
+      /* 手动指定尺寸的卡片：宽、高各自独立，其他卡片让出空间 */
+      .card.is-sized-w {
+        width: var(--cw);
+        justify-self: start;
+      }
+      .card.is-sized-h {
+        height: var(--ch);
+        align-self: start;
+      }
+      .card.is-sized-h .stock-list,
+      .card.is-sized-h .news-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .card.is-sized-h .weather-body {
+        overflow-y: auto;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .card-title {
+        margin: 0;
+        font-size: 16px;
+        line-height: 24px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .card-meta {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      /* ---------- 天气卡 ---------- */
+      .weather-card {
+        container-type: inline-size;
+        container-name: weather;
+      }
+      .city-form {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .city-form-row {
+        display: flex;
+        gap: 6px;
+      }
+      .city-form-row .btn {
+        flex: 1;
+        padding: 0 6px;
+      }
+      .city-form input[type='text'] {
+        width: 100%;
+      }
+      .weather-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        overflow-y: auto;
+      }
+      .weather-inner {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        justify-content: space-between;
+      }
+      /* 内容不被压缩：放不下时由 weather-body 内部滚动 */
+      .weather-inner > * {
+        flex: 0 0 auto;
+      }
+      .weather-hourly {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .weather-hour {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        font-size: 12px;
+      }
+      .hour-time {
+        width: 64px;
+        flex: none;
+        font-size: 11.5px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .hour-day {
+        color: var(--mcode-text-subtle);
+        margin-right: 2px;
+      }
+      .hour-icon {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        color: var(--mcode-text-muted);
+      }
+      .hour-temp {
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        min-width: 30px;
+      }
+      .hour-desc {
+        flex: 1;
+        min-width: 0;
+        color: var(--mcode-text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hour-rain {
+        flex: none;
+        font-size: 11px;
+        color: var(--mcode-text-subtle);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .weather-main {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .weather-icon {
+        width: 44px;
+        height: 44px;
+        flex: none;
+        color: var(--mcode-accent);
+      }
+      .weather-temp {
+        font-size: 34px;
+        line-height: 1;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        font-variant-numeric: tabular-nums;
+      }
+      .weather-desc {
+        margin-top: 6px;
+        font-size: 12.5px;
+        color: var(--mcode-text-muted);
+      }
+      .weather-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .metric {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 6px 7px;
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+        min-width: 0;
+      }
+      .metric-label {
+        font-size: 10.5px;
+        color: var(--mcode-text-subtle);
+        white-space: nowrap;
+      }
+      .metric-value {
+        font-size: 13px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .weather-forecast {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .forecast-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .forecast-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .forecast-day {
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        width: 26px;
+        flex: none;
+      }
+      .forecast-icon {
+        width: 18px;
+        height: 18px;
+        flex: none;
+        color: var(--mcode-text-muted);
+      }
+      .forecast-temp {
+        font-size: 12.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .forecast-temp b {
+        font-weight: 600;
+      }
+      .forecast-temp i {
+        font-style: normal;
+        color: var(--mcode-text-muted);
+      }
+      .forecast-bar {
+        position: relative;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--mcode-bg-secondary);
+        overflow: hidden;
+      }
+      .forecast-bar-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: 2px;
+        background: var(--mcode-accent);
+      }
+      .forecast-rain {
+        font-size: 10.5px;
+        color: var(--mcode-text-subtle);
+        font-variant-numeric: tabular-nums;
+      }
+
+      @container weather (max-width: 272px) {
+        .weather-icon {
+          width: 38px;
+          height: 38px;
+        }
+        .weather-temp {
+          font-size: 30px;
+        }
+        .metric {
+          padding: 5px 6px;
+        }
+        .metric-value {
+          font-size: 12.5px;
+        }
+        .forecast-day {
+          width: 24px;
+        }
+        .hour-desc,
+        .hour-rain,
+        .hour-day {
+          display: none;
+        }
+        .hour-time {
+          width: 44px;
+        }
+      }
+
+      /* ---------- 自选股卡 ---------- */
+      .stocks-form {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .stocks-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .stocks-row input[type='text'] {
+        flex: 1;
+      }
+      .stocks-options {
+        justify-content: space-between;
+      }
+      .stock-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 196px), 1fr));
+        gap: 4px 8px;
+        align-content: start;
+        flex: 0 0 auto;
+      }
+      .stock-row {
+        position: relative;
+        container-type: inline-size;
+        container-name: tile;
+        padding: 6px 8px;
+        border-radius: 8px;
+        min-width: 0;
+        transition: background 150ms ease-out;
+      }
+      .stock-row:hover {
+        background: var(--mcode-surface-muted);
+      }
+      .stock-top {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .stock-name {
+        font-size: 13.5px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .stock-code {
+        font-size: 11px;
+        color: var(--mcode-text-subtle);
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: nowrap;
+        flex: none;
+      }
+      .stock-remove {
+        margin-left: auto;
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--mcode-text-subtle);
+        cursor: pointer;
+        flex: none;
+        transition: color 150ms ease-out, background 150ms ease-out;
+      }
+      .stock-remove:hover {
+        color: var(--mcode-danger);
+        background: var(--mcode-surface-muted);
+      }
+      .stock-remove svg {
+        width: 13px;
+        height: 13px;
+      }
+      .stock-bottom {
+        display: flex;
+        align-items: baseline;
+        gap: 4px 8px;
+        margin-top: 2px;
+        flex-wrap: wrap;
+      }
+      .stock-quote {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 3px;
+        min-width: 0;
+      }
+      .stock-deltas {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .stock-price {
+        font-size: 18px;
+        line-height: 24px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .stock-unit {
+        font-size: 11px;
+        color: var(--mcode-text-subtle);
+        margin-left: 2px;
+      }
+      .stock-delta {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 12.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .stock-delta .tri {
+        width: 8px;
+        height: 8px;
+        flex: none;
+      }
+      .up {
+        color: var(--mcode-up);
+      }
+      .down {
+        color: var(--mcode-down);
+      }
+      .flat {
+        color: var(--mcode-flat);
+      }
+      .stock-error {
+        font-size: 12.5px;
+        color: var(--mcode-text-muted);
+      }
+      .stock-empty {
+        grid-column: 1 / -1;
+        padding: 10px 2px;
+        font-size: 12.5px;
+        color: var(--mcode-text-muted);
+      }
+      .stocks-summary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        font-size: 11.5px;
+        color: var(--mcode-text-muted);
+      }
+      .summary-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-variant-numeric: tabular-nums;
+      }
+      .summary-item.is-up {
+        color: var(--mcode-up);
+      }
+      .summary-item.is-down {
+        color: var(--mcode-down);
+      }
+      .hint {
+        margin: auto 0 0;
+        padding-top: 8px;
+        font-size: 11.5px;
+        line-height: 17px;
+        color: var(--mcode-text-subtle);
+      }
+
+      /* ---------- 新闻卡 ---------- */
+      .news-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .news-tabs {
+        display: flex;
+        gap: 2px;
+        padding: 3px;
+        border-radius: 10px;
+        background: var(--mcode-surface-muted);
+        flex-wrap: wrap;
+      }
+      .news-tab {
+        height: 28px;
+        padding: 0 11px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--mcode-text-muted);
+        font: inherit;
+        font-size: 12.5px;
+        cursor: pointer;
+        transition: background 150ms ease-out, color 150ms ease-out;
+      }
+      .news-tab:hover {
+        color: var(--mcode-text);
+      }
+      .news-tab[aria-selected='true'] {
+        background: var(--mcode-surface);
+        color: var(--mcode-text);
+        font-weight: 500;
+        box-shadow: 0 1px 2px rgb(10 10 10 / 8%);
+      }
+      .news-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+      }
+      .news-updated {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .status-badge {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+      .status-badge.is-ok {
+        color: var(--mcode-success);
+      }
+      .status-badge.is-warn {
+        color: var(--mcode-warning);
+      }
+      .status-badge.is-error {
+        color: var(--mcode-danger);
+      }
+      .news-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .news-item {
+        position: relative;
+        padding: 9px 10px 9px 12px;
+        border-radius: 8px;
+        background: var(--mcode-surface-muted);
+      }
+      .news-item::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 2px;
+        border-radius: 1px;
+        background: var(--mcode-accent);
+        opacity: 0;
+        transition: opacity 150ms ease-out;
+      }
+      .news-item:hover::before {
+        opacity: 1;
+      }
+      .news-title {
+        display: block;
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 1.45;
+        color: var(--mcode-text);
+        text-decoration: none;
+      }
+      .news-title:hover {
+        color: var(--mcode-accent);
+      }
+      .news-desc {
+        margin: 4px 0 0;
+        font-size: 12.5px;
+        line-height: 19px;
+        color: var(--mcode-text-muted);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .news-meta {
+        margin-top: 5px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--mcode-text-subtle);
+      }
+      .news-source {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .source-dot {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: currentColor;
+        flex: none;
+      }
+      .news-time {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+      }
+      .hot-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        transition: background 150ms ease-out;
+      }
+      .hot-item:hover {
+        background: var(--mcode-surface-muted);
+      }
+      .hot-rank {
+        width: 18px;
+        flex: none;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--mcode-text-subtle);
+        font-variant-numeric: tabular-nums;
+      }
+      .hot-item:nth-child(-n + 3) .hot-rank {
+        color: var(--mcode-accent);
+      }
+      .hot-title {
+        flex: 1;
+        min-width: 0;
+        font-size: 14px;
+        color: var(--mcode-text);
+        text-decoration: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hot-title:hover {
+        color: var(--mcode-accent);
+      }
+      .hot-score {
+        flex: none;
+        font-size: 12px;
+        color: var(--mcode-text-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .list-empty {
+        padding: 14px 2px;
+        font-size: 12.5px;
+        color: var(--mcode-text-muted);
+      }
+
+      /* ---------- 提示条 ---------- */
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+        padding: 8px 14px;
+        border-radius: 8px;
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        font-size: 12.5px;
+        box-shadow: var(--mcode-shadow);
+        z-index: 20;
+        max-width: calc(100vw - 32px);
+      }
+      .toast.is-error {
+        background: var(--mcode-danger);
+        color: #ffffff;
+      }
+
+      /* ---------- 卡片尺寸手柄 ---------- */
+      .card-grip {
+        position: absolute;
+        right: 5px;
+        bottom: 5px;
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 7px;
+        border: 1px solid var(--mcode-border);
+        background: var(--mcode-surface);
+        color: var(--mcode-text-subtle);
+        cursor: nwse-resize;
+        padding: 0;
+        z-index: 3;
+        opacity: 0.45;
+        user-select: none;
+        touch-action: none;
+        transition: opacity 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+      }
+      .card:hover .card-grip,
+      .card-grip:focus-visible,
+      .card-grip.is-active {
+        opacity: 1;
+        color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
+      }
+      .card-grip svg {
+        width: 13px;
+        height: 13px;
+        pointer-events: none;
+      }
+      .resize-badge {
+        position: fixed;
+        padding: 4px 9px;
+        border-radius: 8px;
+        background: var(--mcode-primary-action-bg);
+        color: var(--mcode-primary-action-text);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        box-shadow: var(--mcode-shadow);
+        z-index: 40;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      /* ---------- 响应式（按容器宽度自适应，不依赖视口宽度） ---------- */
+      @container app (min-width: 560px) and (max-width: 899px) {
+        .board {
+          grid-template-columns: var(--col-weather, clamp(184px, 30%, 268px)) var(--col-stocks, minmax(0, 1fr));
+          align-items: stretch;
+        }
+        .news-card {
+          grid-column: 1 / -1;
+        }
+      }
+      @container app (min-width: 900px) {
+        .board {
+          grid-template-columns: var(--col-weather, minmax(210px, 0.55fr)) var(--col-stocks, minmax(320px, 1.25fr)) var(--col-news, minmax(280px, 1.5fr));
+          align-items: start;
+        }
+        .news-card {
+          grid-column: auto;
+        }
+      }
+      @container app (max-width: 559px) {
+        .app {
+          padding: 14px 14px 24px;
+        }
+      }
+      @container tile (max-width: 190px) {
+        .stock-name {
+          font-size: 12.5px;
+        }
+        .stock-code {
+          font-size: 10px;
+        }
+      }
+      @container tile (max-width: 168px) {
+        .stock-price {
+          font-size: 16px;
+          line-height: 22px;
+        }
+      }
+      @container tile (max-width: 120px) {
+        .stock-code {
+          display: none;
+        }
+      }
+      /* 不支持容器查询时退回视口断点 */
+      @supports not (container-type: inline-size) {
+        @media (min-width: 900px) {
+          .board {
+            grid-template-columns: var(--col-weather, minmax(210px, 0.55fr)) var(--col-stocks, minmax(320px, 1.25fr)) var(--col-news, minmax(280px, 1.5fr));
+            align-items: start;
+          }
+          .news-card {
+            grid-column: auto;
+          }
+        }
+        @media (min-width: 560px) and (max-width: 899px) {
+          .board {
+            grid-template-columns: var(--col-weather, clamp(184px, 30%, 268px)) var(--col-stocks, minmax(0, 1fr));
+            align-items: stretch;
+          }
+          .news-card {
+            grid-column: 1 / -1;
+          }
+        }
+        @media (max-width: 559px) {
+          .app {
+            padding: 14px 14px 24px;
+          }
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition-duration: 0.01ms !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+        }
+      }
+
+      /* ---------- 卡片头工具区 ---------- */
+      .card-head-tools {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .card-focus {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid var(--mcode-border);
+        border-radius: 7px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text-subtle);
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+      }
+      .card:hover .card-focus,
+      .card-focus:focus-visible {
+        opacity: 1;
+        color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
+      }
+      .card-focus svg {
+        width: 13px;
+        height: 13px;
+        pointer-events: none;
+      }
+      /* 调整尺寸时，同一行里每张卡能取的宽度范围 */
+      .card-range {
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 8px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      /* 调整尺寸时腾出位置：更新时间先让位，但保留占位，布局不跳动 */
+      .board.is-resizing .card-meta,
+      .board.is-resizing .news-updated {
+        visibility: hidden;
+      }
+
+      /* ---------- 专注模式 ---------- */
+      /* 放在容器查询之后：.board.is-focus 的优先级高于容器查询里的 .board */
+      .board.is-focus {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .board.is-focus .card {
+        display: none;
+      }
+      .board.is-focus .card.is-focused {
+        display: flex;
+        grid-column: 1 / -1;
+        justify-self: stretch;
+      }
+      .board.is-focus .card.is-focused.is-sized-w {
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <h1 class="brand-title">天气 · 新闻看板</h1>
+          <span class="brand-sub" id="brand-sub" role="status">正在加载…</span>
+          <span class="startup-chip" id="startup-chip" role="status" hidden>服务启动中…</span>
+        </div>
+        <div class="topbar-actions">
+          <label class="switch">
+            <input type="checkbox" id="auto-refresh" checked />
+            <span class="switch-track"></span>
+            <span>自动刷新</span>
+          </label>
+          <label class="switch">
+            <span class="sr-only" hidden>刷新间隔</span>
+            <select id="refresh-interval" aria-label="天气与新闻刷新间隔">
+              <option value="15">15 秒</option>
+              <option value="30">30 秒</option>
+              <option value="60" selected>1 分钟</option>
+              <option value="300">5 分钟</option>
+            </select>
+          </label>
+          <button class="icon-btn" id="refresh-btn" type="button" aria-label="立即刷新全部数据" title="立即刷新">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+              <path d="M20 4v4.5h-4.5" />
+            </svg>
+          </button>
+          <button class="btn" id="focus-exit" type="button" hidden title="退出专注模式，回到完整看板">
+            退出专注
+          </button>
+          <button class="btn" id="reset-sizes" type="button" hidden title="把所有子看板恢复自适应尺寸">
+            重置尺寸
+          </button>
+          <button class="icon-btn" id="theme-btn" type="button" aria-label="切换深浅主题" title="切换深浅主题">
+            <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="board">
+        <article class="card weather-card" data-card="weather" data-title="实时天气" aria-labelledby="weather-title">
+          <div class="card-head">
+            <h2 class="card-title" id="weather-title">实时天气</h2>
+            <div class="card-head-tools">
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="weather" aria-pressed="false" aria-label="专注显示「实时天气」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <form class="city-form" id="city-form">
+            <input type="text" id="city-input" placeholder="城市，如 南京" aria-label="城市名称" autocomplete="off" />
+            <div class="city-form-row">
+              <button class="btn" type="submit">查询</button>
+              <button class="btn" type="button" id="city-switch" aria-label="切换到下一个同名城市">切换</button>
+            </div>
+          </form>
+          <div class="weather-body" id="weather-body" aria-live="polite">
+            <div class="weather-inner" id="weather-inner">
+              <p class="list-empty">正在获取天气…</p>
+            </div>
+          </div>
+          <button class="card-grip" type="button" aria-label="拖动调整「实时天气」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+        </article>
+
+        <article class="card stocks-card" data-card="stocks" data-title="自选股" aria-labelledby="stocks-title">
+          <div class="card-head">
+            <h2 class="card-title" id="stocks-title">自选股</h2>
+            <div class="card-head-tools">
+              <span class="card-meta" id="stocks-updated">更新 --:--</span>
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="stocks" aria-pressed="false" aria-label="专注显示「自选股」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <form class="stocks-form" id="stock-form">
+            <div class="stocks-row">
+              <input type="text" id="stock-input" placeholder="代码、指数或品种" aria-label="股票代码、指数或品种" autocomplete="off" />
+              <button class="btn btn-primary" type="submit">添加</button>
+            </div>
+            <div class="stocks-row stocks-options">
+              <label class="switch">
+                <input type="checkbox" id="quote-auto" checked />
+                <span class="switch-track"></span>
+                <span>行情自动刷新</span>
+              </label>
+              <select id="quote-interval" aria-label="行情刷新间隔">
+                <option value="15">15 秒</option>
+                <option value="30" selected>30 秒</option>
+                <option value="60">1 分钟</option>
+                <option value="300">5 分钟</option>
+              </select>
+            </div>
+          </form>
+          <ul class="stock-list" id="stock-list"></ul>
+          <div class="stocks-summary" id="stocks-summary"></div>
+          <p class="hint">支持 A 股代码、指数（沪深300、科创50）与黄金、原油等国际品种，非交易时段为最近成交价。</p>
+          <button class="card-grip" type="button" aria-label="拖动调整「自选股」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+        </article>
+
+        <article class="card news-card" data-card="news" data-title="新闻" aria-labelledby="news-title">
+          <div class="news-head">
+            <h2 class="card-title" id="news-title">新闻</h2>
+            <div class="news-status">
+              <span class="news-updated" id="news-updated">更新于 --/-- --:--</span>
+              <span class="status-badge" id="news-badge" role="status">加载中</span>
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="news" aria-pressed="false" aria-label="专注显示「新闻」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="news-tabs" role="tablist" aria-label="新闻栏目" id="news-tabs"></div>
+          <ul class="news-list" id="news-list" role="tabpanel" aria-labelledby="tab-headlines" style="margin-top: 10px"></ul>
+          <button class="card-grip" type="button" aria-label="拖动调整「新闻」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6" />
+              <path d="M20 4l-7.5 7.5" />
+              <path d="M10 20H4v-6" />
+              <path d="M4 20l7.5-7.5" />
+            </svg>
+          </button>
+        </article>
+      </main>
+      </div>
+    </div>
+
+    <div class="resize-badge" id="resize-badge" role="status" aria-live="polite" hidden></div>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+
+    <!--
+      布局纯函数：只做计算，不碰 DOM。
+      tests/layout.test.mjs 会把这一段原样取出来在 Node 里跑，
+      所以这里不能出现 document / window 之类的浏览器 API。
+    -->
+    <script id="wnb-layout">
+      (function (root) {
+        'use strict';
+
+        /* 看板宽度决定列数：不够两栏就堆叠。 */
+        function layoutColumnsFor(width) {
+          if (width < 560) return 1;
+          if (width < 900) return 2;
+          return 3;
+        }
+
+        /* 列数决定每一行放哪些卡片。 */
+        function layoutRowsFor(columns) {
+          if (columns === 1) return [['weather'], ['stocks'], ['news']];
+          if (columns === 2) return [['weather', 'stocks'], ['news']];
+          return [['weather', 'stocks', 'news']];
+        }
+
+        /*
+         * 某张卡在它那一行里的宽度上限：兄弟各留出最小宽度，
+         * 这样逐张算出来的上限与处理顺序无关。
+         */
+        function maxCardWidthFor(width, row, key, minCardW, gap) {
+          if (!width) return minCardW;
+          if (!row || row.length < 2) return width;
+          var others = 0;
+          row.forEach(function (name) {
+            if (name !== key) others += minCardW;
+          });
+          var gaps = gap * (row.length - 1);
+          return Math.max(minCardW, width - gaps - others);
+        }
+
+        /*
+         * 同一行的实际宽度加起来超出看板时，按比例收回。
+         * measured 是渲染出来的真实宽度，sizes 是手动指定的宽度。
+         * keepKey 是正在拖动的那张卡：先让兄弟让位，兄弟都到底了才动它。
+         * 返回要改动的宽度 { key: newWidth }，不需要改动时返回 null。
+         */
+        function shrinkRowToFit(sizes, measured, row, width, gap, floor, keepKey) {
+          if (!width || !row || !row.length) return null;
+          var total = 0;
+          row.forEach(function (key) {
+            total += measured[key] || 0;
+          });
+          var over = total + gap * (row.length - 1) - width;
+          if (over <= 0) return null;
+
+          function shrinkable(key) {
+            var size = sizes[key];
+            return Boolean(size) && Boolean(size.w) && size.w > floor;
+          }
+          var pool = row.filter(function (key) {
+            return shrinkable(key) && !(keepKey && key === keepKey);
+          });
+          if (!pool.length) pool = row.filter(shrinkable);
+          if (!pool.length) return null;
+
+          var sum = 0;
+          pool.forEach(function (key) {
+            sum += sizes[key].w;
+          });
+          var next = {};
+          pool.forEach(function (key) {
+            var size = sizes[key];
+            var share = over * (size.w / sum);
+            var value = Math.max(floor, Math.round(size.w - share));
+            if (value < size.w) next[key] = value;
+          });
+          return Object.keys(next).length ? next : null;
+        }
+
+        /* 把宽度夹到 [min, max] 之间并取整。 */
+        function clampWidth(value, min, max) {
+          if (typeof value !== 'number' || !isFinite(value)) return null;
+          var low = Math.min(min, max);
+          return Math.round(Math.min(max, Math.max(low, value)));
+        }
+
+        root.WNB_LAYOUT = {
+          layoutColumnsFor: layoutColumnsFor,
+          layoutRowsFor: layoutRowsFor,
+          maxCardWidthFor: maxCardWidthFor,
+          shrinkRowToFit: shrinkRowToFit,
+          clampWidth: clampWidth,
+        };
+      })(typeof globalThis !== 'undefined' ? globalThis : this);
+    </script>
+
+    <script>
+      (function () {
+        'use strict';
+
+        /* ================= 图标（全部内联 SVG，无 emoji） ================= */
+        var ICON_ATTR =
+          'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+
+        var WEATHER_ICONS = {
+          sun:
+            '<circle cx="12" cy="12" r="4.2"/>' +
+            '<path d="M12 2.6v2.3M12 19.1v2.3M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.6 12h2.3M19.1 12h2.3M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
+          partly:
+            '<circle cx="8.4" cy="8" r="3.1"/>' +
+            '<path d="M8.4 2.8v1.5M4.7 8H3.2M5.7 5.3 4.6 4.2M12.2 5.3l1.1-1.1"/>' +
+            '<path d="M10 19.5h7.2a3.3 3.3 0 0 0 .3-6.6 4.7 4.7 0 0 0-9 1.6 2.7 2.7 0 0 0 1.5 5Z"/>',
+          cloud: '<path d="M7.5 18.5h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 18.5Z"/>',
+          overcast:
+            '<path d="M6.2 15.2h7.6a3.3 3.3 0 0 0 .3-6.6 4.7 4.7 0 0 0-9 1.6 2.7 2.7 0 0 0 1.1 5Z"/>' +
+            '<path d="M9.8 19.5h8.4a3.6 3.6 0 0 0 .3-7.2 5.1 5.1 0 0 0-9.8 1.8 3 3 0 0 0 1.1 5.4Z"/>',
+          fog:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M4.8 18.2h14.4M7 21.2h10"/>',
+          haze:
+            '<circle cx="12" cy="8.6" r="3.4"/>' +
+            '<path d="M12 2.9v1.7M5.9 8.6H4.2M6.8 3.4 5.5 2.1M18.1 3.4l1.3-1.3"/>' +
+            '<path d="M4.6 15.4h14.8M6.6 18.8h10.8"/>',
+          rain:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M9 18.4l-.9 2.6M13 18.4l-.9 2.6M17 18.4l-.9 2.6"/>',
+          drizzle:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M9.4 19.2h1.6M13.4 19.2h1.6M17 19.2h1.2"/>',
+          snow:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M8.4 19.2v2.8M7.2 19.9l2.4 1.4M9.6 19.9l-2.4 1.4M15.6 19.2v2.8M14.4 19.9l2.4 1.4M16.8 19.9l-2.4 1.4"/>',
+          sleet:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M9.2 18.6l-.8 2.4"/>' +
+            '<path d="M15.6 19.2v2.8M14.4 19.9l2.4 1.4M16.8 19.9l-2.4 1.4"/>',
+          thunder:
+            '<path d="M7.5 15.2h9a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.8A3.2 3.2 0 0 0 7.5 15.2Z"/>' +
+            '<path d="M13.2 17.2 10 21h2.6l-1.1 2.6"/>',
+          wind: '<path d="M3.4 8.4h9a2.8 2.8 0 1 0-2.8-2.8M3.4 12.4h13a2.8 2.8 0 1 1-2.8 2.8M3.4 16.4h6.6"/>',
+        };
+
+        var TRI_UP = '<svg class="tri" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 1.4 9.2 8.6H0.8Z"/></svg>';
+        var TRI_DOWN = '<svg class="tri" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 8.6 0.8 1.4h8.4Z"/></svg>';
+        var TRI_FLAT = '<svg class="tri" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><rect x="1" y="4.2" width="8" height="1.6" rx="0.8"/></svg>';
+
+        function weatherSvg(key, className) {
+          var body = WEATHER_ICONS[key] || WEATHER_ICONS.cloud;
+          return '<svg class="' + className + '" ' + ICON_ATTR + '>' + body + '</svg>';
+        }
+
+        /* ================= 常量与状态 ================= */
+        var TABS = [
+          { key: 'headlines', label: '要闻' },
+          { key: 'politics', label: '时政' },
+          { key: 'tech', label: '科技' },
+          { key: 'finance', label: '财经' },
+          { key: 'hot', label: '热榜' },
+          { key: 'stories', label: '知乎日报' },
+        ];
+
+        var VIEW_KEY = 'weather-news-board:view:v1';
+        var THEME_KEY = 'weather-news-board:theme';
+
+        var state = {
+          tab: 'headlines',
+          autoRefresh: true,
+          interval: 60,
+          quoteAuto: true,
+          quoteInterval: 30,
+          city: '南京',
+          pick: 0,
+          candidates: [],
+          weather: null,
+          weatherStale: false,
+          news: null,
+          newsStale: false,
+          newsUpdatedAt: null,
+          stocks: [],
+          watchlist: [],
+          stocksUpdatedAt: null,
+          loading: false,
+        };
+
+        var el = {
+          brandSub: document.getElementById('brand-sub'),
+          startupChip: document.getElementById('startup-chip'),
+          autoRefresh: document.getElementById('auto-refresh'),
+          refreshInterval: document.getElementById('refresh-interval'),
+          refreshBtn: document.getElementById('refresh-btn'),
+          themeBtn: document.getElementById('theme-btn'),
+          themeIcon: document.getElementById('theme-icon'),
+          cityForm: document.getElementById('city-form'),
+          cityInput: document.getElementById('city-input'),
+          citySwitch: document.getElementById('city-switch'),
+          weatherCard: document.querySelector('.weather-card'),
+          stocksCard: document.querySelector('.stocks-card'),
+          newsCard: document.querySelector('.news-card'),
+          board: document.querySelector('.board'),
+          weatherBody: document.getElementById('weather-body'),
+          weatherInner: document.getElementById('weather-inner'),
+          weatherExtra: null,
+          stockForm: document.getElementById('stock-form'),
+          stockInput: document.getElementById('stock-input'),
+          quoteAuto: document.getElementById('quote-auto'),
+          quoteInterval: document.getElementById('quote-interval'),
+          stockList: document.getElementById('stock-list'),
+          stocksSummary: document.getElementById('stocks-summary'),
+          stocksUpdated: document.getElementById('stocks-updated'),
+          resizeBadge: document.getElementById('resize-badge'),
+          resetSizes: document.getElementById('reset-sizes'),
+          focusExit: document.getElementById('focus-exit'),
+          newsTabs: document.getElementById('news-tabs'),
+          newsList: document.getElementById('news-list'),
+          newsUpdated: document.getElementById('news-updated'),
+          newsBadge: document.getElementById('news-badge'),
+          toast: document.getElementById('toast'),
+        };
+
+        /* ================= 工具 ================= */
+        function esc(value) {
+          return String(value === null || value === undefined ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+
+        function pad(value) {
+          return String(value).padStart(2, '0');
+        }
+
+        function fmtNumber(value, decimals) {
+          var number = Number(value);
+          if (!Number.isFinite(number)) return '--';
+          return number.toLocaleString('zh-CN', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          });
+        }
+
+        function fmtSigned(value, decimals) {
+          var number = Number(value);
+          if (!Number.isFinite(number)) return '--';
+          var sign = number > 0 ? '+' : number < 0 ? '-' : '';
+          return sign + fmtNumber(Math.abs(number), decimals);
+        }
+
+        function fmtClock(iso) {
+          if (!iso) return '--:--';
+          var date = new Date(iso);
+          if (Number.isNaN(date.getTime())) return '--:--';
+          return pad(date.getHours()) + ':' + pad(date.getMinutes());
+        }
+
+        function fmtStamp(iso) {
+          if (!iso) return '--/-- --:--';
+          var date = new Date(iso);
+          if (Number.isNaN(date.getTime())) return '--/-- --:--';
+          return (
+            pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+          );
+        }
+
+        function fmtNewsTime(iso) {
+          if (!iso) return '';
+          var date = new Date(iso);
+          if (Number.isNaN(date.getTime())) return '';
+          var today = new Date();
+          var sameDay =
+            date.getFullYear() === today.getFullYear() &&
+            date.getMonth() === today.getMonth() &&
+            date.getDate() === today.getDate();
+          if (sameDay) return pad(date.getHours()) + ':' + pad(date.getMinutes());
+          return pad(date.getMonth() + 1) + '/' + pad(date.getDate());
+        }
+
+        function fmtHotScore(score) {
+          var number = Number(score) || 0;
+          if (number >= 100000000) return (number / 100000000).toFixed(1) + '亿';
+          if (number >= 10000) return (number / 10000).toFixed(1) + '万';
+          return String(number);
+        }
+
+        var toastTimer = null;
+        function showToast(message, kind) {
+          el.toast.textContent = message;
+          el.toast.className = 'toast' + (kind === 'error' ? ' is-error' : '');
+          el.toast.hidden = false;
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(function () {
+            el.toast.hidden = true;
+          }, 2600);
+        }
+
+        /* ================= 主题 ================= */
+        var media = window.matchMedia('(prefers-color-scheme: dark)');
+
+        function applyTheme() {
+          var saved = null;
+          try {
+            saved = localStorage.getItem(THEME_KEY);
+          } catch (error) {
+            saved = null;
+          }
+          var theme = saved || (media.matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+          el.themeIcon.innerHTML =
+            theme === 'dark'
+              ? '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.3M12 19.1v2.3M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.6 12h2.3M19.1 12h2.3M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>'
+              : '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>';
+          el.themeBtn.setAttribute('aria-label', theme === 'dark' ? '切换到浅色主题' : '切换到深色主题');
+        }
+
+        el.themeBtn.addEventListener('click', function () {
+          var current = document.documentElement.getAttribute('data-theme');
+          var next = current === 'dark' ? 'light' : 'dark';
+          try {
+            localStorage.setItem(THEME_KEY, next);
+          } catch (error) {
+            /* 忽略存储失败 */
+          }
+          applyTheme();
+        });
+
+        if (media.addEventListener) {
+          media.addEventListener('change', function () {
+            var saved = null;
+            try {
+              saved = localStorage.getItem(THEME_KEY);
+            } catch (error) {
+              saved = null;
+            }
+            if (!saved) applyTheme();
+          });
+        }
+
+        /* ================= 视图状态 ================= */
+        function saveViewState() {
+          try {
+            localStorage.setItem(
+              VIEW_KEY,
+              JSON.stringify({
+                tab: state.tab,
+                autoRefresh: state.autoRefresh,
+                interval: state.interval,
+                quoteAuto: state.quoteAuto,
+                quoteInterval: state.quoteInterval,
+                city: state.city,
+                pick: state.pick,
+              }),
+            );
+          } catch (error) {
+            /* 忽略存储失败 */
+          }
+        }
+
+        function restoreViewState() {
+          try {
+            var raw = localStorage.getItem(VIEW_KEY);
+            if (!raw) return;
+            var saved = JSON.parse(raw);
+            if (saved && typeof saved === 'object') {
+              if (TABS.some(function (tab) { return tab.key === saved.tab; })) state.tab = saved.tab;
+              if (typeof saved.autoRefresh === 'boolean') state.autoRefresh = saved.autoRefresh;
+              if (typeof saved.interval === 'number') state.interval = saved.interval;
+              if (typeof saved.quoteAuto === 'boolean') state.quoteAuto = saved.quoteAuto;
+              if (typeof saved.quoteInterval === 'number') state.quoteInterval = saved.quoteInterval;
+              if (typeof saved.city === 'string' && saved.city) state.city = saved.city;
+              if (typeof saved.pick === 'number') state.pick = saved.pick;
+            }
+          } catch (error) {
+            /* 忽略解析失败 */
+          }
+        }
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'hidden') saveViewState();
+        });
+
+        /* ================= 请求 ================= */
+        function getJson(url) {
+          return fetch(url, { headers: { accept: 'application/json' } }).then(function (response) {
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (payload) {
+                if (!payload) throw new Error('bad_response');
+                if (!response.ok || payload.ok === false) {
+                  var error = new Error(payload.message || '请求失败');
+                  error.code = payload.error || 'request_failed';
+                  throw error;
+                }
+                return payload;
+              });
+          });
+        }
+
+        /* ================= 运行时启动 ================= */
+        /* 宿主会在页面不可见时停掉运行时（docs/runtime.md 的 Lifecycle 一节），
+           页面被重新加载时服务可能还没就绪。网络层的失败——连不上、
+           返回的不是 JSON——说明服务没起来，这里做退避重试；
+           服务已经就绪、只是某个上游源失败时，交给原来的错误处理。 */
+        var STARTUP_RETRY_DELAYS = [400, 800, 1600, 3200, 6400, 10000];
+        var startupGraceUntil = 0;
+        var startupState = 'ok';
+        var serviceEverOk = false;
+
+        function isServiceDown(error) {
+          return !(error && error.code);
+        }
+
+        function showStartupState(delay) {
+          startupState = 'starting';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = false;
+          el.startupChip.textContent =
+            '服务启动中… ' + Math.ceil(delay / 1000) + ' 秒后重试';
+        }
+
+        /* 重试到头仍然连不上：改成"服务未就绪"，别把提示停在"启动中"上。 */
+        function showServiceDownState() {
+          startupState = 'down';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = false;
+          el.startupChip.textContent = '服务未就绪，稍后会自动重试';
+        }
+
+        function hideStartupState() {
+          startupState = 'ok';
+          if (!el.startupChip) return;
+          el.startupChip.hidden = true;
+          el.startupChip.textContent = '服务启动中…';
+        }
+
+        /* 取数时若服务还没起来，按退避重试。
+           冷启动（还没连上过服务）只在页面打开后的宽限期内重试；
+           曾经连上过、后来服务被停掉（宿主会在页面不可见时停进程），
+           则一直允许重试，直到重试次数用完或连上为止。 */
+        function getJsonResilient(url) {
+          var attempt = 0;
+          function run() {
+            return getJson(url)
+              .then(function (payload) {
+                serviceEverOk = true;
+                if (startupState !== 'ok') hideStartupState();
+                return payload;
+              })
+              .catch(function (error) {
+                if (!isServiceDown(error)) throw error;
+                var mayRetry =
+                  serviceEverOk || Date.now() <= startupGraceUntil;
+                if (!mayRetry || attempt >= STARTUP_RETRY_DELAYS.length) {
+                  if (startupState !== 'ok') showServiceDownState();
+                  throw error;
+                }
+                var delay = STARTUP_RETRY_DELAYS[attempt];
+                attempt += 1;
+                showStartupState(delay);
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, delay);
+                }).then(run);
+              });
+          }
+          return run();
+        }
+
+        /* 写操作同样要抗住"服务还没起来"。自选股的 add / remove 在服务端
+           是幂等的（重复添加只提示"已在自选股中"），所以重试不会重复写。 */
+        function postJsonResilient(url, body) {
+          var attempt = 0;
+          function run() {
+            return fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+              .then(function (response) {
+                return response
+                  .json()
+                  .catch(function () {
+                    return null;
+                  })
+                  .then(function (payload) {
+                    if (!payload) throw new Error('bad_response');
+                    if (!response.ok || payload.ok === false) {
+                      var error = new Error(payload.message || '请求失败');
+                      error.code = payload.error || 'request_failed';
+                      throw error;
+                    }
+                    serviceEverOk = true;
+                    if (startupState !== 'ok') hideStartupState();
+                    return payload;
+                  });
+              })
+              .catch(function (error) {
+                if (!isServiceDown(error)) throw error;
+                var mayRetry =
+                  serviceEverOk || Date.now() <= startupGraceUntil;
+                if (!mayRetry || attempt >= STARTUP_RETRY_DELAYS.length) {
+                  if (startupState !== 'ok') showServiceDownState();
+                  throw error;
+                }
+                var delay = STARTUP_RETRY_DELAYS[attempt];
+                attempt += 1;
+                showStartupState(delay);
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, delay);
+                }).then(run);
+              });
+          }
+          return run();
+        }
+
+        /* ================= 天气卡自适应 ================= */
+        var weatherTuneSig = '';
+        var weatherTuneRaf = 0;
+
+        function setHourlyLevel(level) {
+          var extra = el.weatherExtra;
+          if (!extra) return;
+          var blocks = extra.querySelectorAll('.weather-hour');
+          for (var i = 0; i < blocks.length; i += 1) {
+            blocks[i].hidden = i >= level;
+          }
+          extra.setAttribute('data-level', String(level));
+        }
+
+        /**
+         * 卡片内容自然高度（不受拉伸影响）。
+         * 这里临时解除行内高度与对齐方式再量，而不是把子元素外边距加起来：
+         * margin-top:auto（例如把提示文字贴底）在计算样式里会变成一个
+         * 很大的已解析数值，累加进去会让高度越滚越大。
+         */
+        function naturalHeight(card) {
+          if (!card) return 0;
+          var prevHeight = card.style.height;
+          var prevAlign = card.style.alignSelf;
+          card.style.height = 'auto';
+          card.style.alignSelf = 'start';
+          var height = card.clientHeight;
+          card.style.height = prevHeight;
+          card.style.alignSelf = prevAlign;
+          return height;
+        }
+
+        /* 天气主体内容的自然高度 */
+        function weatherContentHeight() {
+          var inner = el.weatherInner;
+          if (!inner) return 0;
+          var gap = parseFloat(getComputedStyle(inner).rowGap) || 0;
+          var total = 0;
+          for (var i = 0; i < inner.children.length; i += 1) {
+            var child = inner.children[i];
+            var ccs = getComputedStyle(child);
+            total +=
+              child.offsetHeight +
+              (parseFloat(ccs.marginTop) || 0) +
+              (parseFloat(ccs.marginBottom) || 0);
+            if (i > 0) total += gap;
+          }
+          return total;
+        }
+
+        /* 天气卡除主体以外占用的高度（标题、查询框、内边距） */
+        function weatherChrome() {
+          var card = el.weatherCard;
+          if (!card) return 0;
+          var cs = getComputedStyle(card);
+          var total = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+          var head = card.querySelector('.card-head');
+          var form = card.querySelector('.city-form');
+          if (head) {
+            var hs = getComputedStyle(head);
+            total += head.offsetHeight + (parseFloat(hs.marginBottom) || 0);
+          }
+          if (form) {
+            var fs = getComputedStyle(form);
+            total += form.offsetHeight + (parseFloat(fs.marginBottom) || 0);
+          }
+          return total;
+        }
+
+        function scheduleWeatherTune() {
+          if (weatherTuneRaf) return;
+          weatherTuneRaf = window.requestAnimationFrame(function () {
+            weatherTuneRaf = 0;
+            tuneWeatherCard();
+          });
+        }
+
+        /**
+         * 自选股卡的目标高度：手动指定时用指定值，否则用内容自然高度。
+         */
+        function stocksTargetHeight() {
+          var card = el.stocksCard;
+          if (!card) return 0;
+          if (cardSizes.stocks.h) return cardSizes.stocks.h;
+          return naturalHeight(card);
+        }
+
+        /**
+         * 三栏排布时 grid 不会拉伸卡片，这里显式让天气卡与自选股卡保持等高：
+         * 以两张卡自然高度的较大值为准，多出来的空间由逐时预报填满。
+         * 两栏时由 grid 的 stretch 完成，用户手动指定过高度时以用户为准。
+         */
+        function alignWeatherHeight() {
+          var card = el.weatherCard;
+          var stocks = el.stocksCard;
+          if (!card || !stocks) return;
+          if (layoutColumns() < 3) {
+            clearAlignedHeights();
+            return;
+          }
+          var target = Math.max(naturalHeight(card), naturalHeight(stocks));
+          if (target <= 0) {
+            clearAlignedHeights();
+            return;
+          }
+          card.style.height = target + 'px';
+          stocks.style.height = target + 'px';
+        }
+
+        function clearAlignedHeights() {
+          if (el.weatherCard) el.weatherCard.style.removeProperty('height');
+          if (el.stocksCard) el.stocksCard.style.removeProperty('height');
+        }
+
+        /**
+         * 天气卡与自选股卡并排时高度对齐：先按自选股卡的高度挑出
+         * 能放下的逐时预报档位，再由两卡共同决定这一行的最终高度。
+         * 手动指定了高度时以指定高度为准，逐时预报全部列出，卡片内部滚动。
+         */
+        function tuneWeatherCard() {
+          var card = el.weatherCard;
+          var inner = el.weatherInner;
+          var extra = el.weatherExtra;
+          if (!card || !inner || !extra) return;
+          var blocks = extra.querySelectorAll('.weather-hour');
+          var max = blocks.length;
+          if (!max) {
+            extra.hidden = true;
+            return;
+          }
+          extra.hidden = false;
+
+          var manualH = cardSizes.weather.h || 0;
+          // 自选股卡的高度也要进签名：它加载完成后天气卡需要重新对齐。
+          var stocksH = el.stocksCard
+            ? Math.round(el.stocksCard.getBoundingClientRect().height)
+            : 0;
+          var cols = layoutColumns();
+          var sig =
+            card.clientWidth +
+            'x' +
+            card.clientHeight +
+            '#' +
+            (extra.getAttribute('data-level') || '0') +
+            '#' +
+            manualH +
+            '#' +
+            cols +
+            '#' +
+            stocksH;
+          if (sig === weatherTuneSig) return;
+
+          // 用户手动指定过任一张卡片的高度：以用户为准，逐时预报全部列出。
+          if (manualH || cardSizes.stocks.h) {
+            setHourlyLevel(max);
+            clearAlignedHeights();
+            weatherTuneSig =
+              card.clientWidth + 'x' + card.clientHeight + '#' + max + '#' + manualH + '#' + cols + '#' + stocksH;
+            return;
+          }
+
+          // 单栏堆叠：两张卡各占一行，高度由内容决定。
+          if (cols < 2) {
+            setHourlyLevel(max);
+            clearAlignedHeights();
+            weatherTuneSig =
+              card.clientWidth + 'x' + card.clientHeight + '#' + max + '#0#' + cols + '#' + stocksH;
+            return;
+          }
+
+          weatherTuneSig = sig;
+          var level = max;
+          if (cols === 2) {
+            // 两栏：挑出放得下的逐时预报档位，多出来的空间由它填满。
+            var chrome = weatherChrome();
+            var target = stocksTargetHeight();
+            level = 0;
+            for (var k = max; k >= 0; k -= 1) {
+              setHourlyLevel(k);
+              if (!target || chrome + weatherContentHeight() <= target) {
+                level = k;
+                break;
+              }
+            }
+            // 一行都放不下时也留一行，逐时预报不会整个消失；
+            // 卡片会随之比自选股卡高一点，grid 会把两卡拉齐。
+            if (level === 0 && max > 0) level = 1;
+          }
+          setHourlyLevel(level);
+          alignWeatherHeight();
+          weatherTuneSig =
+            card.clientWidth + 'x' + card.clientHeight + '#' + level + '#0#' + cols + '#' + stocksH;
+        }
+
+        /* ================= 天气 ================= */
+        function renderWeather() {
+          var data = state.weather;
+          var inner = el.weatherInner;
+          if (!inner) return;
+          if (!data) {
+            inner.innerHTML = '<p class="list-empty">天气来源暂不可用，请稍后重试或更换城市。</p>';
+            el.weatherExtra = null;
+            weatherTuneSig = '';
+            return;
+          }
+          var current = data.current || {};
+          var html = '';
+          html +=
+            '<div class="weather-main">' +
+            weatherSvg(current.icon, 'weather-icon') +
+            '<div><div class="weather-temp">' +
+            esc(Math.round(Number(current.temp) || 0)) +
+            '°</div></div></div>';
+          html +=
+            '<div class="weather-desc">' +
+            esc(current.desc || '') +
+            ' · ' +
+            esc(data.city || '') +
+            (data.region ? ' · ' + esc(data.region) : '') +
+            '</div>';
+
+          html += '<div class="weather-metrics">';
+          html +=
+            '<div class="metric"><span class="metric-label">体感温度</span><span class="metric-value">' +
+            esc(Math.round(Number(current.feels) || 0)) +
+            '°</span></div>';
+          html +=
+            '<div class="metric"><span class="metric-label">湿度</span><span class="metric-value">' +
+            esc(Math.round(Number(current.humidity) || 0)) +
+            '%</span></div>';
+          html +=
+            '<div class="metric"><span class="metric-label">风速</span><span class="metric-value">' +
+            esc(Math.round(Number(current.windSpeed) || 0)) +
+            ' km/h</span></div>';
+          html += '</div>';
+
+          html += '<div class="weather-forecast">';
+          (data.forecast || []).forEach(function (day) {
+            var probability = Math.max(0, Math.min(100, Number(day.probability) || 0));
+            html +=
+              '<div class="forecast-item">' +
+              '<div class="forecast-line">' +
+              '<span class="forecast-day">' +
+              esc(day.label || '') +
+              '</span>' +
+              weatherSvg(day.icon, 'forecast-icon') +
+              '<span class="forecast-temp"><b>' +
+              esc(Math.round(Number(day.high) || 0)) +
+              '°</b> / <i>' +
+              esc(Math.round(Number(day.low) || 0)) +
+              '°</i></span>' +
+              '</div>' +
+              '<div class="forecast-bar"><span class="forecast-bar-fill" style="width:' +
+              probability +
+              '%"></span></div>' +
+              '<div class="forecast-rain">降水概率 ' +
+              probability +
+              '%</div>' +
+              '</div>';
+          });
+          html += '</div>';
+
+          if (state.weatherStale) {
+            html += '<p class="forecast-rain">来源异常，已保留上一次数据</p>';
+          }
+
+          var hourly = data.hourly || [];
+          if (hourly.length) {
+            html += '<div class="weather-hourly">';
+            hourly.forEach(function (slot) {
+              var dayLabel = slot.day && slot.day !== '今天' ? slot.day : '';
+              html +=
+                '<div class="weather-hour">' +
+                '<span class="hour-time">' +
+                (dayLabel ? '<span class="hour-day">' + esc(dayLabel) + '</span>' : '') +
+                esc(slot.time || '') +
+                '</span>' +
+                weatherSvg(slot.icon, 'hour-icon') +
+                '<span class="hour-temp">' +
+                esc(Math.round(Number(slot.temp) || 0)) +
+                '°</span>' +
+                '<span class="hour-desc">' +
+                esc(slot.desc || '') +
+                '</span>' +
+                '<span class="hour-rain">降水 ' +
+                esc(Math.max(0, Math.min(100, Number(slot.probability) || 0))) +
+                '%</span>' +
+                '</div>';
+            });
+            html += '</div>';
+          }
+
+          inner.innerHTML = html;
+          el.weatherExtra = inner.querySelector('.weather-hourly');
+          weatherTuneSig = '';
+          scheduleWeatherTune();
+        }
+
+        function loadWeather(options) {
+          var refresh = options && options.refresh ? '1' : '0';
+          var params = new URLSearchParams({
+            source: 'weather',
+            city: state.city,
+            pick: String(state.pick),
+            refresh: refresh,
+          });
+          return getJsonResilient('/api/board?' + params.toString())
+            .then(function (payload) {
+              if (payload.data) {
+                state.weather = payload.data;
+                state.candidates = payload.data.candidates || [];
+                if (typeof payload.data.index === 'number') state.pick = payload.data.index;
+                state.weatherStale = Boolean(payload.stale);
+              } else {
+                state.weather = null;
+                state.weatherStale = true;
+              }
+              renderWeather();
+            })
+            .catch(function () {
+              state.weather = null;
+              state.weatherStale = true;
+              renderWeather();
+            });
+        }
+
+        /* ================= 新闻 ================= */
+        function renderTabs() {
+          el.newsTabs.innerHTML = TABS.map(function (tab) {
+            var selected = tab.key === state.tab;
+            return (
+              '<button class="news-tab" type="button" role="tab" id="tab-' +
+              tab.key +
+              '" data-source="' +
+              tab.key +
+              '" aria-selected="' +
+              (selected ? 'true' : 'false') +
+              '" tabindex="' +
+              (selected ? '0' : '-1') +
+              '">' +
+              esc(tab.label) +
+              '</button>'
+            );
+          }).join('');
+          el.newsList.setAttribute('aria-labelledby', 'tab-' + state.tab);
+        }
+
+        function renderNews() {
+          var data = state.news;
+          var badge = el.newsBadge;
+          if (!data) {
+            el.newsList.innerHTML = '<li class="list-empty">暂无内容，请稍后重试。</li>';
+            el.newsUpdated.textContent = '更新于 --/-- --:--';
+            badge.textContent = '暂无数据';
+            badge.className = 'status-badge is-warn';
+            return;
+          }
+
+          var items = data.items || [];
+          if (state.tab === 'hot') {
+            el.newsList.innerHTML = items
+              .map(function (item) {
+                return (
+                  '<li class="hot-item">' +
+                  '<span class="hot-rank">' +
+                  esc(item.rank) +
+                  '</span>' +
+                  '<a class="hot-title" href="' +
+                  esc(item.url || '#') +
+                  '" target="_blank" rel="noopener noreferrer">' +
+                  esc(item.title) +
+                  '</a>' +
+                  '<span class="hot-score">' +
+                  esc(fmtHotScore(item.score)) +
+                  '</span>' +
+                  '</li>'
+                );
+              })
+              .join('');
+          } else {
+            el.newsList.innerHTML = items
+              .map(function (item) {
+                var time = fmtNewsTime(item.publishedAt);
+                return (
+                  '<li class="news-item">' +
+                  '<a class="news-title" href="' +
+                  esc(item.url || '#') +
+                  '" target="_blank" rel="noopener noreferrer">' +
+                  esc(item.title) +
+                  '</a>' +
+                  (item.description
+                    ? '<p class="news-desc">' + esc(item.description) + '</p>'
+                    : '') +
+                  '<div class="news-meta">' +
+                  '<span class="news-source"><i class="source-dot"></i>' +
+                  esc(item.source || '') +
+                  '</span>' +
+                  (time ? '<time class="news-time">' + esc(time) + '</time>' : '') +
+                  '</div>' +
+                  '</li>'
+                );
+              })
+              .join('');
+          }
+
+          if (!items.length) {
+            el.newsList.innerHTML = '<li class="list-empty">该栏目暂时没有内容。</li>';
+          }
+
+          el.newsUpdated.textContent = '更新于 ' + fmtStamp(state.newsUpdatedAt);
+          if (state.newsStale) {
+            badge.textContent = '来源异常';
+            badge.className = 'status-badge is-warn';
+          } else {
+            badge.textContent = '全部来源正常';
+            badge.className = 'status-badge is-ok';
+          }
+        }
+
+        function loadNews(options) {
+          var refresh = options && options.refresh ? '1' : '0';
+          var params = new URLSearchParams({ source: state.tab, refresh: refresh });
+          return getJsonResilient('/api/board?' + params.toString())
+            .then(function (payload) {
+              state.news = payload.data;
+              state.newsStale = Boolean(payload.stale);
+              state.newsUpdatedAt = payload.updatedAt || (payload.data && payload.data.updatedAt) || null;
+              renderNews();
+            })
+            .catch(function () {
+              state.news = null;
+              state.newsStale = true;
+              renderNews();
+            });
+        }
+
+        /* ================= 自选股 ================= */
+        var STOCK_MIN_COL = 150;
+        var STOCK_COL_GAP = 8;
+
+        /**
+         * 按可用宽度与条目总数计算最优列数。
+         * 先保证行数最少；行数相同时选择末行留白更少的方案，
+         * 使全部条目在任意容器宽度下都能完整排布。
+         */
+        function layoutStockList() {
+          var list = el.stockList;
+          var count = list.children.length;
+          var width = list.clientWidth;
+          if (!count || !width) {
+            list.style.gridTemplateColumns = '';
+            return;
+          }
+          var maxCols = Math.max(
+            1,
+            Math.floor((width + STOCK_COL_GAP) / (STOCK_MIN_COL + STOCK_COL_GAP)),
+          );
+          var limit = Math.min(maxCols, count);
+          var best = 1;
+          var bestRows = Infinity;
+          var bestEmpty = Infinity;
+          for (var cols = limit; cols >= 1; cols -= 1) {
+            var rows = Math.ceil(count / cols);
+            var empty = cols * rows - count;
+            if (rows < bestRows) {
+              bestRows = rows;
+              bestEmpty = empty;
+              best = cols;
+            } else if (rows === bestRows && empty < bestEmpty) {
+              bestEmpty = empty;
+              best = cols;
+            }
+          }
+          var next = 'repeat(' + best + ', minmax(0, 1fr))';
+          if (list.style.gridTemplateColumns !== next) list.style.gridTemplateColumns = next;
+        }
+
+        function renderStocksSummary() {
+          var box = el.stocksSummary;
+          if (!box) return;
+          var up = 0;
+          var down = 0;
+          var flat = 0;
+          (state.stocks || []).forEach(function (item) {
+            if (item.error) return;
+            var change = Number(item.change) || 0;
+            if (change > 0) up += 1;
+            else if (change < 0) down += 1;
+            else flat += 1;
+          });
+          var total = up + down + flat;
+          if (!total) {
+            box.innerHTML = '';
+            return;
+          }
+          var html = '<span class="summary-item">' + total + ' 项</span>';
+          if (up) html += '<span class="summary-item is-up">涨 ' + up + '</span>';
+          if (down) html += '<span class="summary-item is-down">跌 ' + down + '</span>';
+          if (flat) html += '<span class="summary-item">平 ' + flat + '</span>';
+          box.innerHTML = html;
+        }
+
+        function renderStocks() {
+          var items = state.stocks.length
+            ? state.stocks
+            : state.watchlist.map(function (code) {
+                return { code: code, error: 'quote_unavailable' };
+              });
+
+          if (!items.length) {
+            el.stockList.innerHTML =
+              '<li class="stock-empty">还没有自选股。输入 6 位 A 股代码，或输入「黄金」「原油」等品种名称后点击「添加」。</li>';
+            layoutStockList();
+            renderStocksSummary();
+            scheduleWeatherTune();
+            return;
+          }
+
+          el.stockList.innerHTML = items
+            .map(function (item) {
+              if (item.error) {
+                return (
+                  '<li class="stock-row">' +
+                  '<div class="stock-top"><span class="stock-name">' +
+                  esc(item.code) +
+                  '</span>' +
+                  '<button class="stock-remove" type="button" data-code="' +
+                  esc(item.code) +
+                  '" aria-label="移除 ' +
+                  esc(item.code) +
+                  '">' +
+                  REMOVE_ICON +
+                  '</button></div>' +
+                  '<div class="stock-bottom"><span class="stock-error">行情暂不可用，稍后自动重试</span></div>' +
+                  '</li>'
+                );
+              }
+              var change = Number(item.change) || 0;
+              var percent = Number(item.changePercent) || 0;
+              var direction = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
+              var arrow = direction === 'up' ? TRI_UP : direction === 'down' ? TRI_DOWN : TRI_FLAT;
+              var decimals = typeof item.decimals === 'number' ? item.decimals : 2;
+              var title = item.title ? ' title="' + esc(item.title) + '"' : '';
+              return (
+                '<li class="stock-row"' +
+                title +
+                '>' +
+                '<div class="stock-top">' +
+                '<span class="stock-name">' +
+                esc(item.name || item.code) +
+                '</span>' +
+                '<span class="stock-code">' +
+                esc(item.code) +
+                '</span>' +
+                '<button class="stock-remove" type="button" data-code="' +
+                esc(item.code) +
+                '" aria-label="移除 ' +
+                esc(item.name || item.code) +
+                '">' +
+                REMOVE_ICON +
+                '</button></div>' +
+                '<div class="stock-bottom">' +
+                '<span class="stock-quote"><span class="stock-price">' +
+                esc(fmtNumber(item.price, decimals)) +
+                '</span>' +
+                (item.unit ? '<span class="stock-unit">' + esc(item.unit) + '</span>' : '') +
+                '</span>' +
+                '<span class="stock-deltas">' +
+                '<span class="stock-delta ' +
+                direction +
+                '">' +
+                arrow +
+                esc(fmtSigned(change, decimals)) +
+                '</span>' +
+                '<span class="stock-delta ' +
+                direction +
+                '">' +
+                arrow +
+                esc(fmtSigned(percent, 2)) +
+                '%</span>' +
+                '</span>' +
+                '</div>' +
+                '</li>'
+              );
+            })
+            .join('');
+
+          el.stocksUpdated.textContent = '更新 ' + fmtClock(state.stocksUpdatedAt);
+          layoutStockList();
+          renderStocksSummary();
+          scheduleWeatherTune();
+        }
+
+        var REMOVE_ICON =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+        function loadStocks(options) {
+          var refresh = options && options.refresh ? '1' : '0';
+          var params = new URLSearchParams({ refresh: refresh });
+          return getJsonResilient('/api/stocks?' + params.toString())
+            .then(function (payload) {
+              state.watchlist = payload.watchlist || [];
+              state.stocks = payload.stocks || [];
+              state.stocksUpdatedAt = payload.updatedAt || null;
+              renderStocks();
+            })
+            .catch(function () {
+              renderStocks();
+            });
+        }
+
+        function mutateWatchlist(action, code) {
+          return postJsonResilient('/api/watchlist', { action: action, code: code })
+            .then(function (payload) {
+              state.watchlist = payload.watchlist || [];
+              state.stocks = payload.stocks || [];
+              state.stocksUpdatedAt = new Date().toISOString();
+              renderStocks();
+              showToast(payload.message || '已更新');
+              return true;
+            })
+            .catch(function (error) {
+              if (isServiceDown(error)) {
+                showToast('服务未就绪，操作未生效，请稍后重试', 'error');
+                return false;
+              }
+              showToast((error && error.message) || '操作失败', 'error');
+              return false;
+            });
+        }
+
+        /* ================= 卡片尺寸 ================= */
+        var SIZES_KEY = 'weather-news-board:sizes:v1';
+        var LEGACY_SIZE_KEY = 'weather-news-board:size:v1';
+        var CARD_KEYS = ['weather', 'stocks', 'news'];
+        /* 拖动尺寸时的边界 */
+        var MIN_CARD_W = 260;
+        var MIN_CARD_H = 220;
+        var MAX_CARD_H = 1600;
+        var BOARD_GAP = 16;
+
+        var cardSizes = {
+          weather: { w: null, h: null },
+          stocks: { w: null, h: null },
+          news: { w: null, h: null },
+        };
+        var sizeSaveTimer = 0;
+
+        function cardElement(key) {
+          return document.querySelector('.card[data-card="' + key + '"]');
+        }
+
+        function boardWidth() {
+          return el.board ? el.board.clientWidth : 0;
+        }
+
+        /* 当前排布下的列数：1 栏堆叠 / 2 栏 / 3 栏 */
+        function layoutColumns() {
+          return WNB_LAYOUT.layoutColumnsFor(boardWidth());
+        }
+
+        /* 当前排布下每一行放了哪些卡片：同一行的宽度加起来不能超过看板宽度 */
+        function layoutRows() {
+          return WNB_LAYOUT.layoutRowsFor(layoutColumns());
+        }
+
+        /**
+         * 某张卡片允许的最大宽度：同一行里其它卡片按各自当前的宽度让出空间。
+         * 兄弟卡片如果也被手动指定过宽度，就按它实际占的宽度算，
+         * 否则整行加起来会超出看板宽度，右侧会被裁掉且滚不到。
+         */
+        function maxCardWidth(key) {
+          var w = boardWidth();
+          if (!w) return MIN_CARD_W;
+          var row = null;
+          layoutRows().forEach(function (r) {
+            if (r.indexOf(key) >= 0) row = r;
+          });
+          return WNB_LAYOUT.maxCardWidthFor(w, row, key, MIN_CARD_W, BOARD_GAP);
+        }
+
+        /**
+         * 同一行的手动宽度加起来可能超出看板宽度，这里按比例收回。
+         * 溢出量按渲染结果测量，和浏览器实际的轨道分配保持一致；
+         * 多张卡一样宽时按各自宽度分摊，不偏向行里的第一张。
+         * keepKey 是正在拖动的那张卡：先让兄弟卡片让出空间，兄弟都到底了才动它自己。
+         */
+        function fitCardWidths(keepKey) {
+          var w = boardWidth();
+          if (!w) return false;
+          /* 专注模式下只显示一张卡，不存在"同一行放不下"的问题 */
+          if (focusKey) return false;
+          var changed = false;
+          var floor = Math.min(MIN_CARD_W, w);
+          layoutRows().forEach(function (row) {
+            var guard = 0;
+            while (guard < 12) {
+              guard += 1;
+              var measured = {};
+              row.forEach(function (key) {
+                var card = cardElement(key);
+                measured[key] = card ? card.getBoundingClientRect().width : 0;
+              });
+              var next = WNB_LAYOUT.shrinkRowToFit(
+                cardSizes,
+                measured,
+                row,
+                w,
+                BOARD_GAP,
+                floor,
+                keepKey,
+              );
+              if (!next) break;
+              Object.keys(next).forEach(function (key) {
+                cardSizes[key].w = next[key];
+              });
+              changed = true;
+              /* 收到新宽度后重新布局，下一轮才能量到真实溢出 */
+              applyCardSizes();
+            }
+          });
+          return changed;
+        }
+
+        function applyCardSizes() {
+          var board = el.board;
+          if (!board) return;
+          var customized = false;
+          CARD_KEYS.forEach(function (key) {
+            var card = cardElement(key);
+            var size = cardSizes[key];
+            if (!card) return;
+            if (size.w) {
+              card.style.setProperty('--cw', size.w + 'px');
+              card.classList.add('is-sized-w');
+              board.style.setProperty('--col-' + key, size.w + 'px');
+              customized = true;
+            } else {
+              card.style.removeProperty('--cw');
+              card.classList.remove('is-sized-w');
+              board.style.removeProperty('--col-' + key);
+            }
+            if (size.h) {
+              card.style.setProperty('--ch', size.h + 'px');
+              card.classList.add('is-sized-h');
+              customized = true;
+            } else {
+              card.style.removeProperty('--ch');
+              card.classList.remove('is-sized-h');
+            }
+            // 等高对齐用的行内高度由 alignWeatherHeight 统一管理，
+            // 这里先清掉，免得盖住用户自己指定的高度。
+            if (key === 'weather' || key === 'stocks') card.style.removeProperty('height');
+          });
+          if (el.resetSizes) el.resetSizes.hidden = !customized;
+        }
+
+        function saveCardSizes() {
+          try {
+            localStorage.setItem(SIZES_KEY, JSON.stringify(cardSizes));
+            localStorage.removeItem(LEGACY_SIZE_KEY);
+          } catch (error) {
+            /* 忽略存储失败 */
+          }
+        }
+
+        function restoreCardSizes() {
+          try {
+            var raw = localStorage.getItem(SIZES_KEY);
+            if (raw) {
+              var saved = JSON.parse(raw);
+              if (saved && typeof saved === 'object') {
+                CARD_KEYS.forEach(function (key) {
+                  var item = saved[key];
+                  if (item && typeof item === 'object') {
+                    cardSizes[key].w = typeof item.w === 'number' ? item.w : null;
+                    cardSizes[key].h = typeof item.h === 'number' ? item.h : null;
+                  }
+                });
+              }
+            }
+            localStorage.removeItem(LEGACY_SIZE_KEY);
+          } catch (error) {
+            /* 忽略解析失败 */
+          }
+          applyCardSizes();
+          /* 读取时的尺寸同样要夹紧，避免旧数据把卡片压扁或撑爆 */
+          clampCardSizes();
+        }
+
+        /* 容器变窄后，之前记住的尺寸可能放不下，这里夹紧宽与高 */
+        function clampCardSizes() {
+          var changed = false;
+          CARD_KEYS.forEach(function (key) {
+            var size = cardSizes[key];
+            if (size.w) {
+              var maxW = maxCardWidth(key);
+              var minW = Math.min(MIN_CARD_W, boardWidth());
+              var clamped = WNB_LAYOUT.clampWidth(size.w, minW, maxW);
+              if (clamped !== null && clamped !== size.w) {
+                size.w = clamped;
+                changed = true;
+              }
+            }
+            if (size.h) {
+              if (size.h > MAX_CARD_H) {
+                size.h = MAX_CARD_H;
+                changed = true;
+              }
+              if (size.h < MIN_CARD_H) {
+                size.h = MIN_CARD_H;
+                changed = true;
+              }
+            }
+          });
+          /* 先把逐张夹紧的结果落到布局上，再按实际渲染结果收敛整行 */
+          if (changed) applyCardSizes();
+          /* 同一行的手动宽度加起来不能超出看板宽度，超出时按比例收回来 */
+          if (fitCardWidths()) changed = true;
+          if (changed) {
+            applyCardSizes();
+            saveCardSizes();
+          }
+        }
+
+        function resetCardSize(key) {
+          cardSizes[key].w = null;
+          cardSizes[key].h = null;
+          applyCardSizes();
+          saveCardSizes();
+          scheduleWeatherTune();
+        }
+
+        /* ================= 专注模式 ================= */
+        /* 专注模式只显示一张卡，让它占满看板；再点一次同一张卡，
+           或者点顶栏的「退出专注」，就回到完整看板。 */
+        var focusKey = null;
+
+        function applyFocus() {
+          var board = el.board;
+          if (!board) return;
+          board.classList.toggle('is-focus', Boolean(focusKey));
+          CARD_KEYS.forEach(function (key) {
+            var card = cardElement(key);
+            if (!card) return;
+            var focused = key === focusKey;
+            card.classList.toggle('is-focused', focused);
+            var btn = card.querySelector('.card-focus');
+            if (!btn) return;
+            var name = card.getAttribute('data-title') || '';
+            btn.setAttribute('aria-pressed', focused ? 'true' : 'false');
+            btn.setAttribute(
+              'aria-label',
+              focused ? '退出专注模式' : '专注显示「' + name + '」',
+            );
+            btn.setAttribute(
+              'title',
+              focused ? '退出专注模式' : '专注显示这张卡片',
+            );
+          });
+          if (el.focusExit) el.focusExit.hidden = !focusKey;
+          applyCardSizes();
+        }
+
+        function setFocus(key) {
+          var next = focusKey === key ? null : key;
+          if (next === focusKey) return;
+          focusKey = next;
+          applyFocus();
+          var card = focusKey ? cardElement(focusKey) : null;
+          var name = card ? card.getAttribute('data-title') || '' : '';
+          showToast(focusKey ? '已专注显示「' + name + '」' : '已退出专注模式');
+        }
+
+        function initCardFocus() {
+          var buttons = document.querySelectorAll('.card-focus');
+          for (var i = 0; i < buttons.length; i += 1) {
+            buttons[i].addEventListener('click', function () {
+              setFocus(this.getAttribute('data-focus'));
+            });
+          }
+          if (el.focusExit) {
+            el.focusExit.addEventListener('click', function () {
+              if (!focusKey) return;
+              focusKey = null;
+              applyFocus();
+              showToast('已退出专注模式');
+            });
+          }
+        }
+
+        /* ================= 宽度区间提示 ================= */
+        /* 调整尺寸时，把同一行里每张卡能取的宽度范围显示出来，
+           免得拖到边界才发现兄弟卡已经让到底。 */
+        function inSameRow(key, other) {
+          var same = false;
+          layoutRows().forEach(function (row) {
+            if (row.indexOf(key) >= 0 && row.indexOf(other) >= 0) same = true;
+          });
+          return same;
+        }
+
+        function widthRangeFor(key) {
+          var w = boardWidth();
+          return {
+            min: Math.round(Math.min(MIN_CARD_W, w)),
+            max: Math.round(maxCardWidth(key)),
+          };
+        }
+
+        function showResizeRanges(key) {
+          if (el.board) el.board.classList.add('is-resizing');
+          CARD_KEYS.forEach(function (k) {
+            var card = cardElement(k);
+            if (!card) return;
+            var span = card.querySelector('.card-range');
+            if (!span) return;
+            if (!key || !inSameRow(key, k)) {
+              span.hidden = true;
+              span.textContent = '';
+              return;
+            }
+            var range = widthRangeFor(k);
+            span.hidden = false;
+            span.textContent = '宽度 ' + range.min + '–' + range.max;
+          });
+        }
+
+        function hideResizeRanges() {
+          if (el.board) el.board.classList.remove('is-resizing');
+          CARD_KEYS.forEach(function (k) {
+            var card = cardElement(k);
+            if (!card) return;
+            var span = card.querySelector('.card-range');
+            if (!span) return;
+            span.hidden = true;
+            span.textContent = '';
+          });
+        }
+
+        function showSizeBadge(text, x, y) {
+          var badge = el.resizeBadge;
+          if (!badge) return;
+          badge.textContent = text;
+          badge.hidden = false;
+          if (typeof x === 'number' && typeof y === 'number') {
+            /* 提示条现在会带上可用宽度区间，宽度不定，按实际宽度贴边 */
+            var width = badge.offsetWidth || 160;
+            badge.style.left = Math.max(4, Math.min(window.innerWidth - width - 8, x + 14)) + 'px';
+            badge.style.top = Math.max(4, Math.min(window.innerHeight - 32, y + 14)) + 'px';
+          }
+        }
+
+        function hideSizeBadge() {
+          var badge = el.resizeBadge;
+          if (badge) badge.hidden = true;
+        }
+
+        function bindCardGrip(grip) {
+          var card = grip.closest('.card');
+          if (!card) return;
+          var key = card.getAttribute('data-card');
+          var title = card.getAttribute('data-title') || '';
+          var start = null;
+          var moved = false;
+
+          function onMove(event) {
+            if (!start) return;
+            var dx = event.clientX - start.x;
+            var dy = event.clientY - start.y;
+            if (!moved) {
+              if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+              moved = true;
+            }
+            if (event.cancelable) event.preventDefault();
+            var minW = Math.min(MIN_CARD_W, boardWidth());
+            var w = Math.round(Math.max(minW, event.clientX - start.left));
+            var h = Math.round(
+              Math.min(MAX_CARD_H, Math.max(MIN_CARD_H, event.clientY - start.top)),
+            );
+            cardSizes[key].w = w;
+            cardSizes[key].h = h;
+            /* 先落到布局上，再按实际渲染结果收敛：同一行的总宽度不能超出看板，
+               先让兄弟卡片让出空间，实在放不下才收这张 */
+            applyCardSizes();
+            fitCardWidths(key);
+            applyCardSizes();
+            /* 提示上的尺寸用实际生效的宽度，而不是夹紧之前的那个 */
+            var range = widthRangeFor(key);
+            showResizeRanges(key);
+            showSizeBadge(
+              cardSizes[key].w + ' × ' + cardSizes[key].h + ' · 可用 ' + range.min + '–' + range.max,
+              event.clientX,
+              event.clientY,
+            );
+            if (!sizeSaveTimer) {
+              sizeSaveTimer = setTimeout(function () {
+                sizeSaveTimer = 0;
+                saveCardSizes();
+              }, 200);
+            }
+          }
+
+          function onUp() {
+            if (!start) return;
+            window.removeEventListener('pointermove', onMove, true);
+            window.removeEventListener('mousemove', onMove, true);
+            window.removeEventListener('pointerup', onUp, true);
+            window.removeEventListener('mouseup', onUp, true);
+            start = null;
+            grip.classList.remove('is-active');
+            hideSizeBadge();
+            hideResizeRanges();
+            if (moved) {
+              saveCardSizes();
+            } else {
+              // 没有移动视为单击：这张卡片恢复自适应。
+              resetCardSize(key);
+              showToast('「' + title + '」已恢复自适应');
+            }
+            moved = false;
+          }
+
+          /* 键盘微调：左右调宽，上下调高，Shift 加速，Home 或回车恢复自适应。 */
+          function onKeyDown(event) {
+            var step = event.shiftKey ? 64 : 16;
+            var deltaW = 0;
+            var deltaH = 0;
+            if (event.key === 'ArrowLeft') deltaW = -step;
+            else if (event.key === 'ArrowRight') deltaW = step;
+            else if (event.key === 'ArrowUp') deltaH = -step;
+            else if (event.key === 'ArrowDown') deltaH = step;
+            else if (
+              event.key === 'Home' ||
+              event.key === 'Enter' ||
+              event.key === ' ' ||
+              event.key === 'Spacebar'
+            ) {
+              event.preventDefault();
+              resetCardSize(key);
+              showToast('「' + title + '」已恢复自适应');
+              hideSizeBadge();
+              hideResizeRanges();
+              return;
+            } else {
+              return;
+            }
+            event.preventDefault();
+            var rect = card.getBoundingClientRect();
+            if (deltaW) {
+              var minW = Math.min(MIN_CARD_W, boardWidth());
+              var maxW = maxCardWidth(key);
+              cardSizes[key].w = WNB_LAYOUT.clampWidth(
+                (cardSizes[key].w || Math.round(rect.width)) + deltaW,
+                minW,
+                maxW,
+              );
+            }
+            if (deltaH) {
+              var currentH = cardSizes[key].h || Math.round(rect.height);
+              cardSizes[key].h = Math.min(
+                MAX_CARD_H,
+                Math.max(MIN_CARD_H, currentH + deltaH),
+              );
+            }
+            applyCardSizes();
+            fitCardWidths(key);
+            applyCardSizes();
+            saveCardSizes();
+            var range = widthRangeFor(key);
+            showResizeRanges(key);
+            showSizeBadge(
+              cardSizes[key].w + ' × ' + (cardSizes[key].h || Math.round(rect.height)) +
+                ' · 可用 ' + range.min + '–' + range.max,
+              rect.right - 110,
+              rect.bottom - 34,
+            );
+          }
+
+          function onDown(event) {
+            if (typeof event.button === 'number' && event.button !== 0) return;
+            event.preventDefault();
+            var rect = card.getBoundingClientRect();
+            start = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+            moved = false;
+            // 监听挂在 window 上：即使指针捕获在嵌入式面板里失效，
+            // 移动事件依然会冒泡到页面，手柄仍能跟手。
+            window.addEventListener('pointermove', onMove, true);
+            window.addEventListener('mousemove', onMove, true);
+            window.addEventListener('pointerup', onUp, true);
+            window.addEventListener('mouseup', onUp, true);
+            grip.classList.add('is-active');
+            showResizeRanges(key);
+            showSizeBadge(
+              Math.round(rect.width) + ' × ' + Math.round(rect.height),
+              event.clientX,
+              event.clientY,
+            );
+          }
+
+          grip.addEventListener('pointerdown', onDown);
+          grip.addEventListener('mousedown', onDown);
+          grip.addEventListener('keydown', onKeyDown);
+          grip.addEventListener('focus', function () {
+            showResizeRanges(key);
+          });
+          grip.addEventListener('blur', function () {
+            hideResizeRanges();
+            hideSizeBadge();
+          });
+          grip.addEventListener('pointerenter', function () {
+            if (start) return;
+            var rect = card.getBoundingClientRect();
+            showSizeBadge(
+              title + ' ' + Math.round(rect.width) + ' × ' + Math.round(rect.height) + ' · 拖动调整',
+              rect.right - 110,
+              rect.bottom - 34,
+            );
+          });
+          grip.addEventListener('pointerleave', function () {
+            if (!start) hideSizeBadge();
+          });
+        }
+
+        function initCardGrips() {
+          var grips = document.querySelectorAll('.card-grip');
+          for (var i = 0; i < grips.length; i += 1) {
+            bindCardGrip(grips[i]);
+          }
+          if (el.resetSizes) {
+            el.resetSizes.addEventListener('click', function () {
+              CARD_KEYS.forEach(function (key) {
+                cardSizes[key].w = null;
+                cardSizes[key].h = null;
+              });
+              applyCardSizes();
+              saveCardSizes();
+              scheduleWeatherTune();
+              showToast('所有子看板已恢复自适应');
+            });
+          }
+        }
+
+        /* ================= 状态栏 ================= */
+        function updateBrandStatus() {
+          var parts = [];
+          if (state.weather) parts.push('天气已更新');
+          if (state.news) parts.push('新闻已更新');
+          if (state.stocks.length) parts.push('行情已更新');
+          if (state.weatherStale || state.newsStale) {
+            el.brandSub.textContent = '部分来源异常，已保留上一次数据';
+          } else if (parts.length) {
+            el.brandSub.textContent = parts.join(' · ');
+          } else {
+            el.brandSub.textContent = '正在加载…';
+          }
+        }
+
+        /* ================= 定时刷新 ================= */
+        var contentTimer = null;
+        var quoteTimer = null;
+
+        function scheduleContent() {
+          if (contentTimer) clearTimeout(contentTimer);
+          if (!state.autoRefresh) return;
+          contentTimer = setTimeout(function () {
+            loadBoard({ refresh: true }).then(function () {
+              updateBrandStatus();
+              scheduleContent();
+            });
+          }, state.interval * 1000);
+        }
+
+        function scheduleQuotes() {
+          if (quoteTimer) clearTimeout(quoteTimer);
+          if (!state.quoteAuto) return;
+          quoteTimer = setTimeout(function () {
+            loadStocks({ refresh: true }).then(function () {
+              updateBrandStatus();
+              scheduleQuotes();
+            });
+          }, state.quoteInterval * 1000);
+        }
+
+        function loadBoard(options) {
+          state.loading = true;
+          el.refreshBtn.classList.add('is-spinning');
+          return Promise.all([loadWeather(options), loadNews(options)]).then(function () {
+            state.loading = false;
+            el.refreshBtn.classList.remove('is-spinning');
+            updateBrandStatus();
+          });
+        }
+
+        /* ================= 事件绑定 ================= */
+        el.newsTabs.addEventListener('click', function (event) {
+          var button = event.target.closest('.news-tab');
+          if (!button) return;
+          var key = button.getAttribute('data-source');
+          if (!key || key === state.tab) return;
+          state.tab = key;
+          renderTabs();
+          saveViewState();
+          loadNews({ refresh: true }).then(updateBrandStatus);
+        });
+
+        el.cityForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var value = el.cityInput.value.trim();
+          if (!value) return;
+          state.city = value;
+          state.pick = 0;
+          saveViewState();
+          loadWeather({ refresh: true }).then(updateBrandStatus);
+        });
+
+        el.citySwitch.addEventListener('click', function () {
+          if (!state.candidates.length) {
+            showToast('没有更多同名城市', 'error');
+            return;
+          }
+          state.pick = (state.pick + 1) % state.candidates.length;
+          saveViewState();
+          loadWeather({ refresh: true }).then(updateBrandStatus);
+        });
+
+        el.stockForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var value = el.stockInput.value.trim();
+          if (!value) return;
+          mutateWatchlist('add', value).then(function (ok) {
+            if (ok) el.stockInput.value = '';
+          });
+        });
+
+        el.stockList.addEventListener('click', function (event) {
+          var button = event.target.closest('.stock-remove');
+          if (!button) return;
+          var code = button.getAttribute('data-code');
+          if (code) mutateWatchlist('remove', code);
+        });
+
+        el.autoRefresh.addEventListener('change', function () {
+          state.autoRefresh = el.autoRefresh.checked;
+          saveViewState();
+          scheduleContent();
+        });
+
+        el.refreshInterval.addEventListener('change', function () {
+          state.interval = Number(el.refreshInterval.value) || 60;
+          saveViewState();
+          scheduleContent();
+        });
+
+        el.quoteAuto.addEventListener('change', function () {
+          state.quoteAuto = el.quoteAuto.checked;
+          saveViewState();
+          scheduleQuotes();
+        });
+
+        el.quoteInterval.addEventListener('change', function () {
+          state.quoteInterval = Number(el.quoteInterval.value) || 30;
+          saveViewState();
+          scheduleQuotes();
+        });
+
+        el.refreshBtn.addEventListener('click', function () {
+          Promise.all([loadBoard({ refresh: true }), loadStocks({ refresh: true })]).then(updateBrandStatus);
+        });
+
+        /* ================= 启动 ================= */
+        function syncControls() {
+          el.autoRefresh.checked = state.autoRefresh;
+          el.refreshInterval.value = String(state.interval);
+          el.quoteAuto.checked = state.quoteAuto;
+          el.quoteInterval.value = String(state.quoteInterval);
+          el.cityInput.value = state.city;
+        }
+
+        /* 容器宽度变化时重新排布自选股 */
+        if (window.ResizeObserver) {
+          var stockObserver = new ResizeObserver(function () {
+            layoutStockList();
+          });
+          stockObserver.observe(el.stockList);
+          var weatherObserver = new ResizeObserver(function () {
+            scheduleWeatherTune();
+          });
+          if (el.weatherCard) weatherObserver.observe(el.weatherCard);
+          // 自选股卡高度变化时，天气卡的对齐要重新算一次。
+          var stocksObserver = new ResizeObserver(function () {
+            scheduleWeatherTune();
+          });
+          if (el.stocksCard) stocksObserver.observe(el.stocksCard);
+          // 看板的可用宽度变了（面板变窄，或者内容变高后出现竖向滚动条、
+          // 可用宽度少掉十几像素），手动指定的宽度要重新收敛一次。
+          var lastBoardWidth = boardWidth();
+          var boardObserver = new ResizeObserver(function () {
+            var w = boardWidth();
+            if (!w || w === lastBoardWidth) return;
+            lastBoardWidth = w;
+            clampCardSizes();
+            scheduleWeatherTune();
+          });
+          if (el.board) boardObserver.observe(el.board);
+        }
+        window.addEventListener('resize', function () {
+          clampCardSizes();
+          layoutStockList();
+          scheduleWeatherTune();
+        });
+
+        restoreViewState();
+        restoreCardSizes();
+        initCardGrips();
+        initCardFocus();
+        applyTheme();
+        renderTabs();
+        syncControls();
+        renderWeather();
+        renderNews();
+        renderStocks();
+
+        /* 页面刚加载时给运行时留一段启动宽限期 */
+        startupGraceUntil = Date.now() + 45000;
+
+        loadBoard().then(function () {
+          updateBrandStatus();
+          scheduleContent();
+        });
+        loadStocks().then(function () {
+          updateBrandStatus();
+          scheduleQuotes();
+        });
+      })();
+    </script>
+  </body>
+</html>
