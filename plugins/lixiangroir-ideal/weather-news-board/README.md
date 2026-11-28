@@ -6,10 +6,10 @@ switchable news columns in one dashboard page.
 - **实时天气** — current temperature, weather condition, apparent temperature, humidity and wind
   speed, plus a three-day forecast with precipitation probability. The city can be typed in Chinese
   (for example `南京`); **切换** cycles through the places that share that name.
-- **自选股** — a personal watchlist of A-share codes and international symbols (gold, silver, crude
-  oil, Bitcoin futures, SGE gold 9999). Prices refresh on their own interval, separately from the
-  weather and news interval, and the card ends with a count of the rising, falling and unchanged
-  entries.
+- **自选股** — a personal watchlist of A-share codes, index names (`沪深300`, `科创50`) and
+  international symbols (gold, silver, crude oil, Bitcoin futures, SGE gold 9999). Prices refresh
+  on their own interval, separately from the weather and news interval, and the card ends with a
+  count of the rising, falling and unchanged entries.
 - **新闻** — six tabs: 要闻, 时政, 科技, 财经, 热榜 (Toutiao hot board) and 知乎日报. The refresh
   button in the top bar re-fetches the selected column right away, skipping the 60-second server
   cache.
@@ -76,9 +76,11 @@ The app needs no configuration, no account, and no build step. Everything it sho
 live from public sources at runtime.
 
 In the watchlist, add a six-digit A-share code (`600519`), a prefixed code (`sh600519`, `sz000001`,
-`bj430047`), or the name of a supported symbol (`黄金`, `伦敦金`, `黄金9999`, `白银`, `原油`,
-`比特币`). Codes are validated against a fixed allow list on the server; anything else is
-rejected.
+`bj430047`), the name of an index (`上证指数`, `沪深300`, `创业板指`, `科创50`, `中证500`, `北证50`) or
+of one of the common ETFs (`沪深300ETF`, `创业板ETF`, `科创50ETF`), or the name of a supported symbol
+(`黄金`, `伦敦金`, `黄金9999`, `白银`, `原油`, `比特币`). Index codes carry their exchange explicitly,
+because `000001` is 平安银行 in Shenzhen and 上证指数 in Shanghai. Codes are validated against a fixed
+allow list on the server; anything else is rejected.
 
 ## Tested environment
 
@@ -128,15 +130,24 @@ rejected.
   same range without being cut off at the viewport edge; resized a card from the keyboard and
   confirmed that ArrowRight widened it by 16 px, Shift+ArrowRight by 64 px, ArrowDown grew the
   height by 16 px, Shift+ArrowLeft narrowed it by 64 px, and Home put the card back to its
-  automatic size with a confirmation toast. Console showed 0 errors and 0
+  automatic size with a confirmation toast; typed 沪深300 into the watchlist and confirmed that the
+  row that appeared was 沪深300 on sh000300 with a live quote, and that 科创50ETF resolved to
+  sh588000; walked the rest of the index and ETF list through the API one by one and confirmed that
+  上证指数 (sh000001), 深证成指 (sz399001), 创业板指 (sz399006), 科创50 (sh000688),
+  上证50 (sh000016), 中证500 (sh000905), 中证1000 (sh000852), 创业板50 (sz399673),
+  北证50 (bj899050), 沪深300ETF (sh510300), 上证50ETF (sh510050), 创业板ETF (sz159915),
+  科创50ETF (sh588000), 证券ETF (sh512880) and 中概互联网ETF (sh513050) each returned a quote;
+  confirmed that an unknown name is rejected with the allow-list message and that the watchlist was
+  left unchanged afterwards. Console showed 0 errors and 0
   warnings; the network showed no failed requests.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the
   fallback branches never ran in the live app.
-- The package's own layout self-test lives in `tests/layout.test.mjs` and runs with Node's built-in
-  test runner — `node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"` —
-  16 cases, all passing on Node.js 24.16.0. The repository's `npm run check` only runs the
-  repository's own tests, so this command has to be run separately.
+- The package's own self-tests live in `tests/` — `layout.test.mjs` for the layout arithmetic and
+  `security-aliases.test.mjs` for the index and ETF names — and run with Node's built-in test
+  runner: `node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"` — 24 cases,
+  all passing on Node.js 24.16.0. The repository's `npm run check` only runs the repository's own
+  tests, so this command has to be run separately.
 - The package declares no `agentAccess`, `toolAccess`, `deviceAccess`, `hostAccess`, or
   `surface.window`, so no minimum client version beyond the base Mini App runtime is required.
 

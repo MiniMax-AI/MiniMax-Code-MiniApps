@@ -12,6 +12,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { resolveSecurityAlias } from './security-aliases.mjs';
 
 /** @typedef {import('./miniapp-api.js').MiniAppContext} MiniAppContext */
 /** @typedef {import('./miniapp-api.js').MiniAppLifecycle} MiniAppLifecycle */
@@ -745,6 +746,11 @@ function resolveInput(raw) {
   const prefixed = /^(sh|sz|bj)([0-9]{6})$/.exec(lower);
   if (prefixed) return { code: `${prefixed[1]}${prefixed[2]}`, kind: 'stock' };
 
+  /* 指数与常见 ETF 的名称别名（上证指数、沪深300、科创50ETF……）。
+     放在 6 位数字规则之前：指数代码的市场前缀不能靠数字段推。 */
+  const alias = resolveSecurityAlias(compact);
+  if (alias) return { code: alias, kind: 'stock' };
+
   if (/^[0-9]{6}$/.test(compact)) {
     return { code: `${marketOf(compact)}${compact}`, kind: 'stock' };
   }
@@ -1267,7 +1273,7 @@ async function handleRequest(context, watchlist, request, response) {
       sendJson(response, 400, {
         ok: false,
         error: 'invalid_code',
-        message: '仅支持 6 位 A 股代码、sh/sz/bj 前缀代码或黄金、原油等预定义品种',
+        message: '仅支持 6 位 A 股代码、sh/sz/bj 前缀代码、指数名称或黄金、原油等预定义品种',
       });
       return;
     }
