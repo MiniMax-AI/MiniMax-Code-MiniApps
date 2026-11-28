@@ -30,6 +30,17 @@ layout applies the same rule explicitly, and there the two cards end up exactly 
 taller of the two. Sizes restored from the browser storage are clamped to the current container, so
 a size saved on a wide screen can never squash a card on a narrow one. The cards that share a row are kept inside the container as well: when their widths no longer fit, the overflow is taken back proportionally, so equally wide cards shrink evenly instead of one of them always giving way first, and while a card is being dragged its neighbour gives way instead of letting the board run past the edge. The size shown while dragging is the size that is actually applied.
 
+Each card carries a focus button in its header: it hides the other two and gives that card the
+whole board, and the same button — or **Exit focus** in the top bar — brings the full board back.
+
+While a card is being resized, every card that shares its row shows the width range it can still
+take, so it is visible when a neighbour has already given everything it can. The size badge shows
+the same range next to the current size.
+
+The resize handle is a real button: with it focused, the arrow keys change the width and the
+height of that card — Shift makes the step larger — and Home puts the card back to its automatic
+size.
+
 Precious metals are always shown in **CNY per gram**. The raw USD-per-ounce quote and the FX rate
 used for the conversion are kept in the row's tooltip, so the displayed number and the source
 figure can be compared.
@@ -109,7 +120,15 @@ rejected.
   notice disappearing; repeated that with the service down for 25 s and confirmed the notice never
   settled on a state that did not match reality; added a watchlist entry while the service was down
   for 3 s and confirmed the write was retried and applied once the service came back, then removed
-  the entry again. Console showed 0 errors and 0
+  the entry again; entered focus mode on the weather card and confirmed that the other two cards
+  were hidden, that the focused card took the full 734 px board width, that the top bar offered
+  **Exit focus**, and that leaving focus mode brought all three cards back; dragged a card handle
+  and confirmed that every card in the same row showed the width range it could still take
+  (260–458 px) while the card in the row below showed none, and that the size badge carried the
+  same range without being cut off at the viewport edge; resized a card from the keyboard and
+  confirmed that ArrowRight widened it by 16 px, Shift+ArrowRight by 64 px, ArrowDown grew the
+  height by 16 px, Shift+ArrowLeft narrowed it by 64 px, and Home put the card back to its
+  automatic size with a confirmation toast. Console showed 0 errors and 0
   warnings; the network showed no failed requests.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the

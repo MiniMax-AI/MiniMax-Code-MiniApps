@@ -314,6 +314,7 @@
         font-size: 16px;
         line-height: 24px;
         font-weight: 500;
+        white-space: nowrap;
       }
       .card-meta {
         font-size: 12px;
@@ -1054,6 +1055,75 @@
           animation-iteration-count: 1 !important;
         }
       }
+
+      /* ---------- 卡片头工具区 ---------- */
+      .card-head-tools {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .card-focus {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid var(--mcode-border);
+        border-radius: 7px;
+        background: var(--mcode-surface);
+        color: var(--mcode-text-subtle);
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
+      }
+      .card:hover .card-focus,
+      .card-focus:focus-visible {
+        opacity: 1;
+        color: var(--mcode-accent);
+        border-color: var(--mcode-accent);
+      }
+      .card-focus svg {
+        width: 13px;
+        height: 13px;
+        pointer-events: none;
+      }
+      /* 调整尺寸时，同一行里每张卡能取的宽度范围 */
+      .card-range {
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 8px;
+        border: 1px solid var(--mcode-border);
+        border-radius: 12px;
+        background: var(--mcode-surface-muted);
+        color: var(--mcode-text-muted);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      /* 调整尺寸时腾出位置：更新时间先让位，但保留占位，布局不跳动 */
+      .board.is-resizing .card-meta,
+      .board.is-resizing .news-updated {
+        visibility: hidden;
+      }
+
+      /* ---------- 专注模式 ---------- */
+      /* 放在容器查询之后：.board.is-focus 的优先级高于容器查询里的 .board */
+      .board.is-focus {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .board.is-focus .card {
+        display: none;
+      }
+      .board.is-focus .card.is-focused {
+        display: flex;
+        grid-column: 1 / -1;
+        justify-self: stretch;
+      }
+      .board.is-focus .card.is-focused.is-sized-w {
+        width: 100%;
+      }
     </style>
   </head>
   <body>
@@ -1086,6 +1156,9 @@
               <path d="M20 4v4.5h-4.5" />
             </svg>
           </button>
+          <button class="btn" id="focus-exit" type="button" hidden title="退出专注模式，回到完整看板">
+            退出专注
+          </button>
           <button class="btn" id="reset-sizes" type="button" hidden title="把所有子看板恢复自适应尺寸">
             重置尺寸
           </button>
@@ -1101,6 +1174,17 @@
         <article class="card weather-card" data-card="weather" data-title="实时天气" aria-labelledby="weather-title">
           <div class="card-head">
             <h2 class="card-title" id="weather-title">实时天气</h2>
+            <div class="card-head-tools">
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="weather" aria-pressed="false" aria-label="专注显示「实时天气」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
+            </div>
           </div>
           <form class="city-form" id="city-form">
             <input type="text" id="city-input" placeholder="城市，如 南京" aria-label="城市名称" autocomplete="off" />
@@ -1114,7 +1198,7 @@
               <p class="list-empty">正在获取天气…</p>
             </div>
           </div>
-          <button class="card-grip" type="button" aria-label="拖动调整「实时天气」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+          <button class="card-grip" type="button" aria-label="拖动调整「实时天气」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M14 4h6v6" />
               <path d="M20 4l-7.5 7.5" />
@@ -1127,7 +1211,18 @@
         <article class="card stocks-card" data-card="stocks" data-title="自选股" aria-labelledby="stocks-title">
           <div class="card-head">
             <h2 class="card-title" id="stocks-title">自选股</h2>
-            <span class="card-meta" id="stocks-updated">更新 --:--</span>
+            <div class="card-head-tools">
+              <span class="card-meta" id="stocks-updated">更新 --:--</span>
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="stocks" aria-pressed="false" aria-label="专注显示「自选股」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
+            </div>
           </div>
           <form class="stocks-form" id="stock-form">
             <div class="stocks-row">
@@ -1151,7 +1246,7 @@
           <ul class="stock-list" id="stock-list"></ul>
           <div class="stocks-summary" id="stocks-summary"></div>
           <p class="hint">支持 A 股代码与黄金、原油等国际品种，非交易时段为最近成交价。</p>
-          <button class="card-grip" type="button" aria-label="拖动调整「自选股」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+          <button class="card-grip" type="button" aria-label="拖动调整「自选股」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M14 4h6v6" />
               <path d="M20 4l-7.5 7.5" />
@@ -1167,11 +1262,20 @@
             <div class="news-status">
               <span class="news-updated" id="news-updated">更新于 --/-- --:--</span>
               <span class="status-badge" id="news-badge" role="status">加载中</span>
+              <span class="card-range" hidden aria-hidden="true"></span>
+              <button class="card-focus" type="button" data-focus="news" aria-pressed="false" aria-label="专注显示「新闻」" title="专注显示这张卡片">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M9 4H4v5" />
+                  <path d="M4 4l6 6" />
+                  <path d="M15 20h5v-5" />
+                  <path d="M20 20l-6-6" />
+                </svg>
+              </button>
             </div>
           </div>
           <div class="news-tabs" role="tablist" aria-label="新闻栏目" id="news-tabs"></div>
           <ul class="news-list" id="news-list" role="tabpanel" aria-labelledby="tab-headlines" style="margin-top: 10px"></ul>
-          <button class="card-grip" type="button" aria-label="拖动调整「新闻」卡片大小，单击恢复自适应" title="拖动调整大小，单击恢复自适应">
+          <button class="card-grip" type="button" aria-label="拖动调整「新闻」卡片大小，方向键微调宽高，Home 或单击恢复自适应" title="拖动调整大小，方向键微调，Home 或单击恢复自适应">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M14 4h6v6" />
               <path d="M20 4l-7.5 7.5" />
@@ -1184,7 +1288,7 @@
       </div>
     </div>
 
-    <div class="resize-badge" id="resize-badge" hidden></div>
+    <div class="resize-badge" id="resize-badge" role="status" aria-live="polite" hidden></div>
 
     <div class="toast" id="toast" role="status" hidden></div>
 
@@ -1397,6 +1501,7 @@
           stocksUpdated: document.getElementById('stocks-updated'),
           resizeBadge: document.getElementById('resize-badge'),
           resetSizes: document.getElementById('reset-sizes'),
+          focusExit: document.getElementById('focus-exit'),
           newsTabs: document.getElementById('news-tabs'),
           newsList: document.getElementById('news-list'),
           newsUpdated: document.getElementById('news-updated'),
@@ -2392,6 +2497,8 @@
         function fitCardWidths(keepKey) {
           var w = boardWidth();
           if (!w) return false;
+          /* 专注模式下只显示一张卡，不存在"同一行放不下"的问题 */
+          if (focusKey) return false;
           var changed = false;
           var floor = Math.min(MIN_CARD_W, w);
           layoutRows().forEach(function (row) {
@@ -2533,13 +2640,122 @@
           scheduleWeatherTune();
         }
 
+        /* ================= 专注模式 ================= */
+        /* 专注模式只显示一张卡，让它占满看板；再点一次同一张卡，
+           或者点顶栏的「退出专注」，就回到完整看板。 */
+        var focusKey = null;
+
+        function applyFocus() {
+          var board = el.board;
+          if (!board) return;
+          board.classList.toggle('is-focus', Boolean(focusKey));
+          CARD_KEYS.forEach(function (key) {
+            var card = cardElement(key);
+            if (!card) return;
+            var focused = key === focusKey;
+            card.classList.toggle('is-focused', focused);
+            var btn = card.querySelector('.card-focus');
+            if (!btn) return;
+            var name = card.getAttribute('data-title') || '';
+            btn.setAttribute('aria-pressed', focused ? 'true' : 'false');
+            btn.setAttribute(
+              'aria-label',
+              focused ? '退出专注模式' : '专注显示「' + name + '」',
+            );
+            btn.setAttribute(
+              'title',
+              focused ? '退出专注模式' : '专注显示这张卡片',
+            );
+          });
+          if (el.focusExit) el.focusExit.hidden = !focusKey;
+          applyCardSizes();
+        }
+
+        function setFocus(key) {
+          var next = focusKey === key ? null : key;
+          if (next === focusKey) return;
+          focusKey = next;
+          applyFocus();
+          var card = focusKey ? cardElement(focusKey) : null;
+          var name = card ? card.getAttribute('data-title') || '' : '';
+          showToast(focusKey ? '已专注显示「' + name + '」' : '已退出专注模式');
+        }
+
+        function initCardFocus() {
+          var buttons = document.querySelectorAll('.card-focus');
+          for (var i = 0; i < buttons.length; i += 1) {
+            buttons[i].addEventListener('click', function () {
+              setFocus(this.getAttribute('data-focus'));
+            });
+          }
+          if (el.focusExit) {
+            el.focusExit.addEventListener('click', function () {
+              if (!focusKey) return;
+              focusKey = null;
+              applyFocus();
+              showToast('已退出专注模式');
+            });
+          }
+        }
+
+        /* ================= 宽度区间提示 ================= */
+        /* 调整尺寸时，把同一行里每张卡能取的宽度范围显示出来，
+           免得拖到边界才发现兄弟卡已经让到底。 */
+        function inSameRow(key, other) {
+          var same = false;
+          layoutRows().forEach(function (row) {
+            if (row.indexOf(key) >= 0 && row.indexOf(other) >= 0) same = true;
+          });
+          return same;
+        }
+
+        function widthRangeFor(key) {
+          var w = boardWidth();
+          return {
+            min: Math.round(Math.min(MIN_CARD_W, w)),
+            max: Math.round(maxCardWidth(key)),
+          };
+        }
+
+        function showResizeRanges(key) {
+          if (el.board) el.board.classList.add('is-resizing');
+          CARD_KEYS.forEach(function (k) {
+            var card = cardElement(k);
+            if (!card) return;
+            var span = card.querySelector('.card-range');
+            if (!span) return;
+            if (!key || !inSameRow(key, k)) {
+              span.hidden = true;
+              span.textContent = '';
+              return;
+            }
+            var range = widthRangeFor(k);
+            span.hidden = false;
+            span.textContent = '宽度 ' + range.min + '–' + range.max;
+          });
+        }
+
+        function hideResizeRanges() {
+          if (el.board) el.board.classList.remove('is-resizing');
+          CARD_KEYS.forEach(function (k) {
+            var card = cardElement(k);
+            if (!card) return;
+            var span = card.querySelector('.card-range');
+            if (!span) return;
+            span.hidden = true;
+            span.textContent = '';
+          });
+        }
+
         function showSizeBadge(text, x, y) {
           var badge = el.resizeBadge;
           if (!badge) return;
           badge.textContent = text;
           badge.hidden = false;
           if (typeof x === 'number' && typeof y === 'number') {
-            badge.style.left = Math.max(4, Math.min(window.innerWidth - 120, x + 14)) + 'px';
+            /* 提示条现在会带上可用宽度区间，宽度不定，按实际宽度贴边 */
+            var width = badge.offsetWidth || 160;
+            badge.style.left = Math.max(4, Math.min(window.innerWidth - width - 8, x + 14)) + 'px';
             badge.style.top = Math.max(4, Math.min(window.innerHeight - 32, y + 14)) + 'px';
           }
         }
@@ -2579,7 +2795,13 @@
             fitCardWidths(key);
             applyCardSizes();
             /* 提示上的尺寸用实际生效的宽度，而不是夹紧之前的那个 */
-            showSizeBadge(cardSizes[key].w + ' × ' + cardSizes[key].h, event.clientX, event.clientY);
+            var range = widthRangeFor(key);
+            showResizeRanges(key);
+            showSizeBadge(
+              cardSizes[key].w + ' × ' + cardSizes[key].h + ' · 可用 ' + range.min + '–' + range.max,
+              event.clientX,
+              event.clientY,
+            );
             if (!sizeSaveTimer) {
               sizeSaveTimer = setTimeout(function () {
                 sizeSaveTimer = 0;
@@ -2597,6 +2819,7 @@
             start = null;
             grip.classList.remove('is-active');
             hideSizeBadge();
+            hideResizeRanges();
             if (moved) {
               saveCardSizes();
             } else {
@@ -2605,6 +2828,62 @@
               showToast('「' + title + '」已恢复自适应');
             }
             moved = false;
+          }
+
+          /* 键盘微调：左右调宽，上下调高，Shift 加速，Home 或回车恢复自适应。 */
+          function onKeyDown(event) {
+            var step = event.shiftKey ? 64 : 16;
+            var deltaW = 0;
+            var deltaH = 0;
+            if (event.key === 'ArrowLeft') deltaW = -step;
+            else if (event.key === 'ArrowRight') deltaW = step;
+            else if (event.key === 'ArrowUp') deltaH = -step;
+            else if (event.key === 'ArrowDown') deltaH = step;
+            else if (
+              event.key === 'Home' ||
+              event.key === 'Enter' ||
+              event.key === ' ' ||
+              event.key === 'Spacebar'
+            ) {
+              event.preventDefault();
+              resetCardSize(key);
+              showToast('「' + title + '」已恢复自适应');
+              hideSizeBadge();
+              hideResizeRanges();
+              return;
+            } else {
+              return;
+            }
+            event.preventDefault();
+            var rect = card.getBoundingClientRect();
+            if (deltaW) {
+              var minW = Math.min(MIN_CARD_W, boardWidth());
+              var maxW = maxCardWidth(key);
+              cardSizes[key].w = WNB_LAYOUT.clampWidth(
+                (cardSizes[key].w || Math.round(rect.width)) + deltaW,
+                minW,
+                maxW,
+              );
+            }
+            if (deltaH) {
+              var currentH = cardSizes[key].h || Math.round(rect.height);
+              cardSizes[key].h = Math.min(
+                MAX_CARD_H,
+                Math.max(MIN_CARD_H, currentH + deltaH),
+              );
+            }
+            applyCardSizes();
+            fitCardWidths(key);
+            applyCardSizes();
+            saveCardSizes();
+            var range = widthRangeFor(key);
+            showResizeRanges(key);
+            showSizeBadge(
+              cardSizes[key].w + ' × ' + (cardSizes[key].h || Math.round(rect.height)) +
+                ' · 可用 ' + range.min + '–' + range.max,
+              rect.right - 110,
+              rect.bottom - 34,
+            );
           }
 
           function onDown(event) {
@@ -2620,6 +2899,7 @@
             window.addEventListener('pointerup', onUp, true);
             window.addEventListener('mouseup', onUp, true);
             grip.classList.add('is-active');
+            showResizeRanges(key);
             showSizeBadge(
               Math.round(rect.width) + ' × ' + Math.round(rect.height),
               event.clientX,
@@ -2629,6 +2909,14 @@
 
           grip.addEventListener('pointerdown', onDown);
           grip.addEventListener('mousedown', onDown);
+          grip.addEventListener('keydown', onKeyDown);
+          grip.addEventListener('focus', function () {
+            showResizeRanges(key);
+          });
+          grip.addEventListener('blur', function () {
+            hideResizeRanges();
+            hideSizeBadge();
+          });
           grip.addEventListener('pointerenter', function () {
             if (start) return;
             var rect = card.getBoundingClientRect();
@@ -2834,6 +3122,7 @@
         restoreViewState();
         restoreCardSizes();
         initCardGrips();
+        initCardFocus();
         applyTheme();
         renderTabs();
         syncControls();

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "weather-news-board",
   "displayName": "天气 · 新闻看板",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "展示实时天气与国内要闻、今日头条热榜、知乎日报，支持随时手动刷新，并可自选股票与黄金、原油等国际品种行情。",
   "author": "lixiangroir-ideal",
   "icon": "icon.png",
