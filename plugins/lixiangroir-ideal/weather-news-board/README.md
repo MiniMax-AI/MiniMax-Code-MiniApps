@@ -44,6 +44,18 @@ service. Once the retries are used up the title bar says the service is not read
 automatic refresh picks the board up again. Adding or removing a watchlist entry is retried the
 same way, which is safe because both operations are idempotent on the server.
 
+The width arithmetic is kept apart from the DOM: the client carries the pure functions in a
+`<script id="wnb-layout">` block, and `tests/layout.test.mjs` takes that block apart and runs it
+under Node's built-in test runner. The tests cover the column breakpoints, the per-row width
+ceiling, the proportional pull-back and the clamping, so a change to the layout rules can be
+checked without opening the app:
+
+```sh
+node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"
+```
+
+That block is the code the page itself runs, so the tests and the app cannot drift apart.
+
 ## Install and open
 
 1. Install the plugin in MiniMax Code.
@@ -102,6 +114,10 @@ rejected.
 - Not verified: the Baidu hot-board fallback and the Sina/Tencent quote fallbacks were exercised
   only against their endpoints directly, because the primary sources kept succeeding and the
   fallback branches never ran in the live app.
+- The package's own layout self-test lives in `tests/layout.test.mjs` and runs with Node's built-in
+  test runner — `node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"` —
+  16 cases, all passing on Node.js 24.16.0. The repository's `npm run check` only runs the
+  repository's own tests, so this command has to be run separately.
 - The package declares no `agentAccess`, `toolAccess`, `deviceAccess`, `hostAccess`, or
   `surface.window`, so no minimum client version beyond the base Mini App runtime is required.
 

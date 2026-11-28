@@ -1188,6 +1188,100 @@
 
     <div class="toast" id="toast" role="status" hidden></div>
 
+    <!--
+      布局纯函数：只做计算，不碰 DOM。
+      tests/layout.test.mjs 会把这一段原样取出来在 Node 里跑，
+      所以这里不能出现 document / window 之类的浏览器 API。
+    -->
+    <script id="wnb-layout">
+      (function (root) {
+        'use strict';
+
+        /* 看板宽度决定列数：不够两栏就堆叠。 */
+        function layoutColumnsFor(width) {
+          if (width < 560) return 1;
+          if (width < 900) return 2;
+          return 3;
+        }
+
+        /* 列数决定每一行放哪些卡片。 */
+        function layoutRowsFor(columns) {
+          if (columns === 1) return [['weather'], ['stocks'], ['news']];
+          if (columns === 2) return [['weather', 'stocks'], ['news']];
+          return [['weather', 'stocks', 'news']];
+        }
+
+        /*
+         * 某张卡在它那一行里的宽度上限：兄弟各留出最小宽度，
+         * 这样逐张算出来的上限与处理顺序无关。
+         */
+        function maxCardWidthFor(width, row, key, minCardW, gap) {
+          if (!width) return minCardW;
+          if (!row || row.length < 2) return width;
+          var others = 0;
+          row.forEach(function (name) {
+            if (name !== key) others += minCardW;
+          });
+          var gaps = gap * (row.length - 1);
+          return Math.max(minCardW, width - gaps - others);
+        }
+
+        /*
+         * 同一行的实际宽度加起来超出看板时，按比例收回。
+         * measured 是渲染出来的真实宽度，sizes 是手动指定的宽度。
+         * keepKey 是正在拖动的那张卡：先让兄弟让位，兄弟都到底了才动它。
+         * 返回要改动的宽度 { key: newWidth }，不需要改动时返回 null。
+         */
+        function shrinkRowToFit(sizes, measured, row, width, gap, floor, keepKey) {
+          if (!width || !row || !row.length) return null;
+          var total = 0;
+          row.forEach(function (key) {
+            total += measured[key] || 0;
+          });
+          var over = total + gap * (row.length - 1) - width;
+          if (over <= 0) return null;
+
+          function shrinkable(key) {
+            var size = sizes[key];
+            return Boolean(size) && Boolean(size.w) && size.w > floor;
+          }
+          var pool = row.filter(function (key) {
+            return shrinkable(key) && !(keepKey && key === keepKey);
+          });
+          if (!pool.length) pool = row.filter(shrinkable);
+          if (!pool.length) return null;
+
+          var sum = 0;
+          pool.forEach(function (key) {
+            sum += sizes[key].w;
+          });
+          var next = {};
+          pool.forEach(function (key) {
+            var size = sizes[key];
+            var share = over * (size.w / sum);
+            var value = Math.max(floor, Math.round(size.w - share));
+            if (value < size.w) next[key] = value;
+          });
+          return Object.keys(next).length ? next : null;
+        }
+
+        /* 把宽度夹到 [min, max] 之间并取整。 */
+        function clampWidth(value, min, max) {
+          if (typeof value !== 'number' || !isFinite(value)) return null;
+          var low = Math.min(min, max);
+          return Math.round(Math.min(max, Math.max(low, value)));
+        }
+
+        root.WNB_LAYOUT = {
+          layoutColumnsFor: layoutColumnsFor,
+          layoutRowsFor: layoutRowsFor,
+          maxCardWidthFor: maxCardWidthFor,
+          shrinkRowToFit: shrinkRowToFit,
+          clampWidth: clampWidth,
+        };
+      })(typeof globalThis !== 'undefined' ? globalThis : this);
+    </script>
+
     <script>
       (function () {
         'use strict';
@@ -2266,18 +2360,12 @@
 
         /* 当前排布下的列数：1 栏堆叠 / 2 栏 / 3 栏 */
         function layoutColumns() {
-          var w = boardWidth();
-          if (w < 560) return 1;
-          if (w < 900) return 2;
-          return 3;
+          return WNB_LAYOUT.layoutColumnsFor(boardWidth());
         }
 
         /* 当前排布下每一行放了哪些卡片：同一行的宽度加起来不能超过看板宽度 */
         function layoutRows() {
-          var cols = layoutColumns();
-          if (cols === 1) return [['weather'], ['stocks'], ['news']];
-          if (cols === 2) return [['weather', 'stocks'], ['news']];
-          return [['weather', 'stocks', 'news']];
+          return WNB_LAYOUT.layoutRowsFor(layoutColumns());
         }
 
         /**
@@ -2288,22 +2376,11 @@
         function maxCardWidth(key) {
           var w = boardWidth();
           if (!w) return MIN_CARD_W;
-          var cols = layoutColumns();
-          if (cols === 1) return w;
           var row = null;
           layoutRows().forEach(function (r) {
             if (r.indexOf(key) >= 0) row = r;
           });
-          if (!row) return w;
-          var others = 0;
-          row.forEach(function (k) {
-            if (k === key) return;
-            /* 兄弟卡片各留出最小宽度：这样逐张算出来的上限与处理顺序无关，
-               不会因为先处理哪一张就把另一张压到下限 */
-            others += MIN_CARD_W;
-          });
-          var gaps = BOARD_GAP * (row.length - 1);
-          return Math.max(MIN_CARD_W, w - gaps - others);
+          return WNB_LAYOUT.maxCardWidthFor(w, row, key, MIN_CARD_W, BOARD_GAP);
         }
 
         /**
@@ -2321,40 +2398,25 @@
             var guard = 0;
             while (guard < 12) {
               guard += 1;
-              var total = 0;
+              var measured = {};
               row.forEach(function (key) {
                 var card = cardElement(key);
-                if (card) total += card.getBoundingClientRect().width;
+                measured[key] = card ? card.getBoundingClientRect().width : 0;
               });
-              var over = total + BOARD_GAP * (row.length - 1) - w;
-              if (over <= 0) break;
-              var pool = row.filter(function (key) {
-                var size = cardSizes[key];
-                return size.w && size.w > floor && !(keepKey && key === keepKey);
+              var next = WNB_LAYOUT.shrinkRowToFit(
+                cardSizes,
+                measured,
+                row,
+                w,
+                BOARD_GAP,
+                floor,
+                keepKey,
+              );
+              if (!next) break;
+              Object.keys(next).forEach(function (key) {
+                cardSizes[key].w = next[key];
               });
-              if (!pool.length) {
-                pool = row.filter(function (key) {
-                  var size = cardSizes[key];
-                  return size.w && size.w > floor;
-                });
-              }
-              if (!pool.length) break;
-              var sum = 0;
-              pool.forEach(function (key) {
-                sum += cardSizes[key].w;
-              });
-              var progressed = false;
-              pool.forEach(function (key) {
-                var size = cardSizes[key];
-                var share = over * (size.w / sum);
-                var next = Math.max(floor, Math.round(size.w - share));
-                if (next < size.w) {
-                  size.w = next;
-                  changed = true;
-                  progressed = true;
-                }
-              });
-              if (!progressed) break;
+              changed = true;
               /* 收到新宽度后重新布局，下一轮才能量到真实溢出 */
               applyCardSizes();
             }
@@ -2436,12 +2498,9 @@
             if (size.w) {
               var maxW = maxCardWidth(key);
               var minW = Math.min(MIN_CARD_W, boardWidth());
-              if (size.w > maxW) {
-                size.w = Math.round(maxW);
-                changed = true;
-              }
-              if (size.w < minW) {
-                size.w = Math.round(minW);
+              var clamped = WNB_LAYOUT.clampWidth(size.w, minW, maxW);
+              if (clamped !== null && clamped !== size.w) {
+                size.w = clamped;
                 changed = true;
               }
             }

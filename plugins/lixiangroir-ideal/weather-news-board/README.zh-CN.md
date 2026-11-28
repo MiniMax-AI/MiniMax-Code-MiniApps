@@ -30,6 +30,16 @@
 用尽后，顶栏改为提示服务尚未就绪，下一次自动刷新会把看板重新接上。增删自选股同样按这套机制
 重试，由于这两个操作在服务端是幂等的，重试不会写重。
 
+宽度上的算术与 DOM 是分开的：客户端把纯函数放在 `<script id="wnb-layout">` 这一段里，
+`tests/layout.test.mjs` 把这一段原样取出来，用 Node 自带的测试运行器跑一遍。列数断点、同一行的
+宽度上限、按比例收回、夹紧都在用例里覆盖，改布局规则不必先打开应用就能验证：
+
+```sh
+node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"
+```
+
+跑的正是页面自己执行的那一段代码，所以测试与应用不会走偏。
+
 ## 安装与打开
 
 1. 在 MiniMax Code 中安装本插件。
@@ -68,6 +78,10 @@
   随后把这条自选股移除。控制台 0 error / 0 warn，网络无失败请求。
 - 未验证：百度热榜兜底与新浪 / 腾讯行情备源只针对其接口单独做过直连验证，因为主源一直可用，
   运行时并未真正走到兜底分支。
+- 包内布局自测在 `tests/layout.test.mjs`，用 Node 自带的测试运行器执行：
+  `node --test "plugins/lixiangroir-ideal/weather-news-board/tests/*.test.mjs"`，
+  共 16 个用例，在 Node.js 24.16.0 上全部通过。仓库的 `npm run check` 只跑仓库自带的测试，
+  这条命令需要单独执行。
 - 本包未声明 `agentAccess`、`toolAccess`、`deviceAccess`、`hostAccess` 与 `surface.window`，
   因此除基础 Mini App 运行时外没有更高的客户端版本要求。
 
