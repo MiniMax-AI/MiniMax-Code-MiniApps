@@ -590,11 +590,25 @@ function onWindowState(state) {
       void restoreWindowPosition(win, saved, { isCurrent }).then(async (result) => {
         if (disposed || token !== app.positionRestoreToken || app.mode !== 'window') return;
         let restoredState = result.state;
-        const height = deskHeight(prefs.scale);
-        if (result.interactive && restoredState?.window && (restoredState.window.width !== DESK_WIDTH || restoredState.window.height !== height)) {
-          try { restoredState = await win.update({ width: DESK_WIDTH, height }); }
-          catch (error) { if (!isCurrent()) return; result.error = errCode(error); }
+        const size = { width: DESK_WIDTH, height: deskHeight(prefs.scale) };
+        if (result.interactive && restoredState?.window) {
+          // Restore first: the saved position may be on a different display. Check the work
+          // area only after the Host settles there, including when the saved move was refused.
+          const fitted = await fitWindowToScreen(win, {
+            isCurrent, size, keepPetVisible: true,
+            screenRect: () => ({ x: screen.availLeft, y: screen.availTop, width: screen.availWidth, height: screen.availHeight }),
+          });
           if (!isCurrent()) return;
+          if (fitted.cancelled) { applyMode('inline'); return; }
+          if (fitted.state) restoredState = fitted.state;
+          if (fitted.error) result.error = fitted.error;
+          else if (result.error === 'not_permitted') result.error = null;
+          // Older clients can lack usable work-area data. Preserve their existing size repair.
+          if (fitted.error === 'screen_unavailable' && (restoredState.window.width !== size.width || restoredState.window.height !== size.height)) {
+            try { restoredState = await win.update(size); }
+            catch (error) { if (!isCurrent()) return; result.error = errCode(error); }
+            if (!isCurrent()) return;
+          }
         }
         if (restoredState) onWindowState(restoredState);
         if (!isCurrent()) return;
@@ -603,7 +617,7 @@ function onWindowState(state) {
         if (result.error) showTransient(result.interactive
           ? t('mode.positionFailed', { code: result.error })
           : t('mode.interactionUnknown', { code: result.error }), 'error');
-        rememberPosition();
+        else rememberPosition();
       });
       return;
     }

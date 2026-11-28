@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 import { restoreWindowPosition, fitWindowToScreen } from '../miniapp/client/window-position.mjs';
 
 function frameBridge() {
@@ -119,4 +121,76 @@ test('closing during resize preparation never sends geometry to a different surf
   });
   live = false; resolve({ mode: 'window', window: { x: 1864, y: 100, width: 280, height: 340 } });
   assert.equal((await operation).cancelled, true);
+});
+
+// Run the page's real window-entry handler with a controlled bridge. The fake Host permits
+// partial overlap, like the desktop Host; it deliberately does not keep the sprite on-screen.
+const page = await readFile(new URL('../miniapp/client/pet-app.js', import.meta.url), 'utf8');
+const sizing = page.slice(page.indexOf('const DESK_WIDTH'), page.indexOf('let notificationPreviews'));
+const windowEntry = page.slice(page.indexOf('function onWindowState('), page.indexOf('function applyMode('));
+
+async function popOut({ origin, saved = null, workArea = { availLeft: 0, availTop: 0, availWidth: 1707, availHeight: 1019 } }) {
+  const calls = [], notices = [], savedPositions = [];
+  const prefs = { scale: 0.5, windowPosition: saved };
+  const app = { mode: 'inline', positionRestoreToken: 0 };
+  const bounds = { x: origin.x, y: origin.y, width: 280, height: 436, clickThrough: true };
+  const state = () => ({ mode: 'window', window: { ...bounds } });
+  const win = {
+    getState: async () => state(),
+    update: async (patch) => {
+      calls.push({ ...patch });
+      if (patch.x === 50000) throw new Error('not_permitted');
+      Object.assign(bounds, patch);
+      return state();
+    },
+  };
+  const screen = typeof workArea === 'function' ? workArea(bounds) : workArea;
+  const context = vm.createContext({
+    app, prefs, win, screen, start: state(), disposed: false, restoreWindowPosition, fitWindowToScreen,
+    applyMode: (mode) => { app.mode = mode; }, showTransient: (message) => notices.push(message),
+    t: (key) => key, errCode: (error) => error.message,
+    clearTimeout() {}, setTimeout: (fn) => { fn(); return 1; },
+    savePreferences: (patch) => { savedPositions.push({ ...patch.windowPosition }); },
+  });
+  vm.runInContext(`${sizing}\n${windowEntry}\nonWindowState(start);`, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  return { app, calls, notices, savedPositions };
+}
+
+test('pop-out fits an off-screen Host default even without a saved position', async () => {
+  const h = await popOut({ origin: { x: 1090, y: 846 } });
+  // 1019 is the reproduced work-area bottom; 436 is the small pet's designed height.
+  assert.deepEqual(h.calls, [{ clickThrough: false }, { x: 1090, y: 583, width: 280, height: 436 }]);
+  assert.equal(h.app.restoringPosition, false);
+  assert.deepEqual(h.savedPositions, [{ x: 1090, y: 679 }], 'persist only the corrected bottom anchor');
+});
+
+test('pop-out fits a partially visible saved position above the display', async () => {
+  const h = await popOut({ origin: { x: 200, y: 200 }, saved: { x: 1093, y: -322 } });
+  assert.equal(h.calls[1].y, -418, 'the stored bottom anchor resolves to the old off-screen origin');
+  assert.deepEqual(h.calls.at(-1), { x: 1093, y: 0, width: 280, height: 436 });
+  assert.deepEqual(h.savedPositions, [{ x: 1093, y: 96 }]);
+});
+
+test('pop-out keeps a valid saved position on a display left of the primary one', async () => {
+  const h = await popOut({ origin: { x: 200, y: 200 }, saved: { x: -1000, y: 146 }, workArea: (bounds) => ({
+    get availLeft() { return bounds.x < 0 ? -1920 : 0; }, availTop: 0, availWidth: 1920, availHeight: 1080,
+  }) });
+  assert.equal(h.calls.length, 2, 'a valid position should not be moved again');
+  assert.equal(h.app.winBounds.x, -1000);
+  assert.equal(h.app.winBounds.y, 50);
+  assert.deepEqual(h.savedPositions, []);
+});
+
+test('pop-out recovers from a rejected position on a disconnected display', async () => {
+  const h = await popOut({ origin: { x: 1090, y: 846 }, saved: { x: 50000, y: 100 } });
+  assert.deepEqual(h.calls.at(-1), { x: 1090, y: 583, width: 280, height: 436 });
+  assert.deepEqual(h.notices, [], 'the fallback fit succeeded');
+});
+
+test('pop-out keeps the sprite at the bottom on a display shorter than the window', async () => {
+  const h = await popOut({ origin: { x: 30, y: 50 }, workArea: { availLeft: 0, availTop: 0, availWidth: 260, availHeight: 400 } });
+  assert.deepEqual(h.calls.at(-1), { x: -10, y: -36, width: 280, height: 436 });
+  assert.equal(h.app.winBounds.y + h.app.winBounds.height, 400);
+  assert.deepEqual(h.notices, []);
 });
