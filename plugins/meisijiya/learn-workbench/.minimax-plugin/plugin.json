@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "learn-workbench",
+  "displayName": "学习工作台",
+  "version": "1.0.0",
+  "description": "A teach-method learning workbench: mission, curriculum, per-lesson branch sessions, annotations, notes and a code-link panel.",
+  "author": "meisijiya",
+  "icon": "icon.png",
+  "category": "Education",
+  "exampleQueries": [
+    "打开学习工作台，继续第 3 课",
+    "为这个主题生成课纲，每节课开一个独立会话",
+    "把第 1–3 课结合我的批注提炼成笔记"
+  ],
+  "apps": [],
+  "mcpServers": [],
+  "skills": []
+}
